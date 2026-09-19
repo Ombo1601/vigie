@@ -325,6 +325,7 @@ class Discoverability(unittest.TestCase):
             'property="og:image:height" content="630"',
             'name="twitter:card" content="summary_large_image"',
             'name="twitter:image"',
+            'name="google-site-verification" content="4utU8VMAMZFBAWVIKkd2FtwfysYUKEe5fRrpIHzfrMk"',
         ):
             self.assertIn(needle, head)
         self.assertNotIn("http://", head)

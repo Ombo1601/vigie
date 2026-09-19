@@ -67,6 +67,10 @@ SITE_OG_ALT = (
     "Vigie : le mot-symbole « vigie. », une rose des vents, et la phrase "
     "« Québec, à hauteur de vie »."
 )
+# Search-engine ownership proofs. These tokens are public by design (they appear
+# in the page head); empty means "not configured" and nothing is rendered.
+GOOGLE_SITE_VERIFICATION = "4utU8VMAMZFBAWVIKkd2FtwfysYUKEe5fRrpIHzfrMk"
+BING_SITE_VERIFICATION = ""
 
 
 def sanitize(value: object) -> str:
@@ -1322,10 +1326,18 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
     # The edition stamp is the article collection, never the render clock: an
     # hourly roads-only re-render must not relabel the edition as new.
     edition_at = status.get("at") or generated_at
+    verifications = "".join(
+        f'<meta name="{name}" content="{esc(token)}">'
+        for name, token in (
+            ("google-site-verification", GOOGLE_SITE_VERIFICATION),
+            ("msvalidate.01", BING_SITE_VERIFICATION),
+        )
+        if token
+    )
     return f'''<!doctype html>
 <html lang="fr-CA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="{SITE_DESCRIPTION}">
-<link rel="canonical" href="{SITE_CANONICAL}">
+<link rel="canonical" href="{SITE_CANONICAL}">{verifications}
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <meta property="og:type" content="website"><meta property="og:site_name" content="Vigie"><meta property="og:locale" content="fr_CA">
 <meta property="og:title" content="{SITE_TITLE}"><meta property="og:description" content="{SITE_DESCRIPTION}"><meta property="og:url" content="{SITE_CANONICAL}">
