@@ -218,5 +218,24 @@ class PageIntegration(unittest.TestCase):
             self.assertEqual(stage_public.validate_site(root), [])
 
 
+class TopicFilters(unittest.TestCase):
+    def test_filters_cover_the_topics_the_edition_actually_has(self) -> None:
+        page = brief.render_brief([], NOW.isoformat(), [], collection())
+        for topic in ("transport", "housing", "health", "law", "culture",
+                      "energy/hydro", "security", "economy", "education", "environment"):
+            self.assertIn(f'data-topic="{topic}"', page)
+
+    def test_trade_is_canonicalised_to_economy(self) -> None:
+        item = story(enrich={"geo": {"geo": "quebec-city"}, "topics": [{"topic": "trade"}]})
+        page = brief.render_brief([item], NOW.isoformat(), [], collection())
+        self.assertIn('data-topics="economy"', page)
+        self.assertNotIn('data-topics="trade"', page)
+
+    def test_other_stays_reachable_under_tout(self) -> None:
+        item = story(enrich={"geo": {"geo": "quebec-city"}, "topics": [{"topic": "other"}]})
+        page = brief.render_brief([item], NOW.isoformat(), [], collection())
+        self.assertIn('data-topics="other"', page)
+
+
 if __name__ == "__main__":
     unittest.main()

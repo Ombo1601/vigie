@@ -73,46 +73,90 @@ WORLD_FOG = re.compile(
 
 TOPIC_RULES: list[tuple[str, re.Pattern]] = [
     # Word boundaries on short stems — substring matches were theater.
+    # Stems are word-bounded on both sides unless the suffix is the point
+    # (climat/climatique, [ée]cole/[ée]coles); precision beats recall: a wrong
+    # label is worse than "other".
     ("housing", re.compile(
-        r"\bloyers?\b|\brents?\b|\blogements?\b|\bhabitations?\b|\bimmo(?:bilier)?\b|"
-        r"\bhousing\b|\bschl\b|\bcmhc\b|\bevict|itin[ée]rance|\bexpulsion\b",
+        r"\bloyers?\b|\brents?\b|\blogements?\b|\bhabitations?\b|\bimmo(?:bilier|bili[èe]re)?\b|"
+        r"\bhousing\b|\bschl\b|\bcmhc\b|\bevict|itin[ée]rance|\bexpulsion\b|"
+        r"\blocataires?\b|\bpropri[ée]taires?\b|\bcoop[ée]ratives? d.?habitation\b|"
+        r"\bcrise du logement\b|\btaxe fonci[èe]re\b",
         re.I,
     )),
     ("energy/hydro", re.compile(
         r"\bhydro\b|électricité|electricit|tarif d.?électricité|power rate|"
-        r"\bessence\b|\bcarburant\b|\blitre\b|\bdiesel\b|\bgasoline\b|\bgallon\b",
+        r"\bessence\b|\bcarburant\b|\blitre\b|\bdiesel\b|\bgasoline\b|\bgallon\b|"
+        r"\bhydro[- ]?qu[ée]bec\b|\bpanne(?:s)? d.?[ée]lectricit[ée]\b|\bcoupure(?:s)? de courant\b|"
+        r"\bchauffage\b|\bpyl[ôo]nes?\b|\bbarrages?\b|\bcentrales? hydro[ée]lectriques?\b|\bkwh?\b",
         re.I,
     )),
     ("transport", re.compile(
         r"\btramway\b|\btgv\b|\bopus\b|\bmetro\b|\bmétro\b|\bautobus\b|"
         r"\btramcit[ée]\b|\brtc\b|\br[ée]seau de transport de la capitale\b|"
-        r"\bd[ée]tours?\b|\bentraves?\b|\bpistes? cyclables?\b",
+        r"\bd[ée]tours?\b|\bentraves?\b|\bpistes? cyclables?\b|"
+        r"\bcyclis(?:te|tes)?\b|\bv[ée]los?\b|\bpi[ée]tons?\b|\bpi[ée]tonniers?\b|"
+        r"\btransports? en commun\b|\bmobilit[ée]\b|\bcirculation\b|\bfluidit[ée]\b|"
+        r"\bstationnement\b|\bcorridor(?:s)?\b|\bbrt\b",
         re.I,
     )),
     ("education", re.compile(
-        r"\béducation\b|\beducation\b|\bécoles?\b|\becoles?\b|\bschools?\b",
+        r"\b[ée]ducation\b|\beducation\b|\b[ée]coles?\b|\becoles?\b|\bschools?\b|"
+        r"\buniversit[ée]\b|\bc[ée]gep\b|\benseignants?\b|\b[ée]tudiants?\b|"
+        r"\bcommission scolaire\b|\bcentre de services scolaire\b",
         re.I,
     )),
-    ("law", re.compile(r"projet de loi|\bbill\b|règlement|\bbylaw\b|\btribunal\b|\bcour\b|\bcourt\b|\bloi\b", re.I)),
-    ("health", re.compile(r"\bsanté\b|\bhealth\b|hôpital|\bhospital\b|\bchu\b|\burgence\b|\bclinic", re.I)),
+    ("law", re.compile(
+        r"projet de loi|\bbill\b|r[èe]glement|\bbylaw\b|\btribunal\b|\bcour\b|\bcourt\b|\bloi\b|"
+        r"\b[ée]lections?\b|\bscrutin\b|\bcampagne [ée]lectorale\b|\bmairesse?\b|"
+        r"\bconseil municipal\b|\bassembl[ée]e nationale\b|\bcandidat(?:e|es|s)?\b|"
+        r"\bministre\b|\bd[ée]put[ée]e?s?\b|\bpolitique\b|\bconsultation publique\b|\bavis public\b",
+        re.I,
+    )),
+    ("health", re.compile(
+        r"\bsanté\b|\bhealth\b|hôpital|\bhospital\b|\bchu\b|\burgence\b|\bclinique?s?\b|"
+        r"\bchsld\b|\bciusss\b|\bsoins?\b|\bm[ée]dical(?:e|es|s)?\b|\bm[ée]decins?\b|"
+        r"\bvaccin(?:s|ation)?\b|\bpharmac(?:ie|ien|ienne)\b|\bd[ée]pistage\b",
+        re.I,
+    )),
     ("trade", re.compile(
-        r"\btarif(?:s|aire|aires)?\b|\btariff\b|\bcommerce\b|\bdouane\b|\btrade\b|"
-        r"\bexport(?:s|ation|ations)?\b|\bimport(?:s|ation|ations)?\b|\bsurtaxe\b|"
+        r"\btarifs?\b|\btarif(?:aire|aires)?\b|\btariffs?\b|\bcommerce\b|\bdouanes?\b|\btrade\b|"
+        r"\bexports?(?:ation|ations)?\b|\bimports?(?:ation|ations)?\b|\bsurtaxe\b|"
         # Place-first airport stem (Marcus 2026-09-15) — never bare private
-        r"\ba[ée]roports?\b|\bairports?\b",
+        r"\ba[ée]roports?\b|\bairports?\b|\baluminium\b|\bacier\b|"
+        r"\bbois d.?[œo]uvre\b|\bentente commerciale\b|\baceum\b|\balena\b",
         re.I,
     )),
-    ("security", re.compile(r"\bpolice\b|\bcrime\b|fusillade|\bshooting\b|sécurité|\bsecurity\b|\bcoroner\b", re.I)),
-    ("economy", re.compile(r"\bemploi\b|chômage|\binflation\b|\bbudget\b|économie|\beconomy\b|\bgdp\b|\bpib\b", re.I)),
+    ("security", re.compile(
+        r"\bpolice\b|\bcrimes?\b|fusillade|\bshooting\b|sécurité|\bsecurity\b|\bcoroner\b|"
+        r"\bpompiers?\b|\bincendies?\b|\bs[ûu]ret[ée] du qu[ée]bec\b|\bagressions?\b|"
+        r"\bviolence\b|\bharc[èe]lement\b|\bfraude\b",
+        re.I,
+    )),
+    ("economy", re.compile(
+        r"\bemplois?\b|chômage|\binflation\b|\bbudgets?\b|économie|\beconomy\b|\bgdp\b|\bpib\b|"
+        r"\bsalaires?\b|\bmain[- ]d.?[œo]uvre\b|\bpme\b|\bentreprises?\b|\bcommerces?\b|"
+        r"\bfiscal(?:e|es|it[ée])?\b|\bimp[ôo]ts?\b",
+        re.I,
+    )),
     # No bare environnement (French = surroundings). No ges word-end (matches villages).
     ("environment", re.compile(
-        r"\bclimat\b|changement climatique|\bGES\b|gaz [àa] effet|"
-        r"\bcarbone\b|environnemental|réchauffement|rechauffement|"
-        r"\bbiodiversit|\benvironment\b",
+        r"\bclimat(?:ique|iques)?\b|changements? climatiques?|\bGES\b|gaz [àa] effet|"
+        r"\bcarbone\b|environnemental(?:e|es|aux)?|r[ée]chauffement|rechauffement|"
+        r"\bbiodiversit[ée]\b|\benvironment\b|\b[ée]cosyst[èe]mes?\b|\bpollution\b|"
+        r"\bqualit[ée] de l.?air\b|\bcanop[ée]e\b|\b[ée]nergies? renouvelables?\b",
         re.I,
     )),
-    ("death", re.compile(r"\bmort\b|décès|\bdeath\b|\bkilled\b|tue[ée]", re.I)),
-    ("culture", re.compile(r"\bfestival\b|\bculture\b|\bconcert\b|\bpatrimoine\b|\bhumour\b|com[ée]die|\bfilm\b|cin[ée]ma", re.I)),
+    ("death", re.compile(
+        r"\bmorts?\b|décès|\bdeath\b|\bkilled\b|tu[ée]e?s?\b|"
+        r"\bobs[èe]ques?\b|\bfun[ée]raires?\b|\bnoyades?\b|\bhomicides?\b|\bcoroner\b",
+        re.I,
+    )),
+    ("culture", re.compile(
+        r"\bfestivals?\b|\bculture(?:l|ls|lle|lles)?\b|\bconcerts?\b|\bpatrimoine\b|"
+        r"\bhumour\b|com[ée]die|\bfilms?\b|cin[ée]ma|\bmus[ée]es?\b|\bexpositions?\b|"
+        r"\bth[ée][âa]tres?\b|\bmusiques?\b|\blivres?\b|\bsalon du livre\b|\bspectacles?\b",
+        re.I,
+    )),
 ]
 
 IMPACT_FROM_TOPIC = {

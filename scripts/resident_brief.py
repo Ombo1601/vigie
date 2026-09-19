@@ -26,6 +26,9 @@ TOPICS = {
     "environment": "Environnement", "death": "Société", "culture": "Culture",
     "other": "Vie locale",
 }
+# Two source tags that mean one reader-facing topic: the chips and `data-topics`
+# use the canonical id so one button can reach both.
+TOPIC_ALIASES = {"trade": "economy"}
 AREAS = {
     "cite": ("La Cité-Limoilou", r"\b(?:limoilou|saint[- ]roch|saint[- ]sauveur|montcalm|saint[- ]sacrement|vieux[- ]quebec|saint[- ]jean[- ]baptiste|lairet|maizerets)\b"),
     "rivières": ("Les Rivières", r"\b(?:les rivieres|duberger|les saules|lebourgneuf|(?:quartier|secteur|a) vanier)\b"),
@@ -226,11 +229,18 @@ def prepare_items(ranked: list[dict], now: datetime) -> tuple[list[dict], int]:
         geo_block = enrich.get("geo")
         geo = (geo_block.get("geo") if isinstance(geo_block, dict) else None) or item.get("display_geo", "linked")
         topics_block = enrich.get("topics")
-        topic_ids = [
-            str(t.get("topic") if t.get("topic") is not None else "other")
-            for t in (topics_block if isinstance(topics_block, list) else [])
-            if isinstance(t, dict)
-        ] or ["other"]
+        # Canonicalise reader-facing aliases (trade -> economy) and keep the
+        # order stable, so the filter chips and `data-topics` always agree.
+        topic_ids: list[str] = []
+        for t in (topics_block if isinstance(topics_block, list) else []):
+            if not isinstance(t, dict):
+                continue
+            label = str(t.get("topic") if t.get("topic") is not None else "other")
+            label = TOPIC_ALIASES.get(label, label)
+            if label not in topic_ids:
+                topic_ids.append(label)
+        if not topic_ids:
+            topic_ids = ["other"]
         summary = plain(item.get("summary"))[:SUMMARY_CAP]
         text = folded(title + " " + summary)
         areas = [key for key, (_, pattern) in AREAS.items() if geo == "quebec-city" and re.search(pattern, text)]
@@ -1312,7 +1322,12 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
     eligible = {r.get("id"): r for r in rows}
     stories = "".join(article_html(r, n + 1, related_sources(r, issues, eligible), media) for n, r in enumerate(rows))
     areas = "".join(f'<option value="{esc(k)}">{esc(v[0])}</option>' for k, v in AREAS.items())
-    topics = (("all", "Tout"), ("transport", "Se déplacer"), ("housing", "Se loger"), ("health", "Santé"), ("law", "Vie publique"), ("culture", "Culture"))
+    topics = (
+        ("all", "Tout"), ("transport", "Se déplacer"), ("housing", "Se loger"),
+        ("health", "Santé"), ("law", "Vie publique"), ("energy/hydro", "Énergie"),
+        ("security", "Sécurité"), ("economy", "Économie"), ("education", "Éducation"),
+        ("environment", "Environnement"), ("culture", "Culture"),
+    )
     filters = "".join(f'<button type="button" data-topic="{k}" aria-pressed="{"true" if k == "all" else "false"}">{v}</button>' for k, v in topics)
     service_html = "".join(f'<a class="service" href="{url}" rel="noopener noreferrer"><span class="service-index">{num} / {esc(eyebrow)}</span><h3>{esc(title)} <span aria-hidden="true">↗</span></h3><p>{esc(desc)}</p></a>' for num, eyebrow, title, desc, url in SERVICES)
     outcomes = {r.get("source_id"): r for r in run.get("results", []) if isinstance(r, dict)}

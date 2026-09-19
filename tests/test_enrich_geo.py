@@ -223,5 +223,37 @@ class LiveHelicopterGuard(unittest.TestCase):
         self.assertEqual(failures, [])
 
 
+class TopicLexicon(unittest.TestCase):
+    """Broadened topics: precision first, a wrong label is worse than `other`."""
+
+    def _labels(self, text: str) -> list[str]:
+        return [t["topic"] for t in enrich.propose_topics(text)]
+
+    def test_common_stems_are_recognized(self) -> None:
+        cases = {
+            "environment": "Le plan climatique de Québec",
+            "education": "L’Université Laval ouvre un programme",
+            "security": "Un incendie majeur à Limoilou",
+            "health": "Le CHSLD manque de personnel",
+            "economy": "Les salaires stagnent dans la région",
+            "law": "Les élections municipales approchent",
+            "energy/hydro": "Hydro-Québec pose un pylône à Neufchâtel",
+            "transport": "Un piéton heurté sur le boulevard",
+            "death": "Les obsèques auront lieu mardi",
+            "housing": "Les locataires réclament un répit",
+            "trade": "L’aluminerie augmente ses exportations",
+            "culture": "Le théâtre du Trident présente une pièce",
+        }
+        for topic, text in cases.items():
+            with self.subTest(topic=topic):
+                self.assertIn(topic, self._labels(text))
+
+    def test_precision_scars_hold(self) -> None:
+        # different != rent, villages != GES, importants != import, environs != environment
+        self.assertEqual(self._labels("Un projet différent pour les villages"), ["other"])
+        self.assertNotIn("trade", self._labels("Des changements importants"))
+        self.assertNotIn("environment", self._labels("Les environs de la ville"))
+
+
 if __name__ == "__main__":
     unittest.main()

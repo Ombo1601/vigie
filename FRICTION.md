@@ -270,3 +270,40 @@ Canvas / co-founder DoD: *One composition; brand hero; expressive type; nest dep
 - [x] Tests: `tests/test_beauty_without_fog.py` (+ `test_design_law.py`)
 
 **Beauty-without-fog DoD: MET (instrument).** Full-bleed QC place image remains backlog.
+
+## Resident walkthrough — ready-to-run script (2026-09-19)
+
+Phase 0 still shows **0/5**. Everything we have shipped is instrument evidence
+until this table holds five real rows. This replaces the older English-workbench
+walk; use the live French brief at `https://vigieqc.com`.
+
+**Who:** five Quebec City–life residents (or near-daily visitors). Not co-founders.
+**Setup:** their own phone or laptop, cold (no introduction), 5–8 minutes.
+**You:** say only the task line below. Do not teach, point, or defend a choice.
+Record what they *do*, not what they say they would like.
+
+**Task (read verbatim):**
+> « Ouvrez vigieqc.com. Imaginez que vous voulez savoir ce qui a bougé à Québec
+> cette semaine. Prenez cinq minutes. Dites à voix haute ce que vous cherchez,
+> ce que vous comprenez, et ce qui vous bloque. Dites-moi quand vous avez fini. »
+
+**Then ask, in this order (no leading questions):**
+1. Qu’est-ce qui a attiré votre œil en premier ?
+2. Qu’est-ce que cette page vous dit de Québec aujourd’hui ?
+3. Avez-vous trouvé quelque chose que vous pouviez vérifier vous-même ? Comment ?
+4. À quel moment avez-vous hésité ou perdu le fil ?
+5. Qu’avez-vous cherché sans le trouver ?
+6. Reviendriez-vous demain ? Pourquoi, ou pourquoi pas ?
+
+**Capture sheet** — one row per person, raw notes, no paraphrase:
+
+| # | Date | Profil (quartier, device) | Temps | Où ça a bloqué (section/étape) | Trouvé utile | Reviendrait ? | Sévérité |
+|---|------|---------------------------|-------|-------------------------------|--------------|---------------|----------|
+| 1 |  |  |  |  |  |  |  |
+| 2 |  |  |  |  |  |  |  |
+| 3 |  |  |  |  |  |  |  |
+| 4 |  |  |  |  |  |  |  |
+| 5 |  |  |  |  |  |  |  |
+
+**Rules:** no invented quotes, no personas, no fake severity. A pain ranks only
+from a real row. After five rows: rank the pains here and write the Phase 0 close.
