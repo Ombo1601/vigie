@@ -310,5 +310,21 @@ class EditionStampHonesty(unittest.TestCase):
         self.assertNotIn("22:21 UTC", note)
 
 
+class Discoverability(unittest.TestCase):
+    def test_head_has_canonical_robots_and_social_meta(self) -> None:
+        page = brief.render_brief([], "2026-09-19T12:00:00+00:00", [], None)
+        head = page[: page.index("</head>")]
+        for needle in (
+            '<link rel="canonical" href="https://vigieqc.com/">',
+            'name="robots"',
+            'content="index, follow',
+            'property="og:title"',
+            'property="og:url"',
+            'name="twitter:card"',
+        ):
+            self.assertIn(needle, head)
+        self.assertNotIn("http://", head)
+
+
 if __name__ == "__main__":
     unittest.main()

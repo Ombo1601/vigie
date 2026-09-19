@@ -15,6 +15,7 @@ import re
 import shutil
 import tempfile
 import time
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -31,6 +32,35 @@ ASSET_EXTENSIONS = {
 # Locally served publisher preview images (scripts/fetch_brief_media.py).
 MEDIA_NAME = re.compile(r"[a-f0-9]{20}\.(?:jpg|jpeg|png|webp|avif|gif)")
 MEDIA_MAX_BYTES = 900_000
+
+# Discoverability: every staged release carries a permissive robots.txt (this is
+# public-interest aggregation; nothing here is private) and a sitemap listing the
+# front door and the published method files.
+SITE_URL = "https://vigieqc.com"
+ROBOTS_TEXT = f"User-agent: *\nAllow: /\n\nSitemap: {SITE_URL}/sitemap.xml\n"
+SITEMAP_PATHS = ("/", "/explorer.html", "/morning.html")
+
+
+def sitemap_xml(directory: Path) -> str:
+    """A small sitemap with the edition's build date as lastmod."""
+    try:
+        lastmod = datetime.fromtimestamp(
+            (directory / "index.html").stat().st_mtime, tz=timezone.utc
+        ).date().isoformat()
+    except OSError:
+        lastmod = None
+    paths = (*SITEMAP_PATHS, *(f"/{name}" for name in METHODS))
+    parts = []
+    for path in paths:
+        loc = f"{SITE_URL}/" if path == "/" else f"{SITE_URL}{path}"
+        stamp = f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
+        parts.append(f"<url><loc>{loc}</loc>{stamp}</url>")
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        + "".join(parts)
+        + "</urlset>\n"
+    )
 
 
 class PageLinks(HTMLParser):
@@ -280,6 +310,8 @@ def stage(root: Path = ROOT, output: Path = OUT) -> dict:
                 target = temporary / "media" / source.name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
+        (temporary / "robots.txt").write_text(ROBOTS_TEXT, encoding="utf-8")
+        (temporary / "sitemap.xml").write_text(sitemap_xml(temporary), encoding="utf-8")
         errors = validate_site(temporary)
         if errors:
             raise ValueError("Invalid static site:\n" + "\n".join(errors))

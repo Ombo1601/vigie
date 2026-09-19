@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,6 +44,10 @@ LOCK_PATH = ROOT / "data" / "ops" / "refresh.lock"
 ROADS_SIGNAL_PATH = ROOT / "data" / "ops" / "roads_signal.json"
 ROADWORKS_STORE = ROOT / "data" / "roadworks" / "latest_roadworks.json"
 ROADS_SIGNAL_METHOD = "roads-signal-v1"
+SITE_URL = "https://vigieqc.com"
+INDEXNOW_KEY = "c977ad1a490feff9553222dafa4921b4"
+INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow"
+INDEXNOW_URLS = (f"{SITE_URL}/", f"{SITE_URL}/explorer.html", f"{SITE_URL}/morning.html")
 LOCK_STALE_SECONDS = 2 * 3600
 LOG_ROTATE_BYTES = 5 * 1024 * 1024  # one previous log kept as refresh.log.1
 TEAM = "deemto"
@@ -204,6 +209,27 @@ def write_roads_signal(sha: str) -> None:
         pass
 
 
+def ping_indexnow() -> None:
+    """Best-effort: tell IndexNow (Bing — which DuckDuckGo reads — Yandex,
+    Seznam, Naver) that the brief changed. A failure is logged, never fatal."""
+    payload = json.dumps({
+        "host": "vigieqc.com",
+        "key": INDEXNOW_KEY,
+        "keyLocation": f"{SITE_URL}/{INDEXNOW_KEY}.txt",
+        "urlList": list(INDEXNOW_URLS),
+    }).encode("utf-8")
+    try:
+        request = urllib.request.Request(
+            INDEXNOW_ENDPOINT, data=payload,
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=20) as response:
+            log(f"indexnow: HTTP {response.status}")
+    except Exception as exc:  # noqa: BLE001 - discovery is best-effort
+        log(f"WARN indexnow ping failed ({type(exc).__name__})")
+
+
 def _roads_only(python: str, *, deploy: bool) -> int:
     """The real-time lane: refresh the official obstructions without an edition.
 
@@ -236,6 +262,7 @@ def _roads_only(python: str, *, deploy: bool) -> int:
     run_step("deploy", [vercel, "deploy", str(DEPLOY_DIR), "-y", "--prod"], timeout=900)
     write_roads_signal(after)
     log("OK roads production updated")
+    ping_indexnow()
     return 0
 
 
@@ -298,6 +325,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         write_roads_signal(roads_signal())
         log("OK production updated")
+        ping_indexnow()
         return 0
     except (RuntimeError, OSError) as exc:
         log(f"FAIL {exc}")

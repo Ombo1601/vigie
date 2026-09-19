@@ -129,6 +129,16 @@ class StaticRelease(unittest.TestCase):
         (self.public / "index.html").write_text('<a href="https://example.test/story">x</a><a href="?facet=health#here">x</a><p id="here">Here</p>', encoding="utf-8")
         self.assertEqual(stage_public.validate_site(self.public), [])
 
+    def test_robots_and_sitemap_are_staged(self):
+        stage_public.stage(self.root, self.output)
+        robots = (self.output / "robots.txt").read_text(encoding="utf-8")
+        self.assertIn("User-agent: *", robots)
+        self.assertIn("Sitemap: https://vigieqc.com/sitemap.xml", robots)
+        sitemap = (self.output / "sitemap.xml").read_text(encoding="utf-8")
+        self.assertIn("<urlset xmlns=", sitemap)
+        self.assertIn("<loc>https://vigieqc.com/</loc>", sitemap)
+        self.assertIn("<loc>https://vigieqc.com/legal.md</loc>", sitemap)
+
     def test_http_release_is_byte_identical(self):
         manifest = stage_public.stage(self.root, self.output)
         verify.smoke_site(self.output, manifest)

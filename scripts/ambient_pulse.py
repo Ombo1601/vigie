@@ -280,6 +280,7 @@ def render_morning_html(digest: dict) -> str:
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Vigie — Morning pulse</title>
+  <link rel="canonical" href="https://vigieqc.com/morning.html" />
   <link rel="stylesheet" href="/assets/fonts.css" />
   <style>
     :root {{

@@ -195,9 +195,15 @@ class PageIntegration(unittest.TestCase):
         self.assertEqual(page, brief.render_brief(*args))
         tags = Tags()
         tags.feed(page)
+        # A link relation (canonical, alternate, license...) is metadata the
+        # browser never fetches; subresources must stay same-origin.
+        metadata_rels = {"canonical", "alternate", "license", "author", "me"}
         for tag, attrs in tags.tags:
-            if tag in {"script", "img", "iframe", "link"}:
-                self.assertFalse(attrs.get("src", attrs.get("href", "")).startswith(("http:", "https:", "//")))
+            if tag not in {"script", "img", "iframe", "link"}:
+                continue
+            if tag == "link" and attrs.get("rel") in metadata_rels:
+                continue
+            self.assertFalse(attrs.get("src", attrs.get("href", "")).startswith(("http:", "https:", "//")))
         self.assertIn('<html lang="fr-CA">', page)
         self.assertIn("<noscript>", page)
         self.assertIn("https://actualites.example.com/one", page)

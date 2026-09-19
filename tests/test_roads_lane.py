@@ -119,5 +119,44 @@ class RoadsOnlyLane(unittest.TestCase):
         written.assert_not_called()
 
 
+class IndexNowPing(unittest.TestCase):
+    """Fast indexing is best-effort: never fatal, and the key is publicly served."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        patcher = mock.patch.object(refresh, "LOG_PATH", Path(self._tmp.name) / "refresh.log")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_ping_posts_host_key_and_urls(self) -> None:
+        captured: dict = {}
+
+        class Response:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+
+        def fake_urlopen(request, timeout=None):
+            captured["url"] = request.full_url
+            captured["data"] = json.loads(request.data.decode("utf-8"))
+            return Response()
+
+        with mock.patch.object(refresh.urllib.request, "urlopen", side_effect=fake_urlopen):
+            refresh.ping_indexnow()
+        self.assertEqual(captured["url"], refresh.INDEXNOW_ENDPOINT)
+        self.assertEqual(captured["data"]["host"], "vigieqc.com")
+        self.assertEqual(captured["data"]["key"], refresh.INDEXNOW_KEY)
+        self.assertIn("https://vigieqc.com/", captured["data"]["urlList"])
+
+    def test_ping_failure_is_not_fatal(self) -> None:
+        with mock.patch.object(refresh.urllib.request, "urlopen", side_effect=OSError("down")):
+            refresh.ping_indexnow()  # must not raise
+
+    def test_key_file_is_published_from_the_public_tree(self) -> None:
+        key_file = harness.ROOT / "public" / f"{refresh.INDEXNOW_KEY}.txt"
+        self.assertEqual(key_file.read_text(encoding="utf-8").strip(), refresh.INDEXNOW_KEY)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -54,6 +54,15 @@ _SPOOF = re.compile(
 TITLE_CAP = 300     # relayed titles are truncated, never padded or rewritten
 SUMMARY_CAP = 2000  # excerpt source and search index; longer summaries add no recall
 
+# Discoverability / sharing identity — one source for the head.
+SITE_URL = "https://vigieqc.com"
+SITE_CANONICAL = f"{SITE_URL}/"
+SITE_TITLE = "Vigie — Québec, à hauteur de vie"
+SITE_DESCRIPTION = (
+    "Comprendre ce qui bouge à Québec. Un point local, des sources à comparer "
+    "et des repères pour agir. Sans compte, sans fil infini."
+)
+
 
 def sanitize(value: object) -> str:
     return _SPOOF.sub("", str(value if value is not None else ""))
@@ -1310,9 +1319,14 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
     edition_at = status.get("at") or generated_at
     return f'''<!doctype html>
 <html lang="fr-CA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Comprendre ce qui bouge à Québec. Un point local, des sources à comparer et des repères pour agir. Sans compte, sans fil infini.">
+<meta name="description" content="{SITE_DESCRIPTION}">
+<link rel="canonical" href="{SITE_CANONICAL}">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<meta property="og:type" content="website"><meta property="og:site_name" content="Vigie"><meta property="og:locale" content="fr_CA">
+<meta property="og:title" content="{SITE_TITLE}"><meta property="og:description" content="{SITE_DESCRIPTION}"><meta property="og:url" content="{SITE_CANONICAL}">
+<meta name="twitter:card" content="summary"><meta name="twitter:title" content="{SITE_TITLE}"><meta name="twitter:description" content="{SITE_DESCRIPTION}">
 <meta name="theme-color" content="#f5f8f8" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0e1518" media="(prefers-color-scheme: dark)"><meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer">
-<title>Vigie — Québec, à hauteur de vie</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/fonts.css"><link rel="stylesheet" href="/assets/brief.css"><script src="/assets/brief.js" defer></script></head>
+<title>{SITE_TITLE}</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/fonts.css"><link rel="stylesheet" href="/assets/brief.css"><script src="/assets/brief.js" defer></script></head>
 <body><a class="skip-link" href="#essentiel">Aller aux nouvelles</a>
 <header class="masthead"><a class="wordmark" href="/" aria-label="Vigie, accueil"><svg width="28" height="32" viewBox="0 0 28 32" aria-hidden="true"><path d="M2 5 14 28 26 5M8 5l6 12 6-12" fill="none" stroke="currentColor" stroke-width="2.5"/></svg>vigie<span class="wordmark-dot">.</span></a><span class="edition">QUÉBEC, À HAUTEUR DE VIE</span><nav aria-label="Navigation principale"><a href="#essentiel">Le point</a><a href="#dossiers">Les dossiers</a><a href="#agir">Repères utiles</a><a href="#methode">Notre méthode</a></nav><button class="cmdk-open js-only" type="button" id="cmdk-open" aria-haspopup="dialog" aria-controls="cmdk">Recherche rapide <kbd>Ctrl K</kbd></button></header>
 <main><section class="intro" aria-labelledby="intro-title"><div><p class="eyebrow">UNE VILLE. VOTRE QUOTIDIEN.</p><h1 id="intro-title">Moins de bruit.<br><em>Plus de Québec.</em></h1><p class="intro-text">Les nouvelles locales. Les sources pour comprendre. Les repères pour agir. Puis, reprenez votre journée.</p></div>

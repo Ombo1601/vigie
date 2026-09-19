@@ -1405,6 +1405,7 @@ def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None
   <meta name="description" content="Vigie — Quebec City lookout. What approaches life here: Approaches from public method, not a feed." />
   <meta name="theme-color" content="#0b4f4a" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="canonical" href="https://vigieqc.com/explorer.html" />
   <title>Vigie — Quebec City lookout</title>
   <link rel="stylesheet" href="/assets/fonts.css" />
   <style>
