@@ -162,6 +162,46 @@ class ClusterMain(unittest.TestCase):
             labels = [t["label"] for t in airport["tensions"]]
             self.assertTrue(any("CBC" in lab for lab in labels))
 
+    def _pair(self, geo_a: str, geo_b: str):
+        with tempfile.TemporaryDirectory() as raw:
+            d = Path(raw)
+            inp, out = d / "in.json", d / "out.json"
+
+            def item(sid: str, title: str, geo: str) -> dict:
+                return {
+                    "id": sid + title[:8], "title": title, "summary": "",
+                    "url": "https://example.test/" + sid, "source_id": sid,
+                    "source_name": sid, "language": "fr",
+                    "published_at": "2026-09-19T10:00:00+00:00",
+                    "enrich": {"geo": {"geo": geo}, "topics": [{"topic": "law"}]},
+                }
+
+            payload = {
+                "normalized_at": "2026-09-19T12:00:00+00:00",
+                "candidates": [
+                    item("le-devoir",
+                         "La ministre Hajdu réduit les interventions de l’État en cas de grève", geo_a),
+                    item("la-presse",
+                         "La ministre Hajdu compte réduire les interventions de l’État en cas de grève", geo_b),
+                ],
+            }
+            inp.write_text(json.dumps(payload), encoding="utf-8")
+            cluster_issues.IN_PATH = inp
+            cluster_issues.OUT_ISSUES = out
+            cluster_issues.main()
+            return json.loads(out.read_text(encoding="utf-8"))
+
+    def test_linked_voice_can_join_a_province_anchored_event(self) -> None:
+        written = self._pair("linked", "quebec")
+        self.assertEqual(len(written["issues"]), 1)
+        self.assertEqual(written["issues"][0]["source_count"], 2)
+        self.assertEqual(set(written["issues"][0]["geo_focus"]), {"linked", "quebec"})
+
+    def test_pure_linked_group_never_becomes_a_dossier(self) -> None:
+        written = self._pair("linked", "linked")
+        self.assertEqual(written["issues"], [])
+        self.assertEqual(written["dropped_no_city_anchor"], 1)
+
 
 class DossierRecall(unittest.TestCase):
     """Nest law + light plural folding: more genuine dossiers, never world fog."""

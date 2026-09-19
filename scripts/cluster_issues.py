@@ -505,10 +505,11 @@ def main() -> None:
         if identity:
             seen.add(identity)
         accepted.append(candidate)
-    city_pool = [c for c in accepted if geo_of(c) == "quebec-city"]
-    province_pool = [c for c in accepted if geo_of(c) == "quebec"]
-    pool = city_pool + province_pool
-    buckets = event_buckets(pool)
+    # Bucket every accepted candidate; the nest gate (`dossier_anchor_ok`)
+    # drops pure linked / world-wire groups, but a linked voice can still join
+    # an event anchored in the city or the province — a federal story carried
+    # by one national and one local outlet is a real cross-source dossier.
+    buckets = event_buckets(accepted)
     previous = []
     previous_loaded = False
     if OUT_ISSUES.exists():
