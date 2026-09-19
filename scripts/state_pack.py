@@ -40,6 +40,11 @@ EXPLICIT = (
     "roadworks/latest_roadworks.json",
     "media/brief_manifest.json",
     "raw/_ua_policy.json",
+    # The latest rendered inputs, so the hourly roads-only lane can re-render
+    # without re-running normalize/enrich/cluster (no new edition).
+    "normalized/latest_candidates.json",
+    "normalized/latest_enriched.json",
+    "normalized/latest_ranked.json",
 )
 
 

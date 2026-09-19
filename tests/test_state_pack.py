@@ -76,6 +76,14 @@ class CuratedMembers(unittest.TestCase):
         self.assertNotIn("data/raw/_run_20260101T000000Z.json", names)
         self.assertNotIn("data/issues/20260101T000000Z_issues.json", names)
 
+    def test_includes_the_latest_rendered_inputs_for_the_roads_lane(self) -> None:
+        for name in (
+            "normalized/latest_candidates.json",
+            "normalized/latest_enriched.json",
+            "normalized/latest_ranked.json",
+        ):
+            self.assertIn(name, state_pack.EXPLICIT)
+
     def test_round_trip_restores_the_same_bytes(self) -> None:
         archive = self.root / "state.tar.gz"
         self.assertGreater(state_pack.pack(archive), 0)

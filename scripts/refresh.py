@@ -25,6 +25,8 @@ only when the chain completed (or was skipped because another run is active).
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -33,9 +35,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import store_io
+
 ROOT = Path(__file__).resolve().parents[1]
 LOG_PATH = ROOT / "data" / "ops" / "refresh.log"
 LOCK_PATH = ROOT / "data" / "ops" / "refresh.lock"
+ROADS_SIGNAL_PATH = ROOT / "data" / "ops" / "roads_signal.json"
+ROADWORKS_STORE = ROOT / "data" / "roadworks" / "latest_roadworks.json"
+ROADS_SIGNAL_METHOD = "roads-signal-v1"
 LOCK_STALE_SECONDS = 2 * 3600
 LOG_ROTATE_BYTES = 5 * 1024 * 1024  # one previous log kept as refresh.log.1
 TEAM = "deemto"
@@ -147,12 +154,104 @@ def acquire_lock() -> bool:
             pass
 
 
+_ROADS_FIELDS = (
+    "event_type", "event_status", "vehicle_impact", "direction",
+    "start_date", "end_date", "description", "road_names", "restrictions", "update_date",
+)
+
+
+def roads_signal(store_path: Path = ROADWORKS_STORE) -> str:
+    """Content signal of the declared obstructions, ignoring collection clocks.
+
+    `fetched_at` and the per-event presence counters move on every collection, so
+    they are not a change; the active event set and its relayed fields are. An
+    empty or unreadable store yields "" and the caller then refreshes.
+    """
+    try:
+        doc = json.loads(Path(store_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    events = doc.get("events") if isinstance(doc, dict) else None
+    if not isinstance(events, list):
+        return ""
+    rows = [
+        [str(event.get("event_id") or "")] + [event.get(field) for field in _ROADS_FIELDS]
+        for event in sorted(
+            (e for e in events if isinstance(e, dict)),
+            key=lambda e: str(e.get("event_id") or ""),
+        )
+    ]
+    payload = json.dumps(rows, ensure_ascii=False, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def read_roads_signal() -> str:
+    try:
+        doc = json.loads(ROADS_SIGNAL_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if isinstance(doc, dict) and doc.get("method") == ROADS_SIGNAL_METHOD:
+        return str(doc.get("sha256") or "")
+    return ""
+
+
+def write_roads_signal(sha: str) -> None:
+    if not sha:
+        return
+    try:
+        store_io.write_json_atomic(ROADS_SIGNAL_PATH, {"method": ROADS_SIGNAL_METHOD, "sha256": sha})
+    except OSError:
+        pass
+
+
+def _roads_only(python: str, *, deploy: bool) -> int:
+    """The real-time lane: refresh the official obstructions without an edition.
+
+    Never runs normalize/enrich/cluster, so the edition, its diff and the durable
+    history are untouched. The whole re-render and deploy is skipped when the
+    declarations did not change — collection clocks are not a change.
+    """
+    before = read_roads_signal()
+    run_step("wzdx", [python, "-X", "utf8", str(ROOT / "scripts" / "ingest_wzdx.py")], timeout=600)
+    after = roads_signal()
+    if not after or after == before:
+        log("NOCHANGE declared obstructions unchanged; render and deploy skipped")
+        return 0
+    run_step("anomalies", [python, "-X", "utf8", str(ROOT / "scripts" / "compile_anomalies.py")], timeout=300)
+    run_step("edges", [python, "-X", "utf8", str(ROOT / "scripts" / "edge_atlas.py")], timeout=300)
+    run_step("render", [python, "-X", "utf8", str(ROOT / "scripts" / "pipeline.py"), "--render-only"], timeout=600)
+    run_step("verify", [python, "-X", "utf8", str(ROOT / "scripts" / "verify.py")], timeout=1800)
+    if not deploy:
+        write_roads_signal(after)
+        log("OK roads refresh complete (deploy skipped by --no-deploy)")
+        return 0
+    vercel = shutil.which("vercel")
+    if not vercel:
+        raise RuntimeError("vercel CLI not found on PATH")
+    run_step(
+        "link",
+        [vercel, "link", "--yes", "--scope", TEAM, "--project", PROJECT, "--cwd", str(DEPLOY_DIR)],
+        timeout=300,
+    )
+    run_step("deploy", [vercel, "deploy", str(DEPLOY_DIR), "-y", "--prod"], timeout=900)
+    write_roads_signal(after)
+    log("OK roads production updated")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Collect, verify and deploy one edition.")
     parser.add_argument(
         "--no-deploy",
         action="store_true",
         help="Collect, verify and stage only; do not touch Vercel",
+    )
+    parser.add_argument(
+        "--roads-only",
+        action="store_true",
+        help="Refresh only the official roadworks lane (no new edition): ingest WZDX, "
+             "recompile anomalies and edges, re-render, and deploy only when the "
+             "declared obstructions changed",
     )
     args = parser.parse_args(argv)
 
@@ -161,6 +260,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         python = sys.executable
+        if args.roads_only:
+            return _roads_only(python, deploy=not args.no_deploy)
         run_step(
             "pipeline",
             [python, "-X", "utf8", str(ROOT / "scripts" / "pipeline.py"), "--stage"],
@@ -195,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
             [vercel, "deploy", str(DEPLOY_DIR), "-y", "--prod"],
             timeout=900,
         )
+        write_roads_signal(roads_signal())
         log("OK production updated")
         return 0
     except (RuntimeError, OSError) as exc:

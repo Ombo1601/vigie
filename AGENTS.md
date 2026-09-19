@@ -31,6 +31,27 @@ without repository activity). `.github/workflows/ci.yml` runs
 `verify.py --code-only` on every push/PR, so the six-hourly refresh is not the
 first place a broken commit surfaces.
 
+`.github/workflows/vigie-roads.yml` runs **hourly** and refreshes only the
+official WZDX lane (`refresh.py --roads-only`): ingest → anomalies/edges →
+`pipeline --render-only` → verify → deploy, and **only when the declared
+obstructions actually changed** (a content signal ignores collection clocks and
+presence counters). It never runs normalize/enrich/cluster, so it creates no
+edition and leaves the change ledger, dossier history and edition metrics
+untouched. It shares the `vigie-refresh` concurrency group with the full refresh.
+
+### Rotating the secrets
+
+- **`VERCEL_TOKEN`** — Vercel → Account Settings → Tokens → create one with
+  access to the `deemto` team, then
+  `gh secret set VERCEL_TOKEN --repo Ombo1601/vigie`.
+- **`STATE_TOKEN`** — GitHub → Settings → Developer settings → Personal access
+  tokens → **Fine-grained** → resource owner `Ombo1601`, repository access
+  *Only select repositories → `Ombo1601/vigie-state`*, permission
+  **Contents: Read and write** (release assets included), then
+  `gh secret set STATE_TOKEN --repo Ombo1601/vigie`. Put the expiry in a calendar.
+- The failure-alert steps use the workflow's own `GITHUB_TOKEN` (`issues: write`),
+  never `STATE_TOKEN`.
+
 ## Commands (from the repo root)
 
 ```text

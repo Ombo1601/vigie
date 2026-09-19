@@ -1,0 +1,39 @@
+name: Ops alert
+description: >-
+  GitHub-native alerting for the collector: on failure open (or comment on) the
+  "Vigie refresh failed (automated)" issue, on recovery comment and close it.
+  Diagnosed silence, no external service.
+
+inputs:
+  mode:
+    description: "'failure' to report, 'success' to close a recovered alert"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Update the ops issue
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+        title="Vigie refresh failed (automated)"
+        num=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+          --search 'in:title "Vigie refresh failed (automated)"' \
+          --limit 1 --json number --jq '.[0].number // empty')
+        run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+        if [ "$MODE" = "failure" ]; then
+          body="Automated refresh failed. Run: ${run_url} (workflow: ${GITHUB_WORKFLOW}, event: ${GITHUB_EVENT_NAME}, sha: ${GITHUB_SHA:0:7}). The previous production site stays up; the run log carries the diagnosis."
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi
+        else
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --repo "$GITHUB_REPOSITORY" --body "Recovered by run ${run_url}."
+            gh issue close "$num" --repo "$GITHUB_REPOSITORY"
+          fi
+        fi

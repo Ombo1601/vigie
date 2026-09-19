@@ -1,31 +1,18 @@
-name: Vigie refresh
+name: Vigie roads refresh
 
-# The collector runs here, not on a laptop. GitHub Actions is the free scheduler
-# and runner; Vercel stays the host. Cross-edition memory travels as one tarball
-# in the PRIVATE Ombo1601/vigie-state repo (release asset), because the public
-# repo must never carry publisher content.
+# The real-time lane: the official WZDX obstructions update continuously, so this
+# refreshes only that reading — it never runs normalize/enrich/cluster and never
+# creates an edition, so "depuis la dernière édition", the dossier history and
+# the edition metrics are untouched. If the declarations did not change, the
+# render and deploy are skipped entirely (collection clocks are not a change).
 #
-# Required repository secrets:
-#   VERCEL_TOKEN  Vercel token with access to the deemto team / vigie project
-#   STATE_TOKEN   fine-grained PAT with contents:write on Ombo1601/vigie-state
-#
-# Note: GitHub disables scheduled workflows after ~60 days of repository
-# inactivity; a normal commit restores them. Vercel's git auto-deploy is
-# disabled in vercel.json, so this workflow is the only production writer.
+# Shares the `vigie-refresh` concurrency group so it can never overlap a full
+# refresh; both write production.
 
 on:
   schedule:
-    - cron: "17 */6 * * *"   # 00:17, 06:17, 12:17, 18:17 UTC
-  workflow_dispatch:
-    inputs:
-      deploy:
-        description: "Deploy to production (uncheck to validate the chain without Vercel)"
-        type: boolean
-        default: true
-      simulate_failure:
-        description: "Ops drill: force a failure to test the alert channel (never deploys)"
-        type: boolean
-        default: false
+    - cron: "7 * * * *"   # hourly, at :07
+  workflow_dispatch: {}
 
 concurrency:
   group: vigie-refresh
@@ -36,9 +23,9 @@ permissions:
   issues: write
 
 jobs:
-  refresh:
+  roads:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       GH_TOKEN: ${{ secrets.STATE_TOKEN }}
@@ -70,19 +57,8 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
-      - name: Ops drill (optional)
-        if: ${{ inputs.simulate_failure }}
-        run: |
-          echo "Simulated failure requested to test the alert channel."
-          exit 1
-
-      - name: Refresh (collect -> verify -> stage -> deploy)
-        run: |
-          if [ "${{ inputs.deploy }}" = "false" ]; then
-            python3 -X utf8 scripts/refresh.py --no-deploy
-          else
-            python3 -X utf8 scripts/refresh.py
-          fi
+      - name: Roads refresh (ingest WZDX -> anomalies/edges -> render -> deploy if changed)
+        run: python3 -X utf8 scripts/refresh.py --roads-only
 
       - name: Persist cross-edition state
         if: always()
@@ -95,8 +71,6 @@ jobs:
           gh release upload state "$RUNNER_TEMP/state/state.tar.gz" \
             --repo "$STATE_REPO" --clobber
 
-      # Diagnosed silence on the deploy path: a failed run opens (or comments on)
-      # a GitHub issue; the next successful run closes it. No external service.
       - name: Report failure
         if: failure()
         uses: ./.github/actions/ops-alert
