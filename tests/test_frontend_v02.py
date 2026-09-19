@@ -320,10 +320,22 @@ class Discoverability(unittest.TestCase):
             'content="index, follow',
             'property="og:title"',
             'property="og:url"',
-            'name="twitter:card"',
+            'property="og:image" content="https://vigieqc.com/assets/og-default.png"',
+            'property="og:image:width" content="1200"',
+            'property="og:image:height" content="630"',
+            'name="twitter:card" content="summary_large_image"',
+            'name="twitter:image"',
         ):
             self.assertIn(needle, head)
         self.assertNotIn("http://", head)
+
+    def test_og_image_is_a_real_1200x630_png(self) -> None:
+        data = (harness.ROOT / "public" / "assets" / "og-default.png").read_bytes()
+        self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+        width = int.from_bytes(data[16:20], "big")
+        height = int.from_bytes(data[20:24], "big")
+        self.assertEqual((width, height), (1200, 630))
+        self.assertLess(len(data), 300_000)
 
 
 if __name__ == "__main__":

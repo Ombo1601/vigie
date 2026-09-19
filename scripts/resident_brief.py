@@ -62,6 +62,11 @@ SITE_DESCRIPTION = (
     "Comprendre ce qui bouge à Québec. Un point local, des sources à comparer "
     "et des repères pour agir. Sans compte, sans fil infini."
 )
+SITE_OG_IMAGE = f"{SITE_URL}/assets/og-default.png"
+SITE_OG_ALT = (
+    "Vigie : le mot-symbole « vigie. », une rose des vents, et la phrase "
+    "« Québec, à hauteur de vie »."
+)
 
 
 def sanitize(value: object) -> str:
@@ -1324,7 +1329,8 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <meta property="og:type" content="website"><meta property="og:site_name" content="Vigie"><meta property="og:locale" content="fr_CA">
 <meta property="og:title" content="{SITE_TITLE}"><meta property="og:description" content="{SITE_DESCRIPTION}"><meta property="og:url" content="{SITE_CANONICAL}">
-<meta name="twitter:card" content="summary"><meta name="twitter:title" content="{SITE_TITLE}"><meta name="twitter:description" content="{SITE_DESCRIPTION}">
+<meta property="og:image" content="{SITE_OG_IMAGE}"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="{SITE_OG_ALT}">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="{SITE_TITLE}"><meta name="twitter:description" content="{SITE_DESCRIPTION}"><meta name="twitter:image" content="{SITE_OG_IMAGE}"><meta name="twitter:image:alt" content="{SITE_OG_ALT}">
 <meta name="theme-color" content="#f5f8f8" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0e1518" media="(prefers-color-scheme: dark)"><meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer">
 <title>{SITE_TITLE}</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/fonts.css"><link rel="stylesheet" href="/assets/brief.css"><script src="/assets/brief.js" defer></script></head>
 <body><a class="skip-link" href="#essentiel">Aller aux nouvelles</a>

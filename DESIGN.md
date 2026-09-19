@@ -39,6 +39,17 @@ Beauty is method made effortless. Fog is chrome that pretends to clarify.
 
 _None yet._ Do not invent a Quebec City photo. Empty `public/place/` is correct.
 
+## Social card (OG image)
+
+`public/assets/og-default.png` (1200×630) is a **graphic identity card**, not a
+place photograph: the brief's ice/stone wash, the `vigie.` wordmark with the
+copper-teal dot, the promise « Québec, à hauteur de vie », the nest-depth
+hairlines (city → province → linked) and the lookout compass glyph — the same
+palette and type voice as the page. It is deterministic artwork (System.Drawing,
+Georgia + Segoe UI), carries no invented geography, and is served from our own
+origin. It does not open the door to a stock or AI place photo: `public/place/`
+stays empty until a real, named Quebec City image is listed above.
+
 ## Motion (intentional, finite)
 
 - Brand settle on Arrival
@@ -135,3 +146,4 @@ adaptive variable type, persistent wayfinding, and static maps with a legend
 | 2026-09-19 | Phase E spatial reading: store carries each event's first official vertex; the brief draws a static self-hosted dot-density scheme with legend and scale, no basemap, no geographic-proof claim | Bucky + Inventor |
 | 2026-09-19 | Phase F cross-source reading: per-dossier voice roster (spoke + quiet, media silence named) and a collapsed collection timeline from the durable history (counters only, no escalation) | Bucky + Inventor |
 | 2026-09-19 | Saved corridors: opt-in declared street names, literal match, on-device only, no geolocation and no route effect; the street index island counts over every active event | Bucky + Inventor |
+| 2026-09-19 | Social card: deterministic graphic OG image (palette, wordmark, nest hairlines, compass glyph) — not a place photo; `public/place/` stays empty | Bucky + Inventor |
