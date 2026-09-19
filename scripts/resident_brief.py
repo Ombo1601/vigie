@@ -1322,13 +1322,23 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
     eligible = {r.get("id"): r for r in rows}
     stories = "".join(article_html(r, n + 1, related_sources(r, issues, eligible), media) for n, r in enumerate(rows))
     areas = "".join(f'<option value="{esc(k)}">{esc(v[0])}</option>' for k, v in AREAS.items())
-    topics = (
+    # Five primary themes stay visible; the rest live behind "Plus de thèmes"
+    # (progressive disclosure — the secondary chips are still real controls).
+    primary_topics = (
         ("all", "Tout"), ("transport", "Se déplacer"), ("housing", "Se loger"),
-        ("health", "Santé"), ("law", "Vie publique"), ("energy/hydro", "Énergie"),
-        ("security", "Sécurité"), ("economy", "Économie"), ("education", "Éducation"),
-        ("environment", "Environnement"), ("culture", "Culture"),
+        ("health", "Santé"), ("law", "Vie publique"),
     )
-    filters = "".join(f'<button type="button" data-topic="{k}" aria-pressed="{"true" if k == "all" else "false"}">{v}</button>' for k, v in topics)
+    secondary_topics = (
+        ("energy/hydro", "Énergie"), ("security", "Sécurité"), ("economy", "Économie"),
+        ("education", "Éducation"), ("environment", "Environnement"), ("culture", "Culture"),
+    )
+
+    def _topic_chip(key: str, label: str) -> str:
+        pressed = "true" if key == "all" else "false"
+        return f'<button type="button" data-topic="{key}" aria-pressed="{pressed}">{label}</button>'
+
+    filters = "".join(_topic_chip(k, v) for k, v in primary_topics)
+    filters_more = "".join(_topic_chip(k, v) for k, v in secondary_topics)
     service_html = "".join(f'<a class="service" href="{url}" rel="noopener noreferrer"><span class="service-index">{num} / {esc(eyebrow)}</span><h3>{esc(title)} <span aria-hidden="true">↗</span></h3><p>{esc(desc)}</p></a>' for num, eyebrow, title, desc, url in SERVICES)
     outcomes = {r.get("source_id"): r for r in run.get("results", []) if isinstance(r, dict)}
     source_rows = "".join(f'<li><span>{esc(sid)}</span><span>{"Collecté" if outcomes.get(sid, {}).get("ok") and not outcomes.get(sid, {}).get("parse_error") else "Indisponible"}</span></li>' for sid in (run.get("enabled_rss") or list(outcomes)))
@@ -1368,7 +1378,7 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
 {glance}
 <div class="visit-strip js-only"><p id="visit-status" role="status">Une première visite ? Prenez vos repères.</p><button id="remember" type="button">Mémoriser ce point de lecture</button><ul class="visit-list" id="visit-list" hidden></ul></div>
 <div class="controls js-only"><div class="view-tabs" role="group" aria-label="Vue des articles"><button type="button" data-view="brief" aria-pressed="true">Le point local</button><button type="button" data-view="new" aria-pressed="false">Depuis mon repère <span id="new-count"></span></button><button type="button" data-view="saved" aria-pressed="false">Mes articles gardés <span id="saved-count"></span></button></div>
-<div class="search-row"><label class="search-label"><span class="sr-only">Rechercher dans les titres et extraits</span><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m12 12 5 5"/></svg><input id="search" type="search" placeholder="Une rue, un sujet, un nom…" autocomplete="off" maxlength="200"></label><label class="select-label"><span>Territoire</span><select id="scope"><option value="local">Québec et environs</option><option value="province">Tout le Québec</option><option value="all">Tous les flux</option></select></label><label class="select-label"><span>Lieu mentionné</span><select id="area"><option value="all">Tous les lieux</option>{areas}</select></label></div><div class="topic-filters" role="group" aria-label="Thème des articles">{filters}</div><p class="filter-note">Les lieux et thèmes sont repérés automatiquement. Un lieu absent d’un extrait peut échapper au filtre.</p></div>
+<div class="search-row"><label class="search-label"><span class="sr-only">Rechercher dans les titres et extraits</span><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m12 12 5 5"/></svg><input id="search" type="search" placeholder="Une rue, un sujet, un nom…" autocomplete="off" maxlength="200"></label><label class="select-label"><span>Territoire</span><select id="scope"><option value="local">Québec et environs</option><option value="province">Tout le Québec</option><option value="all">Tous les flux</option></select></label><label class="select-label"><span>Lieu mentionné</span><select id="area"><option value="all">Tous les lieux</option>{areas}</select></label></div><div class="topic-filters" role="group" aria-label="Thème des articles">{filters}<button type="button" class="more-topics" id="more-topics" aria-expanded="false" aria-controls="more-topics-list">Plus de thèmes</button></div><div class="topic-filters topic-filters-more" id="more-topics-list" role="group" aria-label="Autres thèmes" hidden>{filters_more}</div><p class="filter-note">Les lieux et thèmes sont repérés automatiquement. Un lieu absent d’un extrait peut échapper au filtre.</p></div>
 <noscript><p class="notice">Tous les articles récents sont affichés. La recherche et les repères personnels nécessitent JavaScript.</p></noscript>
 <div class="results-bar"><p id="result-count" role="status">{len(rows)} articles récents dans les flux collectés</p><button class="text-button js-only" type="button" id="reset-filters">Réinitialiser les filtres</button></div><div id="stories">{stories}{empty}</div>
 <div id="no-results" class="no-data" hidden><h3>Aucun article dans cette vue.</h3><p>Essayez un autre lieu ou élargissez le territoire. Une absence dans nos flux ne signifie pas qu’il ne se passe rien.</p><button type="button" id="empty-reset">Voir le point local</button></div>

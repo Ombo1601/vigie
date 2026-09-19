@@ -72,6 +72,16 @@
   const endNoteEl = $('#end-note'), savedCountEl = $('#saved-count'), newCountEl = $('#new-count'), visitStatusEl = $('#visit-status');
   const visitListEl = $('#visit-list');
   const viewBtns = all('[data-view]'), topicBtns = all('[data-topic]');
+  // Progressive disclosure: the secondary theme chips live behind one toggle.
+  const moreTopicsBtn = $('#more-topics'), moreTopicsList = $('#more-topics-list');
+  const secondaryTopicKeys = moreTopicsList ? all('#more-topics-list [data-topic]').map(b => b.dataset.topic) : [];
+  const setMoreTopics = (open) => {
+    if (!moreTopicsBtn || !moreTopicsList) return;
+    moreTopicsList.hidden = !open;
+    moreTopicsBtn.setAttribute('aria-expanded', String(open));
+    moreTopicsBtn.textContent = open ? 'Moins de thèmes' : 'Plus de thèmes';
+  };
+  on(moreTopicsBtn, 'click', () => setMoreTopics(moreTopicsList && moreTopicsList.hidden));
   function render() {
     const terms = fold(searchEl.value.trim()).split(/\s+/).filter(Boolean);
     const scope = scopeEl.value, area = areaEl.value;
@@ -95,6 +105,7 @@
     });
     viewBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
     topicBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.topic === topic)));
+    if (secondaryTopicKeys.includes(topic)) setMoreTopics(true);
     resultCountEl.textContent = `${Math.min(limit, matches.length)} sur ${matches.length} articles dans cette vue`;
     noResultsEl.hidden = matches.length > 0;
     showMoreEl.hidden = matches.length <= limit;

@@ -339,5 +339,11 @@ class Discoverability(unittest.TestCase):
         self.assertLess(len(data), 300_000)
 
 
+    def test_script_implements_the_theme_disclosure(self) -> None:
+        js = (ROOT / "public" / "assets" / "brief.js").read_text(encoding="utf-8")
+        for needle in ("more-topics", "setMoreTopics", "secondaryTopicKeys"):
+            self.assertIn(needle, js)
+
+
 if __name__ == "__main__":
     unittest.main()

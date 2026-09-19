@@ -225,6 +225,17 @@ class TopicFilters(unittest.TestCase):
                       "energy/hydro", "security", "economy", "education", "environment"):
             self.assertIn(f'data-topic="{topic}"', page)
 
+    def test_secondary_themes_are_behind_a_disclosure(self) -> None:
+        page = brief.render_brief([], NOW.isoformat(), [], collection())
+        self.assertIn('id="more-topics"', page)
+        self.assertIn('aria-controls="more-topics-list"', page)
+        self.assertIn('aria-expanded="false"', page)
+        start = page.index('id="more-topics-list"')
+        block = page[start: page.index("</div>", start)]
+        self.assertIn("hidden", block)
+        for topic in ("energy/hydro", "security", "economy", "education", "environment", "culture"):
+            self.assertIn(f'data-topic="{topic}"', block)
+
     def test_trade_is_canonicalised_to_economy(self) -> None:
         item = story(enrich={"geo": {"geo": "quebec-city"}, "topics": [{"topic": "trade"}]})
         page = brief.render_brief([item], NOW.isoformat(), [], collection())

@@ -197,4 +197,8 @@ img{opacity:.94}
 .rw-key-closed{background:#7a2e1d}
 .rw-key-bar{width:16px;height:2px;border-radius:0;background:var(--ink);vertical-align:middle}
 @media(prefers-color-scheme:dark){.rw-sketch svg{background:#131e22}.rw-dot-closed{fill:#e0906f}.rw-key-closed{background:#e0906f}}
+/* Progressive disclosure for the secondary theme chips */
+.more-topics{border-style:dashed;color:var(--accent)}
+.more-topics[aria-expanded=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+.topic-filters-more{margin-top:8px}
 @media print{.glance,.cmdk{display:none!important}}
