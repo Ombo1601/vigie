@@ -84,7 +84,7 @@ image est retiré **dans l'heure qui suit la demande** (une édition), et la
 source est désactivée publiquement dans `sources.yaml` avec la raison de la
 coupure — jamais silencieusement.
 
-Contact : dépôt public [github.com/Ombinos/vigie](https://github.com/Ombinos/vigie)
+Contact : dépôt public [github.com/Ombo1601/vigie](https://github.com/Ombo1601/vigie)
 (section Issues), ou l'adresse qui y figure.
 
 ## Responsabilité

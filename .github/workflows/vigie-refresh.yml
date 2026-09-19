@@ -2,12 +2,12 @@ name: Vigie refresh
 
 # The collector runs here, not on a laptop. GitHub Actions is the free scheduler
 # and runner; Vercel stays the host. Cross-edition memory travels as one tarball
-# in the PRIVATE Ombinos/vigie-state repo (release asset), because the public
+# in the PRIVATE Ombo1601/vigie-state repo (release asset), because the public
 # repo must never carry publisher content.
 #
 # Required repository secrets:
 #   VERCEL_TOKEN  Vercel token with access to the deemto team / vigie project
-#   STATE_TOKEN   fine-grained PAT with contents:write on Ombinos/vigie-state
+#   STATE_TOKEN   fine-grained PAT with contents:write on Ombo1601/vigie-state
 #
 # Note: GitHub disables scheduled workflows after ~60 days of repository
 # inactivity; a normal commit restores them. Vercel's git auto-deploy is
@@ -37,7 +37,7 @@ jobs:
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       GH_TOKEN: ${{ secrets.STATE_TOKEN }}
-      STATE_REPO: Ombinos/vigie-state
+      STATE_REPO: Ombo1601/vigie-state
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

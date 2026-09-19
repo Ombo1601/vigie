@@ -3,7 +3,7 @@ Vigie - one-shot refresh: collect, verify, stage, deploy to production.
 
 Designed to run unattended. The primary runner is the GitHub Actions workflow
 (.github/workflows/vigie-refresh.yml): it restores the cross-edition state from
-the private `Ombinos/vigie-state` store, runs this chain, and persists the state
+the private `Ombo1601/vigie-state` store, runs this chain, and persists the state
 back. The Windows scheduled task is an optional local fallback. Every failing
 step stops the chain: a broken edition is never deployed and the previously
 deployed site stays up.

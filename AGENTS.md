@@ -10,7 +10,7 @@ no-circumvention (R9) and same-day opt-out (R10) are permanent house law.
 
 The collector is **not** a laptop. `.github/workflows/vigie-refresh.yml` runs every
 6 hours: it restores the cross-edition state tarball from the **private**
-`Ombinos/vigie-state` repo (`scripts/state_pack.py unpack`), runs
+`Ombo1601/vigie-state` repo (`scripts/state_pack.py unpack`), runs
 `scripts/refresh.py` (pipeline → verify → stage → `vercel deploy --prod`), and
 persists the state back (`state_pack.py pack`, uploaded as the `state` release
 asset). Secrets: `VERCEL_TOKEN` and `STATE_TOKEN` (contents:write on
