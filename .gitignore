@@ -20,6 +20,8 @@ Thumbs.db
 /data/
 /deploy/
 /public/*.html
+# Google Search Console (and similar) ownership files must ship as real assets
+!/public/google*.html
 /public/build-manifest.json
 
 # Historical one-off patch scripts and execution logs
