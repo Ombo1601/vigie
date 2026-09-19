@@ -163,5 +163,36 @@ class ClusterMain(unittest.TestCase):
             self.assertTrue(any("CBC" in lab for lab in labels))
 
 
+class DossierRecall(unittest.TestCase):
+    """Nest law + light plural folding: more genuine dossiers, never world fog."""
+
+    def _item(self, geo: str) -> dict:
+        return {"enrich": {"geo": {"geo": geo}}}
+
+    def test_city_or_province_anchors_a_dossier(self) -> None:
+        self.assertTrue(cluster_issues.dossier_anchor_ok("event-x", [self._item("quebec-city")]))
+        self.assertTrue(cluster_issues.dossier_anchor_ok(
+            "event-x", [self._item("linked"), self._item("quebec")]))
+
+    def test_pure_linked_never_anchors(self) -> None:
+        self.assertFalse(cluster_issues.dossier_anchor_ok(
+            "event-x", [self._item("linked"), self._item("linked")]))
+
+    def test_airport_is_province_ok(self) -> None:
+        self.assertTrue(cluster_issues.dossier_anchor_ok("airport", [self._item("linked")]))
+
+    def test_plural_folding_unifies_the_same_event_title(self) -> None:
+        singular = cluster_issues.headline_tokens({"title": "Quatre arrestation à Sainte-Foy"})
+        plural = cluster_issues.headline_tokens({"title": "Quatre arrestations à Sainte-Foy"})
+        self.assertEqual(singular, plural)
+
+    def test_distinct_events_still_do_not_merge(self) -> None:
+        a = {"title": "Incendie majeur dans Limoilou", "summary": "",
+             "published_at": "2026-09-19T10:00:00+00:00"}
+        b = {"title": "Un cycliste blessé à Sainte-Foy", "summary": "",
+             "published_at": "2026-09-19T11:00:00+00:00"}
+        self.assertFalse(cluster_issues.same_event(a, b))
+
+
 if __name__ == "__main__":
     unittest.main()

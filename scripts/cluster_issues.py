@@ -217,6 +217,17 @@ def geo_of(c: dict) -> str:
     return c.get("geo") or "unknown"
 
 
+def dossier_anchor_ok(scar: str, items: list[dict]) -> bool:
+    """Nest law: a dossier needs a Québec City or Québec anchor.
+
+    Pure linked / world-wire groups never become dossiers; an airport scar is
+    Province-OK by name.
+    """
+    if scar in PROVINCE_OK:
+        return True
+    return bool({geo_of(it) for it in items} & {"quebec-city", "quebec"})
+
+
 def issue_id(scar: str, source_count: int = 0) -> str:
     """A dossier survives an outlet joining/leaving. Count is not identity."""
     key = f"dossier-v1|{scar}"
@@ -317,8 +328,25 @@ def folded(text: str) -> str:
 _STOP = frozenset("les des une dans pour avec sans sur sous apres avant cette leurs plus moins veut vont faire fait selon encore entre comme sont sera etre avoir vers tout tous ville quebec canada canadian canadian says dit bruno marchand maire nouvelles nouveau nouvelle voici report reports news minister ministre premier gouvernement police jour jours annee annees pourrait contre doit the and that from this with about into over will have were been".split())
 
 
+def _stem(word: str) -> str:
+    """Very light plural folding: "arrestation/arrestations" are one token.
+
+    The >=3-shared + 0.55-Jaccard guard still does the precision work, so this
+    only helps genuine same-event pairs, never broad topic overlap.
+    """
+    if len(word) >= 5 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    if len(word) >= 5 and word.endswith("x"):
+        return word[:-1]
+    return word
+
+
 def headline_tokens(c: dict) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9]+", folded(str(c.get("title") or ""))) if len(w) >= 4 and w not in _STOP}
+    return {
+        _stem(w)
+        for w in re.findall(r"[a-z0-9]+", folded(str(c.get("title") or "")))
+        if len(w) >= 4 and w not in _STOP
+    }
 
 
 def event_scar(c: dict) -> str | None:
@@ -501,11 +529,11 @@ def main() -> None:
     for scar, items in buckets.items():
         if not items:
             continue
-        # quebec-city-first, unless scar is Province-OK (airport)
-        if scar not in PROVINCE_OK:
-            if not any(geo_of(it) == "quebec-city" for it in items):
-                dropped_no_city_anchor += 1
-                continue
+        # Nest law: a dossier must be anchored in Québec City or the province;
+        # pure linked / world-wire groups never become dossiers.
+        if not dossier_anchor_ok(scar, items):
+            dropped_no_city_anchor += 1
+            continue
 
         def voice_id(it: dict) -> str:
             sid = it.get("source_id") or ""
