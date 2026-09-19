@@ -295,5 +295,20 @@ class SavedCorridors(unittest.TestCase):
         self.assertNotIn("geolocation", js)
 
 
+class EditionStampHonesty(unittest.TestCase):
+    def test_section_note_uses_the_collection_not_the_render_clock(self) -> None:
+        # An hourly roads-only re-render must never relabel the edition.
+        run = {
+            "fetched_at": "2026-09-19T18:41:00+00:00",
+            "enabled_rss": ["x"],
+            "results": [{"source_id": "x", "ok": True, "item_count": 1}],
+        }
+        page = brief.render_brief([], "2026-09-19T22:21:00+00:00", [], run)
+        note = page[page.index('class="section-note"'):]
+        note = note[: note.index("</p>")]
+        self.assertIn("18:41 UTC", note)
+        self.assertNotIn("22:21 UTC", note)
+
+
 if __name__ == "__main__":
     unittest.main()
