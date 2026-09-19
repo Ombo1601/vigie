@@ -22,6 +22,10 @@ on:
         description: "Deploy to production (uncheck to validate the chain without Vercel)"
         type: boolean
         default: true
+      simulate_failure:
+        description: "Ops drill: force a failure to test the alert channel (never deploys)"
+        type: boolean
+        default: false
 
 concurrency:
   group: vigie-refresh
@@ -29,6 +33,7 @@ concurrency:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   refresh:
@@ -65,6 +70,12 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
+      - name: Ops drill (optional)
+        if: ${{ inputs.simulate_failure }}
+        run: |
+          echo "Simulated failure requested to test the alert channel."
+          exit 1
+
       - name: Refresh (collect -> verify -> stage -> deploy)
         run: |
           if [ "${{ inputs.deploy }}" = "false" ]; then
@@ -83,3 +94,30 @@ jobs:
                  --notes "Rolling snapshot of the cross-edition state (private; publisher content never enters the public repo)."
           gh release upload state "$RUNNER_TEMP/state/state.tar.gz" \
             --repo "$STATE_REPO" --clobber
+
+      # Diagnosed silence on the deploy path: a failed run opens (or comments on)
+      # a GitHub issue, and the next successful run closes it. No external service.
+      - name: Report failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Vigie refresh failed (automated)"
+          body="Automated refresh failed. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} (event: ${GITHUB_EVENT_NAME}, sha: ${GITHUB_SHA:0:7}). The previous production site stays up; the run log and the next state snapshot (data/ops/watchdog.md) carry the diagnosis."
+          num=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search 'in:title "Vigie refresh failed (automated)"' --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi
+
+      - name: Close recovered alert
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          num=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search 'in:title "Vigie refresh failed (automated)"' --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --repo "$GITHUB_REPOSITORY" --body "Recovered by run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+            gh issue close "$num" --repo "$GITHUB_REPOSITORY"
+          fi

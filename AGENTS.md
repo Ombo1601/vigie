@@ -23,6 +23,14 @@ optional fallback and runs the same `refresh.py`.
 When `data/` is needed locally, seed it by unpacking the private state tarball;
 never commit it.
 
+A **failed refresh opens (or comments on) a GitHub issue** titled “Vigie refresh
+failed (automated)”; the next successful run closes it — diagnosed silence, no
+external alerting service. `.github/workflows/keepalive.yml` commits a monthly
+heartbeat so GitHub never disables the schedules (it does that after ~60 days
+without repository activity). `.github/workflows/ci.yml` runs
+`verify.py --code-only` on every push/PR, so the six-hourly refresh is not the
+first place a broken commit surfaces.
+
 ## Commands (from the repo root)
 
 ```text

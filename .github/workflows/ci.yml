@@ -1,0 +1,38 @@
+name: CI
+
+# Gate every push: tests and syntax on a clean checkout, no downloaded data
+# needed. Keeps the six-hour refresh from being the first place a broken commit
+# is discovered.
+
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+
+concurrency:
+  group: vigie-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node (browser JavaScript syntax)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify (tests + syntax, no downloaded data)
+        run: python3 -X utf8 scripts/verify.py --code-only
