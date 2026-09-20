@@ -22,12 +22,18 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "deploy" / "public"
-METHODS = ("VISION.md", "ranking.md", "sources.yaml", "RENT.md", "FRICTION.md", "FACETS.md", "DESIGN.md", "edge.md", "anomalies.md", "legal.md")
+METHODS = ("VISION.md", "ranking.md", "sources.yaml", "RENT.md", "FRICTION.md", "FACETS.md", "DESIGN.md", "edge.md", "anomalies.md", "legal.md", "REGISTRE.md")
 REQUIRED_ASSETS = ("index.html", "morning.html", "explorer.html", "favicon.svg")
+# Pages emitted by the record layer (registre / affiche): listed in the sitemap
+# when present, never required, so a fixture tree or a partial render still
+# stages the front door.
+OPTIONAL_PAGES = ("registre.html", "affiche.html")
 ASSET_EXTENSIONS = {
     ".html", ".css", ".js", ".mjs", ".svg", ".png", ".jpg", ".jpeg",
     ".webp", ".avif", ".gif", ".ico", ".woff", ".woff2", ".txt",
     ".webmanifest", ".xml", ".json",
+    # Markdown twins for agents (llms.txt v2: rel="alternate" type="text/markdown").
+    ".md",
 }
 # Locally served publisher preview images (scripts/fetch_brief_media.py).
 MEDIA_NAME = re.compile(r"[a-f0-9]{20}\.(?:jpg|jpeg|png|webp|avif|gif)")
@@ -49,7 +55,8 @@ def sitemap_xml(directory: Path) -> str:
         ).date().isoformat()
     except OSError:
         lastmod = None
-    paths = (*SITEMAP_PATHS, *(f"/{name}" for name in METHODS))
+    optional = tuple(f"/{name}" for name in OPTIONAL_PAGES if (directory / name).is_file())
+    paths = (*SITEMAP_PATHS, *optional, *(f"/{name}" for name in METHODS))
     parts = []
     for path in paths:
         loc = f"{SITE_URL}/" if path == "/" else f"{SITE_URL}{path}"

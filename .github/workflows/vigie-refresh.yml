@@ -32,7 +32,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write   # the registre anchor commit (anchors/checkpoint.txt); nothing else is written
   issues: write
 
 jobs:
@@ -83,6 +83,37 @@ jobs:
           else
             python3 -X utf8 scripts/refresh.py
           fi
+
+      # Le Registre: after a successful deploy, the edition checkpoint (origin,
+      # chain size, root — identifiers only, no publisher content) is committed
+      # to the public repo. Git history becomes an independent, third-party
+      # hosted ordering of the seals, and the commit doubles as the repository
+      # activity that keeps the schedules alive. A push made with GITHUB_TOKEN
+      # triggers no workflow and (vercel.json) no deployment.
+      - name: Anchor the registre checkpoint in public git history
+        if: success() && (github.event_name == 'schedule' || inputs.deploy)
+        # A missed anchor is not a failed refresh: the edition is deployed and
+        # the next run re-anchors the (changed) checkpoint. No false alarm.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f public/registre/checkpoint.txt ]; then
+            echo "No checkpoint emitted; nothing to anchor."; exit 0
+          fi
+          mkdir -p anchors
+          cp public/registre/checkpoint.txt anchors/checkpoint.txt
+          if git diff --quiet -- anchors/checkpoint.txt && git ls-files --error-unmatch anchors/checkpoint.txt >/dev/null 2>&1; then
+            echo "Checkpoint unchanged; no anchor commit."; exit 0
+          fi
+          git config user.name "vigie-registre"
+          git config user.email "vigie-registre@users.noreply.github.com"
+          git add anchors/checkpoint.txt
+          seq="$(sed -n '2p' anchors/checkpoint.txt)"
+          root="$(sed -n '3p' anchors/checkpoint.txt | cut -c1-12)"
+          git commit -m "registre: seal ${seq} ${root}"
+          git pull --rebase --quiet origin "${GITHUB_REF_NAME}" || true
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Persist cross-edition state
         if: always()

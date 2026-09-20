@@ -43,7 +43,9 @@ class AnswerFirstDigest(unittest.TestCase):
     def test_measures_are_sentences_with_jump_links(self) -> None:
         html = self._digest()
         self.assertIn('<nav class="glance"', html)
-        for needle in ('href="#stories"', 'href="#travaux"', 'href="#changements"', 'href="#dossiers"'):
+        # The silence measure jumps to the registre (the record of who spoke and
+        # who did not), not to the dossier list.
+        for needle in ('href="#stories"', 'href="#travaux"', 'href="#changements"', 'href="/registre.html"'):
             self.assertIn(needle, html)
         self.assertIn("<strong>2</strong> articles touchent Québec", html)
         self.assertIn("<strong>5</strong> entraves", html)
@@ -58,7 +60,7 @@ class AnswerFirstDigest(unittest.TestCase):
         self.assertIn('href="#stories"', html)
         self.assertNotIn('href="#travaux"', html)
         self.assertNotIn('href="#changements"', html)
-        self.assertNotIn('href="#dossiers"', html)
+        self.assertNotIn('href="/registre.html"', html)
 
     def test_digest_is_deterministic(self) -> None:
         self.assertEqual(self._digest(), self._digest())

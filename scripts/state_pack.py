@@ -37,6 +37,9 @@ DATA = ROOT / "data"
 EXPLICIT = (
     "issues/latest_issues.json",
     "issues/history.json",
+    # Le Registre: the sealed edition chain and voice rows. Losing it would not
+    # corrupt anything, but it would reset the public record to a genesis seal.
+    "registre/registre.json",
     "roadworks/latest_roadworks.json",
     "media/brief_manifest.json",
     "raw/_ua_policy.json",

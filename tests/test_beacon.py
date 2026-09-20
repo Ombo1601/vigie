@@ -245,7 +245,8 @@ class SiteValidation(unittest.TestCase):
             (root / "assets").mkdir()
             for name in ("assets/brief.css", "assets/fonts.css", "assets/brief.js", "favicon.svg",
                          "apple-touch-icon.png", "site.webmanifest",
-                         "explorer.html", *stage_public.METHODS):
+                         "explorer.html", "morning.html", "llms.txt", "index.html.md",
+                         *stage_public.OPTIONAL_PAGES, *stage_public.METHODS):
                 (root / name).write_text("placeholder", encoding="utf-8")
             self.assertEqual(stage_public.validate_site(root), [])
 

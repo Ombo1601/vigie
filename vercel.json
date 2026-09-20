@@ -37,6 +37,41 @@
       ]
     },
     {
+      "source": "/registre.html",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" }
+      ]
+    },
+    {
+      "source": "/affiche.html",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" }
+      ]
+    },
+    {
+      "source": "/registre/(.*)",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" },
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Cache-Control", "value": "public, max-age=300" }
+      ]
+    },
+    {
+      "source": "/delta/(.*)",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" },
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Cache-Control", "value": "public, max-age=300" }
+      ]
+    },
+    {
+      "source": "/llms.txt",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" },
+        { "key": "Access-Control-Allow-Origin", "value": "*" }
+      ]
+    },
+    {
       "source": "/(.*).md",
       "headers": [
         { "key": "Content-Security-Policy", "value": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" }

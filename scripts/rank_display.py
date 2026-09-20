@@ -2484,12 +2484,14 @@ def main() -> None:
 
     issues: list[dict] = []
     ledger: dict = {}
+    issues_doc: dict = {}
     if ISSUES.exists():
         try:
             loaded = json.loads(ISSUES.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             loaded = None
         if isinstance(loaded, dict):
+            issues_doc = loaded
             issues = loaded.get("issues") if isinstance(loaded.get("issues"), list) else []
             ledger = loaded.get("change_ledger") if isinstance(loaded.get("change_ledger"), dict) else {}
             print(f"issues: {len(issues)} from {ISSUES}")
@@ -2566,6 +2568,22 @@ def main() -> None:
         ranked=ranked,
         ranked_at=now.isoformat(),
     )
+
+    # The record layer: the sealed registre (edition chain + voice register),
+    # the machine substrate (llms.txt, Markdown twin, delta) and the printable
+    # affiche. Same stores, no second brain. Idempotent on the collection clock,
+    # so the hourly roads-only re-render never mints a new edition seal. A fault
+    # here is diagnosed and reported; it never blocks the brief.
+    import affiche
+    import registre
+    import substrate
+
+    try:
+        state = registre.emit(issues_doc, roadworks)
+        substrate.emit(ranked, issues, ledger, roadworks, state, now.isoformat())
+        affiche.emit(ranked, issues, roadworks, state, now.isoformat())
+    except Exception as exc:  # noqa: BLE001 - fail-soft by house law, but loudly
+        print(f"registre/substrate/affiche: FAILED ({type(exc).__name__}: {exc}); brief still rendered")
 
 
 if __name__ == "__main__":

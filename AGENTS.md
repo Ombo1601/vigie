@@ -39,6 +39,37 @@ presence counters). It never runs normalize/enrich/cluster, so it creates no
 edition and leaves the change ledger, dossier history and edition metrics
 untouched. It shares the `vigie-refresh` concurrency group with the full refresh.
 
+### The record layer (registre · substrate · affiche)
+
+The HTML brief is a *view*; the record is the product. Three emitters run
+inside the render step (`rank_display.main`, after the brief and the ambient
+twin), from the same stores, with no second brain:
+
+- `scripts/registre.py` — **Le Registre**: seals every edition
+  (`leaf = sha256(canonical record)`, `root = sha256(prev || leaf)`), keyed by
+  the collection clock so re-renders never mint a new seal; keeps per-edition
+  voice rows (who spoke / who did not, institution seats) and a roadworks chain
+  (one root per change of the City's active set). State:
+  `data/registre/registre.json` (packed with the private state). Public:
+  `public/registre.html`, `public/registre/{checkpoint.txt,chain.json,institutions.json,travaux.json}`.
+  Verify any downloaded chain with `python -X utf8 scripts/registre.py --verify chain.json`.
+- `scripts/substrate.py` — the machine layer: `public/llms.txt` (llms.txt v2),
+  `public/index.html.md` (Markdown twin, advertised with
+  `rel="alternate" type="text/markdown"`; the brief also carries
+  `rel="describedby" href="/llms.txt"`), `public/delta/latest.json`
+  (`delta-v1`, cursor = chain root).
+- `scripts/affiche.py` — **L'affiche**: `public/affiche.html`, a print-first
+  neighbourhood sheet (`public/assets/affiche.css`), no JavaScript.
+
+All three are fail-soft *inside the render* (a fault is printed, the brief
+still renders) but the front door links to `/registre.html`, `/affiche.html`,
+`/llms.txt` and `/index.html.md`, so `stage_public.validate_site` turns a
+missing artefact into a blocked release — diagnosed, never silent. The method
+is published as `REGISTRE.md`. After a successful deploy the refresh workflow
+commits `anchors/checkpoint.txt` to this repo (identifiers only): git history
+is the third-party ordering of the seals, and the commit keeps the schedules
+alive.
+
 ### Discoverability
 
 Every staged release carries `robots.txt` (permissive; points at the sitemap) and
@@ -85,6 +116,8 @@ Tests alone: `python -X utf8 -m unittest discover -s tests`.
 | Path | Role |
 |------|------|
 | `scripts/*.py` | one pipeline stage per file, orchestrated by `scripts/pipeline.py` |
+| `scripts/registre.py`, `substrate.py`, `affiche.py` | the record layer, emitted by the render step (see above) |
+| `anchors/checkpoint.txt` | registre checkpoint committed by the refresh workflow after each deploy |
 | `tests/` | unittest (stdlib), live-data checks are guarded with `skipTest` |
 | `public/` | hand-authored assets; generated `*.html` is gitignored |
 | `public/assets/` | authoritative CSS/JS for the brief |

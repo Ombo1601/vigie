@@ -23,6 +23,11 @@ Thumbs.db
 # Google Search Console (and similar) ownership files must ship as real assets
 !/public/google*.html
 /public/build-manifest.json
+# The record layer is generated from the stores every edition (registre / substrate)
+/public/registre/
+/public/delta/
+/public/llms.txt
+/public/index.html.md
 
 # Historical one-off patch scripts and execution logs
 /_*.py

@@ -1,0 +1,36 @@
+/* L'affiche — paper first. Black ink on white; one Letter/A4 sheet per edition. */
+:root{--ink:#111;--muted:#555;--line:#222;--serif:'Newsreader',Georgia,'Times New Roman',serif;--sans:'Figtree','Segoe UI',sans-serif}
+*{box-sizing:border-box}
+html{background:#e9e9e6}
+body{margin:0;color:var(--ink);font-family:var(--sans);font-size:11.5pt;line-height:1.32;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.af-screen-only{max-width:8.5in;margin:14px auto 8px;padding:0 10px;font-size:.9rem;color:#333}
+.af-screen-only a{color:#14604c}
+.af-sheet{background:#fff;width:8.5in;min-height:11in;margin:0 auto 24px;padding:.5in .55in .45in;display:grid;grid-template-columns:1fr 1fr;grid-template-areas:"head head" "lead areas" "roads voices" "foot foot";gap:.18in .35in;box-shadow:0 2px 14px rgba(0,0,0,.12)}
+.af-head{grid-area:head;display:grid;grid-template-columns:auto 1fr;gap:.25in;align-items:end;border-bottom:3px solid var(--line);padding-bottom:.14in}
+.af-brand{display:flex;align-items:center;gap:6px;font-family:var(--serif);font-weight:600;font-size:26pt;letter-spacing:-.02em}
+.af-eyebrow{margin:0 0 3px;font-size:8pt;letter-spacing:.14em;color:var(--muted)}
+.af-head h1{margin:0;font-family:var(--serif);font-weight:500;font-size:24pt;line-height:1.05;letter-spacing:-.01em}
+.af-date{margin:5px 0 0;font-size:9.5pt;color:var(--muted)}
+.af-sheet h2{margin:0 0 6px;font-family:var(--sans);font-weight:700;font-size:9pt;letter-spacing:.14em;text-transform:uppercase;border-bottom:1px solid var(--line);padding-bottom:4px}
+.af-sheet h3{margin:0 0 4px;font-family:var(--serif);font-weight:600;font-size:12.5pt}
+.af-sheet ol,.af-sheet ul{margin:0;padding:0;list-style:none}
+.af-sheet li{margin:0 0 7px;break-inside:avoid}
+.af-lead{grid-area:lead}
+.af-lead ol{counter-reset:af}
+.af-lead li{counter-increment:af;display:grid;grid-template-columns:1.6em 1fr;column-gap:4px}
+.af-lead li::before{content:counter(af,decimal-leading-zero);font-family:var(--serif);font-size:12pt;color:var(--muted);line-height:1.2}
+.af-title{display:block;font-family:var(--serif);font-size:12.2pt;line-height:1.22;font-weight:500}
+.af-src{display:block;font-size:8.5pt;color:var(--muted);margin-top:1px}
+.af-areas{grid-area:areas;display:grid;gap:.14in;align-content:start}
+.af-area .af-title{font-size:11pt}
+.af-roads{grid-area:roads}
+.af-voices{grid-area:voices;font-size:10.5pt}
+.af-voices p{margin:0 0 5px}
+.af-fine{font-size:8.2pt;color:var(--muted);margin:5px 0 0}
+.af-foot{grid-area:foot;border-top:1px solid var(--line);padding-top:6px;display:grid;grid-template-columns:1fr auto;gap:.3in;font-size:8.2pt;color:var(--muted);align-items:end}
+.af-foot p{margin:0}
+.af-seal{text-align:right}
+.af-seal code{font-family:ui-monospace,Consolas,monospace;font-size:8.6pt;color:var(--ink)}
+@media (max-width:8.6in){.af-sheet{width:100%;min-height:0;padding:20px 16px;grid-template-columns:1fr;grid-template-areas:"head" "lead" "areas" "roads" "voices" "foot"}.af-head{grid-template-columns:1fr}.af-foot{grid-template-columns:1fr}.af-seal{text-align:left}}
+@page{size:auto;margin:.35in}
+@media print{html,body{background:#fff}.af-screen-only{display:none}.af-sheet{box-shadow:none;margin:0;width:auto;min-height:0;padding:.1in 0}a{color:inherit;text-decoration:none}}
