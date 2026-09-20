@@ -252,6 +252,8 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
             "brief": f"{SITE_URL}/",
             "brief_markdown": f"{SITE_URL}/index.html.md",
             "dossiers": f"{SITE_URL}/dossiers.html",
+            "depart": f"{SITE_URL}/partir.html",
+            "memoire": f"{SITE_URL}/memoire.html",
             "registre": f"{SITE_URL}/registre.html",
             "chain": f"{SITE_URL}/registre/chain.json",
             "institutions": f"{SITE_URL}/registre/institutions.json",
@@ -422,6 +424,8 @@ Current edition: {edition or "unknown"}. Rules for agents: cite the original pub
 ## Optional
 
 - [Front door (HTML)]({SITE_URL}/): the resident brief.
+- [Avant de partir]({SITE_URL}/partir.html): the departure screen — declared obstructions, followed corridors (on-device), what changed.
+- [La mémoire]({SITE_URL}/memoire.html): every sealed edition, readable — dossiers, voices, silence, edition by edition.
 - [Registre (HTML)]({SITE_URL}/registre.html): the human view of the register.
 - [L'affiche]({SITE_URL}/affiche.html): the printable neighbourhood sheet.
 - [Explorer]({SITE_URL}/explorer.html): evidence workbench (English).

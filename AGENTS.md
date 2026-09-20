@@ -39,9 +39,9 @@ presence counters). It never runs normalize/enrich/cluster, so it creates no
 edition and leaves the change ledger, dossier history and edition metrics
 untouched. It shares the `vigie-refresh` concurrency group with the full refresh.
 
-### The record layer (registre · substrate · récits · méthode · affiche)
+### The record layer (registre · mémoire · substrate · récits · méthode · départ · affiche)
 
-The HTML brief is a *view*; the record is the product. Five emitters run
+The HTML brief is a *view*; the record is the product. Seven emitters run
 inside the render step (`rank_display.main`, after the brief and the ambient
 twin), from the same stores, with no second brain:
 
@@ -53,6 +53,16 @@ twin), from the same stores, with no second brain:
   `data/registre/registre.json` (packed with the private state). Public:
   `public/registre.html`, `public/registre/{checkpoint.txt,chain.json,institutions.json,travaux.json}`.
   Verify any downloaded chain with `python -X utf8 scripts/registre.py --verify chain.json`.
+- `scripts/memoire.py` — **La mémoire**: `public/memoire.html` +
+  `public/memoire/<seq>.html` — the sealed chain made readable: per edition,
+  the dossiers (Vigie's labels only — attributed headlines stay empty), the
+  voices, who spoke and who did not, and the ledger. Zero JavaScript; pages
+  exist only for published seals.
+- `scripts/depart.py` — **Avant de partir**: `public/partir.html`, the
+  departure instrument — most-restrictive declared obstructions, the reader's
+  corridors marked on-device (island + literal folding, no account, no
+  position), what changed since the last edition, the seal. One small inline
+  script is the only enhancement; the page is complete without it.
 - `scripts/substrate.py` — the machine layer: `public/llms.txt` (llms.txt v2),
   `public/index.html.md` (Markdown twin, advertised with
   `rel="alternate" type="text/markdown"`; the brief also carries
@@ -73,9 +83,10 @@ twin), from the same stores, with no second brain:
 - `scripts/affiche.py` — **L'affiche**: `public/affiche.html`, a print-first
   neighbourhood sheet (`public/assets/affiche.css`), no JavaScript.
 
-All five are fail-soft *inside the render* (a fault is printed, the brief
+All seven are fail-soft *inside the render* (a fault is printed, the brief
 still renders) but the front door links to `/registre.html`, `/affiche.html`,
-`/llms.txt` and `/index.html.md`, so `stage_public.validate_site` turns a
+`/partir.html`, `/memoire.html`, `/dossiers.html`, `/methode/`, `/llms.txt`
+and `/index.html.md`, so `stage_public.validate_site` turns a
 missing artefact into a blocked release — diagnosed, never silent. The method
 is published as `REGISTRE.md`. After a successful deploy the refresh workflow
 commits `anchors/checkpoint.txt` to this repo (identifiers only): git history
@@ -128,7 +139,7 @@ Tests alone: `python -X utf8 -m unittest discover -s tests`.
 | Path | Role |
 |------|------|
 | `scripts/*.py` | one pipeline stage per file, orchestrated by `scripts/pipeline.py` |
-| `scripts/registre.py`, `substrate.py`, `recits.py`, `method_site.py`, `affiche.py` | the record layer, emitted by the render step (see above) |
+| `scripts/registre.py`, `memoire.py`, `substrate.py`, `recits.py`, `method_site.py`, `depart.py`, `affiche.py` | the record layer, emitted by the render step (see above) |
 | `anchors/checkpoint.txt` | registre checkpoint committed by the refresh workflow after each deploy |
 | `tests/` | unittest (stdlib), live-data checks are guarded with `skipTest` |
 | `public/` | hand-authored assets; generated `*.html` is gitignored |

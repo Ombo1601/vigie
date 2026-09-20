@@ -156,6 +156,10 @@ class Affiche(unittest.TestCase):
                          "registre/chain.json", "registre/checkpoint.txt", "registre/institutions.json", "registre/travaux.json",
                          "delta/latest.json", *stage_public.METHODS):
                 (root / name).write_text("placeholder", encoding="utf-8")
+            (root / "partir.html").write_text("placeholder", encoding="utf-8")
+            (root / "memoire.html").write_text("placeholder", encoding="utf-8")
+            (root / "memoire").mkdir()
+            (root / "memoire" / "1.html").write_text("placeholder", encoding="utf-8")
             (root / "methode").mkdir(exist_ok=True)
             for name in (*stage_public.METHOD_PAGES, "index"):
                 (root / "methode" / f"{name}.html").write_text("placeholder", encoding="utf-8")

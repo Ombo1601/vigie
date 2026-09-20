@@ -246,7 +246,7 @@ class ReleaseNavigation(unittest.TestCase):
             root = Path(tmp)
             recits.emit([issue()], [], {}, None, {}, out_dir=root / "dossiers", out_index=root / "dossiers.html")
             (root / "index.html").write_text('<h1 id="travaux">Travaux</h1><h1 id="dossiers">Dossiers</h1>', encoding="utf-8")
-            for name in ("assets/brief.css", "assets/fonts.css", "favicon.svg", "llms.txt", "registre.html"):
+            for name in ("assets/brief.css", "assets/fonts.css", "favicon.svg", "llms.txt", "registre.html", "partir.html", "memoire.html"):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("placeholder", encoding="utf-8")

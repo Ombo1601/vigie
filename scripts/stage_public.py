@@ -27,7 +27,7 @@ REQUIRED_ASSETS = ("index.html", "morning.html", "explorer.html", "favicon.svg")
 # Pages emitted by the record layer (registre / affiche): listed in the sitemap
 # when present, never required, so a fixture tree or a partial render still
 # stages the front door.
-OPTIONAL_PAGES = ("registre.html", "affiche.html", "dossiers.html")
+OPTIONAL_PAGES = ("registre.html", "affiche.html", "dossiers.html", "partir.html", "memoire.html")
 # Method pages rendered by scripts/method_site.py; listed in the sitemap when
 # present. The raw .md/.yaml sources remain staged (machine twins) but humans
 # are never pointed at them.

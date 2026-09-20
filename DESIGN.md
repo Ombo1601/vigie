@@ -217,6 +217,28 @@ flows in columns instead of one monolithic rail:
 2. No fixed viewport tricks: everything is fluid `clamp()`/`min()` within the
    existing palette and tokens.
 
+### The instrument — three dials (v0.7, shipped)
+
+Spatial composition is done; the missing layer was *temporal* composition.
+The edition now has three moments, each its own surface, all fed by the same
+sealed stores:
+
+- **Le départ** (`/partir.html`): the departure moment — six most restrictive
+  declared obstructions, the reader's corridors marked on-device with their
+  own worst restriction, what changed, the seal. Situational freshness, never
+  a real-time feed; the official map stays the reference.
+- **La question** (on the brief's dossiers, the récit pages and the départ):
+  the promise line — « Aucun document officiel dans les N éditions suivies » —
+  measured only over editions whose record carried the counter, stated as
+  presence, never as an answer, never as a verdict.
+- **La mémoire** (`/memoire.html`): the sealed chain made readable — per
+  edition, the dossiers, the voices, who spoke and who did not. The archive
+  Google cannot copy: the record of the city *including its silences*.
+
+Law: order never changes, no real-time chase, no accounts, no tracking; the
+departure screen's corridor marks live only in the reader's browser, and the
+memory shows only what was sealed (Vigie's labels only).
+
 ## Decision log
 
 | Date | Decision | Owner |
@@ -239,3 +261,4 @@ flows in columns instead of one monolithic rail:
 | 2026-09-20 | Wide composition (v0.6): full-width modular front page on desktop — 2-col stories/travaux/civic/dossiers, 3-col changes, sticky glance wayfinding; order never changes, mobile untouched, zero DOM/JS | Bucky + le porteur |
 | 2026-09-20 | Equal card skeleton (v0.6.1): fixed-height media block on every story — publisher image or a typographic face naming the absence; corridors rebuilt as an aligned chip strip; lean-scan first view 6 → 12 cards | Bucky + le porteur |
 | 2026-09-20 | Method pages (methode-v1): the method files become first-class pages under /methode/ (house chrome, zero JS, print-first); humans never land on a raw .md/.yaml again — only the labelled /index.html.md twin remains linked; no served file names the founder | Bucky + le porteur |
+| 2026-09-20 | The instrument — three dials (depart-v1, promesse-v1, memoire-v1): the departure screen (situational freshness, on-device corridors), the promise line (official presence counted only over measured editions), and the readable memory of sealed editions | Bucky + le porteur |

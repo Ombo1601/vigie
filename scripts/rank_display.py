@@ -2588,6 +2588,8 @@ def main() -> None:
     # so the hourly roads-only re-render never mints a new edition seal. A fault
     # here is diagnosed and reported; it never blocks the brief.
     import affiche
+    import depart
+    import memoire
     import method_site
     import recits
     import registre
@@ -2595,12 +2597,14 @@ def main() -> None:
 
     try:
         state = registre.emit(issues_doc, roadworks)
+        memoire.emit(state, issues)
         substrate.emit(ranked, issues, ledger, roadworks, state, now.isoformat())
         recits.emit(issues, ranked, ledger, roadworks, edges)
         method_site.emit()
+        depart.emit(roadworks, issues, ledger, state, now.isoformat())
         affiche.emit(ranked, issues, roadworks, state, now.isoformat())
     except Exception as exc:  # noqa: BLE001 - fail-soft by house law, but loudly
-        print(f"registre/substrate/recits/methode/affiche: FAILED ({type(exc).__name__}: {exc}); brief still rendered")
+        print(f"registre/memoire/substrate/recits/methode/depart/affiche: FAILED ({type(exc).__name__}: {exc}); brief still rendered")
 
 
 if __name__ == "__main__":

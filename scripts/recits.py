@@ -29,6 +29,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import resident_brief as brief  # noqa: E402
+import promesse  # noqa: E402
 import store_io  # noqa: E402
 
 METHOD = "recits-v1"
@@ -276,13 +277,13 @@ def render_recit(iss: dict, eligible: dict, ledger: dict, *, slug: str,
 <main id="recit">
 <header class="recit-head"><p class="eyebrow">DOSSIER PROPOSÉ — ÉDITION COURANTE</p>
 <h1 class="recit-title">{brief.esc(question)}</h1>{attrib_html}
-<div class="recit-meta">{_status_html(iss, ledger_entry)}</div>{why}{remix_warning}</header>
+<div class="recit-meta">{_status_html(iss, ledger_entry)}</div>{why}{promesse.html_of(iss)}{remix_warning}</header>
 {brief.tracking_html(iss)}{brief.dossier_timeline_html(iss)}
 <section class="recit-section recit-voices"><h2>Les voix, côte à côte</h2>{voice_blocks or '<p class="no-data">Aucun article exploitable dans ce dossier cette édition.</p>'}</section>
 {roster_section}
 {_evidence_html(iss)}
 {extra_section}
-<p class="recit-clock">Collecte du {clustered}. Cette page est celle de l’édition courante : un dossier absent de la collecte n’a pas de page — une absence n’est pas une résolution. Les compteurs de suivi restent dans <a href="/registre.html">le registre</a>.</p>
+<p class="recit-clock">Collecte du {clustered}. Cette page est celle de l’édition courante : un dossier absent de la collecte n’a pas de page — une absence n’est pas une résolution. Les compteurs de suivi restent dans <a href="/registre.html">le registre</a> et <a href="/memoire.html">la mémoire</a>.</p>
 </main>
 <footer><a class="wordmark" href="/">vigie<span class="wordmark-dot">.</span></a><p>Un peu plus au courant.<br>Un peu plus libre de votre temps.</p><span>Fait pour Québec.<br>Dossier de l’édition courante.</span><a class="legal-link" href="/methode/legal.html">Mentions légales, attribution et retrait</a></footer></body></html>
 """

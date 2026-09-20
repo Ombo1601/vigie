@@ -30,6 +30,7 @@ Thumbs.db
 /public/index.html.md
 /public/dossiers/
 /public/methode/
+/public/memoire/
 
 # Historical one-off patch scripts and execution logs
 /_*.py
