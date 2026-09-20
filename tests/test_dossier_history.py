@@ -349,5 +349,27 @@ class RenderTracking(unittest.TestCase):
         self.assertNotIn("dossier-tracking", html)
 
 
+class QuestionRevisions(unittest.TestCase):
+    """Field-level revisions: the question is stored only when it changes."""
+
+    def _issue(self, question: str) -> dict:
+        return {"issue_id": "a", "scar": "scar", "source_count": 2, "question": question}
+
+    def test_initial_question_then_only_real_changes(self) -> None:
+        h = dossier_history.update_history(
+            dossier_history.empty_history(), [self._issue("Q initiale")], TS1)
+        self.assertEqual(h["dossiers"]["a"]["timeline"][-1]["question"], "Q initiale")
+        h = dossier_history.update_history(h, [self._issue("Q initiale")], TS2)
+        self.assertNotIn("question", h["dossiers"]["a"]["timeline"][-1])
+        h = dossier_history.update_history(h, [self._issue("Q reformulée")], TS3)
+        self.assertEqual(h["dossiers"]["a"]["timeline"][-1]["question"], "Q reformulée")
+
+    def test_tracking_exposes_the_question(self) -> None:
+        h = dossier_history.update_history(
+            dossier_history.empty_history(), [self._issue("Q initiale")], TS1)
+        timeline = dossier_history.tracking_of(h, "a")["timeline"]
+        self.assertEqual(timeline[0]["question"], "Q initiale")
+
+
 if __name__ == "__main__":
     unittest.main()

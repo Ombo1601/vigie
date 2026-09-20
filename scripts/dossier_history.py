@@ -132,13 +132,25 @@ def update_history(history: dict, issues: list[dict], edition_ts: str) -> dict:
         if not iid:
             continue
         present.add(iid)
+        rec = dossiers.get(iid)
+        prior = list(rec.get("timeline") or []) if isinstance(rec, dict) else []
         entry = {
             "ts": edition_ts,
             "sources": _safe_int(issue.get("source_count")),
             "items": _safe_int(issue.get("item_count")),
             "official": _safe_int(issue.get("official_voice_count")),
         }
-        rec = dossiers.get(iid)
+        # Field-level revision: the dossier question is stored only when it
+        # changes (the first edition stores it as the initial question). A
+        # reformulated headline is a wording change, never a change of meaning.
+        question = " ".join(str(issue.get("question") or "").split())[:140]
+        previous_question = next(
+            (str(e.get("question")) for e in reversed(prior)
+             if isinstance(e, dict) and e.get("question")),
+            "",
+        )
+        if question and question != previous_question:
+            entry["question"] = question
         if rec is None:
             dossiers[iid] = {
                 "scar": issue.get("scar"),
@@ -208,6 +220,8 @@ def tracking_of(history: dict, issue_id: str) -> dict | None:
         for key in ("items", "official"):
             if key in entry:
                 row[key] = _safe_int(entry.get(key))
+        if entry.get("question"):
+            row["question"] = str(entry.get("question"))[:140]
         compact.append(row)
     return {
         "status": "proposed",

@@ -139,6 +139,10 @@ class StaticRelease(unittest.TestCase):
         self.assertIn("<loc>https://vigieqc.com/</loc>", sitemap)
         self.assertIn("<loc>https://vigieqc.com/legal.md</loc>", sitemap)
 
+    def test_pwa_assets_are_stageable(self):
+        self.assertIn(".webmanifest", stage_public.ASSET_EXTENSIONS)
+        self.assertIn(".png", stage_public.ASSET_EXTENSIONS)
+
     def test_http_release_is_byte_identical(self):
         manifest = stage_public.stage(self.root, self.output)
         verify.smoke_site(self.output, manifest)

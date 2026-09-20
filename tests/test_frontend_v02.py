@@ -240,6 +240,19 @@ class DossierVoicesAndTimeline(unittest.TestCase):
         self.assertIn("pas une escalade", html)
         self.assertIn("pas une résolution", html)
 
+    def test_timeline_shows_question_revisions(self) -> None:
+        issue = {"tracking": {"editions_seen": 3, "timeline": [
+            {"ts": "2026-09-17T00:00:00+00:00", "sources": 2, "items": 3, "official": 0,
+             "question": "Q initiale"},
+            {"ts": "2026-09-18T00:00:00+00:00", "sources": 2, "items": 4, "official": 0},
+            {"ts": "2026-09-19T00:00:00+00:00", "sources": 3, "items": 5, "official": 1,
+             "question": "Q reformulée"},
+        ]}}
+        html = brief.dossier_timeline_html(issue)
+        self.assertIn("Question initiale", html)
+        self.assertIn("Question révisée", html)
+        self.assertIn("Q reformulée", html)
+
     def test_tracking_exposes_only_fields_the_record_carried(self) -> None:
         history = {"dossiers": {"a": {"editions_seen": 2, "timeline": [
             {"ts": "t1", "sources": 2},
@@ -343,6 +356,48 @@ class Discoverability(unittest.TestCase):
         js = (ROOT / "public" / "assets" / "brief.js").read_text(encoding="utf-8")
         for needle in ("more-topics", "setMoreTopics", "secondaryTopicKeys"):
             self.assertIn(needle, js)
+
+
+class MobileAndPWA(unittest.TestCase):
+    """Smartphone: installable, safe-area aware, finger-sized, no focus zoom."""
+
+    def test_head_declares_mobile_app_and_safe_area(self) -> None:
+        page = brief.render_brief([], "2026-09-19T12:00:00+00:00", [], None)
+        head = page[: page.index("</head>")]
+        for needle in (
+            "viewport-fit=cover",
+            'rel="manifest" href="/site.webmanifest"',
+            'rel="apple-touch-icon" href="/apple-touch-icon.png"',
+            'name="mobile-web-app-capable"',
+            'name="apple-mobile-web-app-title"',
+        ):
+            self.assertIn(needle, head)
+
+    def test_manifest_is_valid_and_self_contained(self) -> None:
+        data = json.loads(
+            (harness.ROOT / "public" / "site.webmanifest").read_text(encoding="utf-8"))
+        self.assertEqual(data["display"], "standalone")
+        self.assertEqual(data["start_url"], "/")
+        sizes = {icon["sizes"] for icon in data["icons"]}
+        self.assertIn("192x192", sizes)
+        self.assertIn("512x512", sizes)
+        for icon in data["icons"]:
+            self.assertFalse(icon["src"].startswith("http"))
+
+    def test_icons_are_square_pngs(self) -> None:
+        for name, size in (("assets/icon-192.png", 192), ("assets/icon-512.png", 512),
+                           ("apple-touch-icon.png", 180)):
+            data = (harness.ROOT / "public" / name).read_bytes()
+            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(
+                (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")),
+                (size, size))
+
+    def test_css_has_touch_safe_area_and_readability_rules(self) -> None:
+        css = (harness.ROOT / "public" / "assets" / "brief.css").read_text(encoding="utf-8")
+        for needle in ("pointer:coarse", "safe-area-inset", "font-size:16px",
+                       "overflow-wrap:anywhere", "min-height:44px"):
+            self.assertIn(needle, css)
 
 
 if __name__ == "__main__":

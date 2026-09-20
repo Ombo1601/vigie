@@ -119,6 +119,9 @@ adaptive variable type, persistent wayfinding, and static maps with a legend
 - **Collection timeline** (v0.2): a collapsed per-dossier timeline of the
   editions Vigie recorded (sources / articles / official voices), labelled
   counters — not escalation; an absent edition is not a resolution.
+- **Field-level revisions** (v0.3): when the dossier question is reformulated,
+  the initial question and up to two later revisions are quoted verbatim in the
+  timeline. A wording change is never presented as a change of meaning.
 
 ### Corridors (shipped)
 
@@ -128,9 +131,29 @@ adaptive variable type, persistent wayfinding, and static maps with a legend
   island). On-device only (`vigie.corridors.v1`), no geolocation, no computed
   route effect, no server round-trip. A shared name is never geographic proof.
 
+### Smartphone (v0.3)
+
+Most readers arrive on a phone, so the brief is mobile-first, still without any
+external request:
+
+- **Finger-sized targets**: every control gets a ≥44 px hit area on coarse
+  pointers (`@media (pointer:coarse)`).
+- **No focus zoom**: fields are ≥16 px on small screens, so iOS never zooms the
+  page when the search box is focused.
+- **Safe areas**: `viewport-fit=cover` + `env(safe-area-inset-*)` keep the sticky
+  masthead and content clear of notches.
+- **Readable small text**: the 8–10 px kickers/labels are raised on small screens,
+  and long titles/excerpts wrap (`overflow-wrap:anywhere`) instead of overflowing.
+- **Installable**: `site.webmanifest` + 192/512 icons + `apple-touch-icon`, so
+  "Add to Home Screen" gives a proper Vigie icon and standalone display. It is a
+  convenience, not an app: no service worker, no offline cache, no tracking.
+
 ### Roadmap (designed, not shipped)
 
-- **Field-level revisions**: question / label changes over time, not only counters.
+- **Resident validation** (product, not code): the five walkthroughs in
+  `FRICTION.md` remain the open risk.
+- **Saved-corridor validation**: the daily-mobility experiment with real
+  repeated-corridor travellers.
 
 ## Decision log
 
@@ -147,3 +170,5 @@ adaptive variable type, persistent wayfinding, and static maps with a legend
 | 2026-09-19 | Phase F cross-source reading: per-dossier voice roster (spoke + quiet, media silence named) and a collapsed collection timeline from the durable history (counters only, no escalation) | Bucky + Inventor |
 | 2026-09-19 | Saved corridors: opt-in declared street names, literal match, on-device only, no geolocation and no route effect; the street index island counts over every active event | Bucky + Inventor |
 | 2026-09-19 | Social card: deterministic graphic OG image (palette, wordmark, nest hairlines, compass glyph) — not a place photo; `public/place/` stays empty | Bucky + Inventor |
+| 2026-09-20 | Smartphone pass: 44 px touch targets, no iOS focus zoom, safe-area insets, readable small text, installable manifest + icons (no service worker) | Bucky + Inventor |
+| 2026-09-20 | Field-level revisions: dossier question reformulations recorded in the durable history and quoted verbatim (initial + up to two) | Bucky + Inventor |

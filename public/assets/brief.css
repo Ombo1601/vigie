@@ -43,6 +43,8 @@
 .dossier-timeline ul{list-style:none;margin:8px 0 4px;padding:0;display:grid;gap:4px}
 .dossier-timeline li{color:var(--muted)}
 .dossier-timeline time{color:var(--ink);font-variant-numeric:tabular-nums}
+.dossier-revisions{list-style:none;margin:8px 0 4px;padding:8px 0 0;border-top:1px dashed var(--line);display:grid;gap:4px;color:var(--muted)}
+.dossier-revisions li{overflow-wrap:anywhere}
 .dossier .unit{display:inline-block;background:var(--light);color:var(--accent);border-radius:3px;padding:3px 8px;font-size:11px;font-weight:600;margin:0 6px 4px 0}
 @media(max-width:600px){.dossiers{padding-top:26px}.dossier-q{font-size:21px}.dossier-sources li{grid-template-columns:1fr;gap:3px}.dossier-inst{margin-top:4px}.dossiers-intro{font-size:12px}}
 @media print{.dossier-sources a:after{content:' (' attr(href) ')';font:9px var(--sans);overflow-wrap:anywhere}}
@@ -181,6 +183,39 @@ img{opacity:.94}
 .rw-corridor-remove:hover{color:var(--accent)}
 .rw-item.rw-hit{background:var(--light);box-shadow:inset 0 0 0 1px var(--accent)}
 @media(max-width:600px){.rw-corridor{grid-template-columns:1fr;gap:2px}}
+/* ---- Smartphone polish (v0.3): touch targets, no focus zoom, safe areas,
+        readable small text, no horizontal overflow ---- */
+button,a,summary,input,select{touch-action:manipulation}
+body{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+.masthead{padding-top:env(safe-area-inset-top)}
+@media(max-width:600px){
+  /* iOS zooms a focused field whose font-size is under 16px */
+  .search-label input,.select-label select,#rw-corridor-input,.cmdk-input{font-size:16px}
+  .story-kicker{font-size:10px}
+  .excerpt-label{font-size:10px}
+  .byline{font-size:11.5px}
+  .media-credit{font-size:11px}
+  .filter-note{font-size:10.5px}
+  .section-note{font-size:11px}
+  .story h3,.excerpt,.source-list a,.chg-list a,.rw-desc,.rw-roads,.dossier-sources a,.dossier-q,.glance-text{overflow-wrap:anywhere}
+  .story-media img{max-width:100%}
+  .save{font-size:11px;padding:9px 13px}
+  .evidence summary{font-size:12px}
+  .view-tabs button{font-size:12px;padding-bottom:14px}
+  .topic-filters button{padding:9px 13px;font-size:11px}
+  .results-bar p,.results-bar button{font-size:11px}
+  .dossier-sources a{font-size:15px}
+  .glance-text{font-size:13.5px}
+  .rw-sketch svg{max-height:220px}
+}
+@media(pointer:coarse){
+  /* 44px minimum hit area wherever a finger taps */
+  .view-tabs button,.topic-filters button,.text-button,.more-topics,.save,.evidence summary,.rw-corridor-remove{
+    min-height:44px;display:inline-flex;align-items:center;
+  }
+  .save{padding:9px 14px}
+  .service{min-height:44px}
+}
 @media(prefers-contrast:more){:root{--muted:#3a4f59;--line:#9fb2bb}body{font-weight:460}}
 @media(prefers-contrast:more) and (prefers-color-scheme:dark){:root{--muted:#c3d3da;--line:#5b7480}}
 /* Spatial reading - a scheme, never a basemap */

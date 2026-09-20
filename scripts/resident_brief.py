@@ -366,9 +366,22 @@ def dossier_timeline_html(issue: dict) -> str:
                         f'officielle{"s" if official != 1 else ""}')
         when = date_html(entry.get("ts"), fallback="date non précisée")
         entries.append(f'<li>{when} — {" · ".join(bits)}</li>')
+    # Field-level revisions: when the dossier question was reformulated. The
+    # initial question and up to two later revisions, quoted verbatim — a
+    # wording change, never a change of meaning.
+    revisions = [
+        (date_html(t.get("ts"), fallback="date non précisée"), str(t.get("question")).strip())
+        for t in rows if isinstance(t.get("question"), str) and t.get("question").strip()
+    ]
+    revisions_html = ""
+    if revisions:
+        shown = [("Question initiale", revisions[0])]
+        shown += [("Question révisée", rev) for rev in revisions[1:][-2:]]
+        items = "".join(f'<li>{label} le {when} : « {esc(text)} »</li>' for (label, (when, text)) in shown)
+        revisions_html = f'<ul class="dossier-revisions">{items}</ul>'
     return (
         '<details class="dossier-timeline"><summary>Repères de collecte '
-        f'({len(rows)} éditions)</summary><ul>{"".join(entries)}</ul>'
+        f'({len(rows)} éditions)</summary><ul>{"".join(entries)}</ul>{revisions_html}'
         '<p class="fine">Compteurs de collecte, pas une escalade. Une absence '
         "d’une édition n’est pas une résolution.</p></details>"
     )
@@ -1360,7 +1373,7 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
         if token
     )
     return f'''<!doctype html>
-<html lang="fr-CA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="fr-CA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="{SITE_DESCRIPTION}">
 <link rel="canonical" href="{SITE_CANONICAL}">{verifications}
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
@@ -1369,7 +1382,7 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
 <meta property="og:image" content="{SITE_OG_IMAGE}"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="{SITE_OG_ALT}">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="{SITE_TITLE}"><meta name="twitter:description" content="{SITE_DESCRIPTION}"><meta name="twitter:image" content="{SITE_OG_IMAGE}"><meta name="twitter:image:alt" content="{SITE_OG_ALT}">
 <meta name="theme-color" content="#f5f8f8" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0e1518" media="(prefers-color-scheme: dark)"><meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer">
-<title>{SITE_TITLE}</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/fonts.css"><link rel="stylesheet" href="/assets/brief.css"><script src="/assets/brief.js" defer></script></head>
+<title>{SITE_TITLE}</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><meta name="apple-mobile-web-app-title" content="Vigie"><meta name="application-name" content="Vigie"><meta name="mobile-web-app-capable" content="yes"><meta name="format-detection" content="telephone=no"><link rel="stylesheet" href="/assets/fonts.css"><link rel="stylesheet" href="/assets/brief.css"><script src="/assets/brief.js" defer></script></head>
 <body><a class="skip-link" href="#essentiel">Aller aux nouvelles</a>
 <header class="masthead"><a class="wordmark" href="/" aria-label="Vigie, accueil"><svg width="28" height="32" viewBox="0 0 28 32" aria-hidden="true"><path d="M2 5 14 28 26 5M8 5l6 12 6-12" fill="none" stroke="currentColor" stroke-width="2.5"/></svg>vigie<span class="wordmark-dot">.</span></a><span class="edition">QUÉBEC, À HAUTEUR DE VIE</span><nav aria-label="Navigation principale"><a href="#essentiel">Le point</a><a href="#dossiers">Les dossiers</a><a href="#agir">Repères utiles</a><a href="#methode">Notre méthode</a></nav><button class="cmdk-open js-only" type="button" id="cmdk-open" aria-haspopup="dialog" aria-controls="cmdk">Recherche rapide <kbd>Ctrl K</kbd></button></header>
 <main><section class="intro" aria-labelledby="intro-title"><div><p class="eyebrow">UNE VILLE. VOTRE QUOTIDIEN.</p><h1 id="intro-title">Moins de bruit.<br><em>Plus de Québec.</em></h1><p class="intro-text">Les nouvelles locales. Les sources pour comprendre. Les repères pour agir. Puis, reprenez votre journée.</p></div>
