@@ -196,10 +196,16 @@ def load_brief_media() -> dict:
         if not _MEDIA_FILE.fullmatch(entry["file"]):
             continue
         credit = entry.get("credit")
-        out[str(uid)] = {
+        row = {
             "file": entry["file"],
             "credit": credit.strip()[:120] if isinstance(credit, str) and credit.strip() else None,
         }
+        # Intrinsic size, when the collector measured it: the renderer emits
+        # width/height so the browser reserves the box without a decoder.
+        width, height = entry.get("width"), entry.get("height")
+        if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
+            row["width"], row["height"] = width, height
+        out[str(uid)] = row
     return out
 
 

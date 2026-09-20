@@ -145,6 +145,16 @@ class ManifestGuards(unittest.TestCase):
         }})
         self.assertEqual(self.load(doc), {uid: {"file": uid + ".jpg", "credit": None}})
 
+    def test_dimensions_pass_through_the_manifest_loader(self) -> None:
+        uid = "ab" * 10
+        doc = json.dumps({"method": "brief-media-v2", "media": {
+            uid: {"file": uid + ".jpg", "width": 800, "height": 450},
+            "cd" * 10: {"file": ("cd" * 10) + ".jpg", "width": "big", "height": None},
+        }})
+        loaded = self.load(doc)
+        self.assertEqual(loaded[uid]["width"], 800)
+        self.assertNotIn("width", loaded["cd" * 10])
+
     def test_credit_passes_only_as_a_bounded_string(self) -> None:
         uid = "ab" * 10
         doc = json.dumps({"method": "brief-media-v2", "media": {
