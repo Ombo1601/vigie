@@ -208,6 +208,16 @@ class PageIntegration(unittest.TestCase):
         self.assertIn("<noscript>", page)
         self.assertIn("https://actualites.example.com/one", page)
 
+    def test_first_image_bearing_story_is_eager_for_lcp(self) -> None:
+        # The first story may have no image; the first one that does is the LCP
+        # candidate and must not be lazy-loaded.
+        rows, _ = brief.prepare_items([story("a"), story("b")], NOW)
+        media = {rows[1]["uid"]: {"file": rows[1]["uid"] + ".jpg", "credit": None}}
+        page = brief.render_brief([story("a"), story("b")], NOW.isoformat(), [], collection(),
+                                  media=media)
+        self.assertEqual(page.count('loading="eager" fetchpriority="high"'), 1)
+        self.assertEqual(page.count('loading="lazy"'), 0)
+
     def test_generated_brief_passes_release_local_navigation_validation(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

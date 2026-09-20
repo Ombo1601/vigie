@@ -179,7 +179,8 @@ class RendererImages(unittest.TestCase):
 
     def test_first_story_image_is_prioritised_for_lcp(self) -> None:
         row = self.row()
-        html = brief.article_html(row, 1, [], media={row["uid"]: {"file": row["uid"] + ".jpg", "credit": None}})
+        html = brief.article_html(
+            row, 1, [], media={row["uid"]: {"file": row["uid"] + ".jpg", "credit": None}}, priority=True)
         self.assertIn('loading="eager" fetchpriority="high"', html)
         self.assertNotIn('loading="lazy"', html)
 

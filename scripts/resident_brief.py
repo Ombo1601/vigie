@@ -1187,7 +1187,8 @@ def roadworks_section(rw: dict | None, now: datetime, anomalies: dict | None = N
     )
 
 
-def article_html(item: dict, index: int, related: list[dict], media: dict | None = None) -> str:
+def article_html(item: dict, index: int, related: list[dict], media: dict | None = None,
+                 *, priority: bool = False) -> str:
     title = esc(item["title"])
     source = esc(item.get("source_name") or item.get("source_id") or "Source")
     media_entry = media.get(item["uid"]) if isinstance(media, dict) else None
@@ -1206,9 +1207,9 @@ def article_html(item: dict, index: int, related: list[dict], media: dict | None
         # og:image we cannot credit.
         credit = media_credit.strip() if isinstance(media_credit, str) and media_credit.strip() else None
         caption = f"Photo : {esc(credit)} / {source}" if credit else f"Photo : {source}"
-        # The first story image is above the fold: eager + high priority keeps
-        # mobile LCP honest; everything below stays lazy.
-        loading = 'loading="eager" fetchpriority="high"' if index == 1 else 'loading="lazy"'
+        # The first image actually above the fold gets eager + high priority to
+        # keep mobile LCP honest; every other image stays lazy.
+        loading = 'loading="eager" fetchpriority="high"' if priority else 'loading="lazy"'
         media_html = (
             f'<figure class="story-media"><img src="/media/{media_file}" alt="" {loading} decoding="async">'
             f'<figcaption class="media-credit">{caption}</figcaption></figure>'
@@ -1336,7 +1337,18 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
         media = {}
     status = collection_status(run, now)
     eligible = {r.get("id"): r for r in rows}
-    stories = "".join(article_html(r, n + 1, related_sources(r, issues, eligible), media) for n, r in enumerate(rows))
+
+    def _media_file(uid: str) -> str | None:
+        entry = media.get(uid) if isinstance(media, dict) else None
+        file = entry if isinstance(entry, str) else (entry.get("file") if isinstance(entry, dict) else None)
+        return file if isinstance(file, str) and _MEDIA_FILE.fullmatch(file) else None
+
+    first_media_uid = next((r["uid"] for r in rows if _media_file(r["uid"])), "")
+    stories = "".join(
+        article_html(r, n + 1, related_sources(r, issues, eligible), media,
+                     priority=(r["uid"] == first_media_uid))
+        for n, r in enumerate(rows)
+    )
     areas = "".join(f'<option value="{esc(k)}">{esc(v[0])}</option>' for k, v in AREAS.items())
     # Five primary themes stay visible; the rest live behind "Plus de thèmes"
     # (progressive disclosure — the secondary chips are still real controls).
