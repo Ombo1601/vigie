@@ -547,6 +547,17 @@ def update_media(scope: list[dict], *, offline: bool = False,
             continue
         file = prev.get("file")
         if isinstance(file, str) and FILE_RE.fullmatch(file) and (media_dir / file).is_file():
+            # Backfill the intrinsic size for images stored before dimensions
+            # were measured: reading a header is free and the browser then
+            # reserves the box from the markup.
+            if not (isinstance(prev.get("width"), int) and isinstance(prev.get("height"), int)):
+                try:
+                    with (media_dir / file).open("rb") as handle:
+                        width, height = image_dimensions(handle.read(65536))
+                except OSError:
+                    width, height = None, None
+                if width and height:
+                    prev = {**prev, "width": width, "height": height}
             entries[uid] = prev
             reused += 1
         elif not file:

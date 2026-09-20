@@ -292,6 +292,22 @@ class UpdateMedia(unittest.TestCase):
         self.assertEqual(stored["method"], fbm.METHOD)
         self.assertEqual(stored["media"][self.uid]["file"], entry["file"])
 
+    def test_reused_image_gains_its_dimensions(self) -> None:
+        png = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR"
+               + (800).to_bytes(4, "big") + (450).to_bytes(4, "big") + b"\x00" * 20)
+        self.media_dir.mkdir(parents=True)
+        name = self.uid + ".png"
+        (self.media_dir / name).write_bytes(png)
+        self.manifest.write_text(json.dumps({
+            "method": fbm.METHOD,
+            "media": {self.uid: {"file": name, "article_url": self.cand["url"]}},
+        }), encoding="utf-8")
+        with mock.patch.object(fbm.fetch_media, "fetch_html") as fh:
+            doc = fbm.update_media([self.cand], media_dir=self.media_dir, manifest_path=self.manifest)
+        fh.assert_not_called()
+        entry = doc["media"][self.uid]
+        self.assertEqual((entry.get("width"), entry.get("height")), (800, 450))
+
     def test_stored_dimensions_are_measured_from_the_header(self) -> None:
         png = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR"
                + (800).to_bytes(4, "big") + (450).to_bytes(4, "big") + b"\x00" * 20)
