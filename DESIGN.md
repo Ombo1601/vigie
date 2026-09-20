@@ -147,6 +147,17 @@ external request:
 - **Installable**: `site.webmanifest` + 192/512 icons + `apple-touch-icon`, so
   "Add to Home Screen" gives a proper Vigie icon and standalone display. It is a
   convenience, not an app: no service worker, no offline cache, no tracking.
+- **Immutable images**: stored media is content-addressed
+  (`sha256(bytes)[:20].<ext>`) and served
+  `Cache-Control: public, max-age=31536000, immutable`, so a phone never
+  re-downloads an image and a replaced publisher image gets a new URL instead of
+  a stale cached copy. Intrinsic `width`/`height` come from the file header, so
+  the browser reserves the box without a decoder.
+
+**No generated `srcset`.** The feeds declare no smaller variants
+(`media:thumbnail` absent) and the pipeline is stdlib-only — there is no
+resizing. One honest image per card, content-addressed and cached forever, is
+the right trade until a real variant source exists.
 
 ### Roadmap (designed, not shipped)
 
@@ -172,3 +183,4 @@ external request:
 | 2026-09-19 | Social card: deterministic graphic OG image (palette, wordmark, nest hairlines, compass glyph) — not a place photo; `public/place/` stays empty | Bucky + Inventor |
 | 2026-09-20 | Smartphone pass: 44 px touch targets, no iOS focus zoom, safe-area insets, readable small text, installable manifest + icons (no service worker) | Bucky + Inventor |
 | 2026-09-20 | Field-level revisions: dossier question reformulations recorded in the durable history and quoted verbatim (initial + up to two) | Bucky + Inventor |
+| 2026-09-20 | Images: content-addressed filenames + immutable `/media/*` caching + header-measured dimensions; generated `srcset` refused (no publisher variants, no stdlib resizing) | Bucky + Inventor |

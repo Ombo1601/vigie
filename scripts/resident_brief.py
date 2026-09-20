@@ -1198,6 +1198,13 @@ def article_html(item: dict, index: int, related: list[dict], media: dict | None
         media_file, media_credit = media_entry.get("file"), media_entry.get("credit")
     else:
         media_file, media_credit = None, None
+    # Intrinsic size, when the collector measured it: lets the browser reserve
+    # the box from the markup itself (no layout guess on a phone).
+    media_dims = ""
+    if isinstance(media_entry, dict):
+        width, height = media_entry.get("width"), media_entry.get("height")
+        if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
+            media_dims = f' width="{width}" height="{height}"'
     if not isinstance(media_file, str) or not _MEDIA_FILE.fullmatch(media_file):
         media_file = None
     if media_file:
@@ -1211,7 +1218,7 @@ def article_html(item: dict, index: int, related: list[dict], media: dict | None
         # keep mobile LCP honest; every other image stays lazy.
         loading = 'loading="eager" fetchpriority="high"' if priority else 'loading="lazy"'
         media_html = (
-            f'<figure class="story-media"><img src="/media/{media_file}" alt="" {loading} decoding="async">'
+            f'<figure class="story-media"><img src="/media/{media_file}" alt=""{media_dims} {loading} decoding="async">'
             f'<figcaption class="media-credit">{caption}</figcaption></figure>'
         )
     else:

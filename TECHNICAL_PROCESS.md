@@ -128,9 +128,11 @@ Doctrine: **every silence is a diagnosed fact, and every diagnosis feeds a fixed
   per source and the newest run log always survive offline rebuilds.
 - `data/raw/_bodies/` caches the last body per URL for conditional GET
   (ETag / If-Modified-Since); a 304 returns it and costs zero payload bytes.
-- `data/media/brief/` is content-named (`sha256(url)[:20]`), capped at 900 KB,
-  and pruned when an article leaves the local scope; nothing is invented or
-  cropped, and no publisher channel means no image at all.
+- `data/media/brief/` is content-addressed (`sha256(bytes)[:20].<ext>`), capped
+  at 900 KB, and pruned when an article leaves the local scope; it is served
+  `immutable` for a year, so a replaced publisher image gets a new URL rather
+  than a stale cache hit. No image is invented or cropped, and no publisher
+  channel means no image at all.
 - `data/ops/` ledgers are capped by design (media 28 runs, feed/edition
   windows, watchdog 26 weeks) and written atomically; internal, never staged.
 - `data/` and `deploy/` are unversioned: a git-built edition starts without

@@ -8,6 +8,7 @@ v1 manifest migration, and the machine-room health ledger.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 import tempfile
@@ -354,7 +355,7 @@ class SentinelFlow(unittest.TestCase):
         doc, _, fi = self._run(failing_html("article_http_403", "HTTP 403"),
                                mock.Mock(return_value=(JPEG, "jpg")), None)
         entry = doc["media"][self.uid]
-        self.assertEqual(entry["file"], self.uid + ".jpg")
+        self.assertEqual(entry["file"], hashlib.sha256(JPEG).hexdigest()[:20] + ".jpg")
         self.assertEqual(entry["reason"], "publisher feed media")
         self.assertEqual(entry["image_source"], "feed")
         self.assertEqual(entry["image_url"], "https://cdn.example/feed-a.jpg")

@@ -529,6 +529,11 @@ class SecurityHeadersConfig(unittest.TestCase):
             self.assertIn("default-src 'none'",
                           self.rules[source]["content-security-policy"])
 
+    def test_media_is_cached_immutably(self) -> None:
+        media = self.rules["/media/(.*)"]
+        self.assertEqual(media["cache-control"], "public, max-age=31536000, immutable")
+        self.assertIn("default-src 'none'", media["content-security-policy"])
+
     def test_root_and_staged_configs_agree(self) -> None:
         # The git-build root config and the CLI-uploaded staged copy must not
         # drift: whichever deploy path ran last decides production headers.

@@ -7,6 +7,7 @@ for their true format, and served from our own origin under /media/.
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import shutil
 import tempfile
@@ -184,6 +185,12 @@ class RendererImages(unittest.TestCase):
         self.assertIn('loading="eager" fetchpriority="high"', html)
         self.assertNotIn('loading="lazy"', html)
 
+    def test_intrinsic_dimensions_render_on_the_image(self) -> None:
+        row = self.row()
+        html = brief.article_html(row, 2, [], media={row["uid"]: {
+            "file": row["uid"] + ".jpg", "credit": None, "width": 800, "height": 450}})
+        self.assertIn('alt="" width="800" height="450" loading="lazy"', html)
+
     def test_photographer_credit_renders_beside_the_source(self) -> None:
         row = self.row()
         html = brief.article_html(row, 1, [], media={row["uid"]: {
@@ -275,13 +282,24 @@ class UpdateMedia(unittest.TestCase):
             doc = fbm.update_media([self.cand], media_dir=self.media_dir, manifest_path=self.manifest)
         self.assertEqual(doc["with_image"], 1)
         entry = doc["media"][self.uid]
-        self.assertEqual(entry["file"], self.uid + ".jpg")
+        # Content-addressed: the bytes decide the filename, so a replaced
+        # publisher image can never serve a stale cached copy.
+        self.assertEqual(entry["file"], hashlib.sha256(JPEG).hexdigest()[:20] + ".jpg")
         self.assertEqual(entry["image_url"], "https://cdn.example/a.jpg")
         self.assertEqual(entry["status"], "proposed")
         self.assertEqual((self.media_dir / entry["file"]).read_bytes(), JPEG)
         stored = json.loads(self.manifest.read_text(encoding="utf-8"))
         self.assertEqual(stored["method"], fbm.METHOD)
         self.assertEqual(stored["media"][self.uid]["file"], entry["file"])
+
+    def test_stored_dimensions_are_measured_from_the_header(self) -> None:
+        png = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR"
+               + (800).to_bytes(4, "big") + (450).to_bytes(4, "big") + b"\x00" * 20)
+        with mock.patch.object(fbm.fetch_media, "fetch_html", return_value=OG_HTML), \
+                mock.patch.object(fbm, "fetch_image", return_value=(png, "png")):
+            doc = fbm.update_media([self.cand], media_dir=self.media_dir, manifest_path=self.manifest)
+        entry = doc["media"][self.uid]
+        self.assertEqual((entry.get("width"), entry.get("height")), (800, 450))
 
     def test_second_run_reuses_without_fetching(self) -> None:
         with mock.patch.object(fbm.fetch_media, "fetch_html", return_value=OG_HTML), \
@@ -332,7 +350,7 @@ class UpdateMedia(unittest.TestCase):
                 mock.patch.object(fbm, "fetch_image", return_value=(PNG, "png")):
             doc = fbm.update_media([self.cand], media_dir=self.media_dir, manifest_path=self.manifest)
         self.assertEqual(doc["with_image"], 1)
-        self.assertEqual(doc["media"][self.uid]["file"], self.uid + ".png")
+        self.assertEqual(doc["media"][self.uid]["file"], hashlib.sha256(PNG).hexdigest()[:20] + ".png")
 
     def test_orphans_and_parts_pruned_after_manifest_write(self) -> None:
         self.media_dir.mkdir(parents=True)
@@ -596,6 +614,25 @@ class PipelineWiring(unittest.TestCase):
         with mock.patch.object(fbm, "load_scope", return_value=[{"url": "https://news.example/a"}]), \
                 mock.patch.object(fbm, "update_media", side_effect=OSError("disk on fire")):
             self.assertEqual(fbm.main([]), 0)
+
+
+class ImageDimensions(unittest.TestCase):
+    """Header-only intrinsic size: reserve layout space without a decoder."""
+
+    def test_png_gif_and_webp_vp8x(self) -> None:
+        png = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR"
+               + (1200).to_bytes(4, "big") + (630).to_bytes(4, "big"))
+        self.assertEqual(fbm.image_dimensions(png), (1200, 630))
+        gif = b"GIF89a" + (640).to_bytes(2, "little") + (360).to_bytes(2, "little") + b"\x00" * 8
+        self.assertEqual(fbm.image_dimensions(gif), (640, 360))
+        vp8x = (b"RIFF" + b"\x00" * 4 + b"WEBP" + b"VP8X" + b"\x00" * 8
+                + (99).to_bytes(3, "little") + (49).to_bytes(3, "little"))
+        self.assertEqual(fbm.image_dimensions(vp8x), (100, 50))
+
+    def test_unknown_or_truncated_input_is_not_guessed(self) -> None:
+        self.assertEqual(fbm.image_dimensions(b""), (None, None))
+        self.assertEqual(fbm.image_dimensions(b"not an image at all"), (None, None))
+        self.assertEqual(fbm.image_dimensions(b"\xff\xd8\xff\xe0" + b"\x00" * 40), (None, None))
 
 
 if __name__ == "__main__":

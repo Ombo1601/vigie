@@ -132,6 +132,62 @@ def sniff_image(raw: bytes) -> str | None:
     return None
 
 
+def image_dimensions(raw: bytes) -> tuple[int | None, int | None]:
+    """Intrinsic size from the file header — no decoder, no dependency.
+
+    Used only to reserve layout space (`width`/`height` attributes) so a phone
+    never has to guess. Unknown or malformed input yields (None, None): a guess
+    would be worse than nothing.
+    """
+    if not isinstance(raw, bytes) or len(raw) < 16:
+        return (None, None)
+    try:
+        if raw[:8] == b"\x89PNG\r\n\x1a\n" and raw[12:16] == b"IHDR":
+            return (int.from_bytes(raw[16:20], "big"), int.from_bytes(raw[20:24], "big"))
+        if raw[:6] in (b"GIF87a", b"GIF89a"):
+            return (int.from_bytes(raw[6:8], "little"), int.from_bytes(raw[8:10], "little"))
+        if raw[:2] == b"\xff\xd8":  # JPEG: walk segments to a SOF marker
+            i = 2
+            while i + 4 <= len(raw):
+                if raw[i] != 0xFF:
+                    i += 1
+                    continue
+                marker = raw[i + 1]
+                if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                    i += 2
+                    continue
+                seg_len = int.from_bytes(raw[i + 2:i + 4], "big")
+                if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                              0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                    if i + 9 <= len(raw):
+                        return (int.from_bytes(raw[i + 7:i + 9], "big"),
+                                int.from_bytes(raw[i + 5:i + 7], "big"))
+                    break
+                i += 2 + max(2, seg_len)
+            return (None, None)
+        if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+            fourcc = raw[12:16]
+            if fourcc == b"VP8X" and len(raw) >= 30:
+                return (1 + int.from_bytes(raw[24:27], "little"),
+                        1 + int.from_bytes(raw[27:30], "little"))
+            if fourcc == b"VP8 ":
+                idx = raw.find(b"\x9d\x01\x2a", 20, 40)
+                if idx > 0 and idx + 7 <= len(raw):
+                    return (int.from_bytes(raw[idx + 3:idx + 5], "little") & 0x3FFF,
+                            int.from_bytes(raw[idx + 5:idx + 7], "little") & 0x3FFF)
+            if fourcc == b"VP8L" and len(raw) >= 25 and raw[20] == 0x2F:
+                bits = int.from_bytes(raw[21:25], "little")
+                return ((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1)
+        if raw[4:8] == b"ftyp" and raw[8:12] in (b"avif", b"avis"):
+            idx = raw.find(b"ispe")
+            if idx > 0 and idx + 16 <= len(raw):
+                return (int.from_bytes(raw[idx + 8:idx + 12], "big"),
+                        int.from_bytes(raw[idx + 12:idx + 16], "big"))
+    except (IndexError, ValueError):
+        pass
+    return (None, None)
+
+
 def fetch_image(url: str, referer: str = "", *, retries: int = 2,
                 diag: dict | None = None) -> tuple[bytes, str] | None:
     """Guarded image GET -> (bytes, true extension) or None. Never raises.
@@ -558,7 +614,11 @@ def update_media(scope: list[dict], *, offline: bool = False,
                 _apply_policy(entry, reason, attempts, now)
             else:
                 raw, ext = got
-                name = f"{uid}.{ext}"
+                # Content-addressed name: the bytes decide the filename. A
+                # publisher replacing an image at the same URL yields a new
+                # file (the old one is pruned), and /media/* can be cached
+                # immutably with no stale-copy risk.
+                name = f"{hashlib.sha256(raw).hexdigest()[:20]}.{ext}"
                 media_dir.mkdir(parents=True, exist_ok=True)
                 part = media_dir / f".{name}.part"
                 part.write_bytes(raw)
@@ -566,6 +626,9 @@ def update_media(scope: list[dict], *, offline: bool = False,
                 entry.update(reason="publisher og:image" if source == "og:image" else "publisher feed media",
                              image_url=image_url, image_source=source,
                              file=name, bytes=len(raw), format=ext, attempts=attempts)
+                width, height = image_dimensions(raw)
+                if width and height:
+                    entry["width"], entry["height"] = width, height
                 if source == "feed":
                     feed_resolved += 1
                     if isinstance(feed_credit, str) and feed_credit.strip():
