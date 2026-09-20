@@ -222,6 +222,15 @@ class RendererImages(unittest.TestCase):
         self.assertNotIn("<img", brief.article_html(row, 1, []))
         self.assertNotIn("<img", brief.article_html(row, 1, [], media={}))
 
+    def test_absent_image_gets_an_equal_typographic_face(self) -> None:
+        row = self.row()
+        html = brief.article_html(row, 2, [], media={})
+        self.assertNotIn("<img", html)
+        self.assertIn('class="story-media story-media-empty"', html)
+        self.assertIn("story-face-source", html)
+        self.assertIn("Sans image publiée par l’éditeur", html)
+        self.assertIn("Québec et environs", html)
+
     def test_hostile_media_values_never_render(self) -> None:
         row = self.row()
         for bad in ("../../evil.jpg", "https://evil.example/x.jpg", ("x" * 20) + ".svg",
@@ -624,6 +633,7 @@ class PipelineWiring(unittest.TestCase):
             self.assertEqual(pipeline.main(), 0)
         self.assertIn(("fetch_brief_media.py", ("--offline",)), calls)
         self.assertIn(("ingest_wzdx.py", ("--offline",)), calls)
+        self.assertIn(("ingest_civic.py", ("--offline",)), calls)
         self.assertNotIn("ingest_rss.py", [name for name, _ in calls])
 
     def test_render_only_skips_the_media_fetch(self) -> None:

@@ -1,6 +1,6 @@
 """Vigie v0 — thin enrich: propose geo/topic/impact. Never truth.
 
-Rules only. No LLM. Rent stays on the Inventor's wallet.
+Rules only. No LLM. Rent stays on the project wallet.
 Every tag is status=proposed.
 
 Primary media feed geography never substitutes for evidence in an article.

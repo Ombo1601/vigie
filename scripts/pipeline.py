@@ -1,6 +1,6 @@
 """Vigie v0 - one-command Critical Path.
 
-Runs: ingest (RSS + official WZDX roadworks) -> feed health -> normalize ->
+Runs: ingest (RSS + official WZDX roadworks + civic HTML) -> feed health -> normalize ->
 enrich -> cluster -> edge atlas + anomaly rules -> brief media -> rank/display
 -> edition metrics -> watchdog. Stdlib only. Does not start the server (open a
 second terminal for that). Offline mode reuses raw snapshots and makes no
@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = [
     "ingest_rss.py",
     "ingest_wzdx.py",
+    "ingest_civic.py",
     "feed_health.py",
     "normalize.py",
     "enrich.py",
@@ -40,7 +41,7 @@ SCRIPTS = [
 # flags the two network steps that can.
 RENDER_ONLY = ("rank_display.py",)
 OFFLINE_SKIP = frozenset({"ingest_rss.py"})
-OFFLINE_FLAGGED = frozenset({"ingest_wzdx.py", "fetch_brief_media.py"})
+OFFLINE_FLAGGED = frozenset({"ingest_wzdx.py", "ingest_civic.py", "fetch_brief_media.py"})
 
 
 def run(script: str, *extra: str) -> None:

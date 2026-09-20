@@ -50,7 +50,7 @@ class ArrivalBeautyWithoutFog(unittest.TestCase):
         html = self._html()
         arrival = _arrival_slice(html)
         self.assertIn('data-design="beauty-without-fog-v0.1"', arrival)
-        self.assertIn("/DESIGN.md", html)
+        self.assertIn("/methode/design.html", html)
         # Brand before line before approaches before facets (opt-in after CTA)
         self.assertLess(arrival.find("arrival-brand"), arrival.find("arrival-line"))
         self.assertLess(arrival.find('id="approaches"'), arrival.find('id="life-facets"'))

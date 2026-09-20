@@ -164,7 +164,7 @@ class IdentityLaw(unittest.TestCase):
         self.fetch(opener)
         req = self.requests_of(opener)[0]
         self.assertEqual(req.get_header("User-agent"), ingest_rss.USER_AGENT)
-        self.assertIn("vigieqc.com/legal.md", ingest_rss.USER_AGENT)
+        self.assertIn("vigieqc.com/methode/legal.html", ingest_rss.USER_AGENT)
         self.assertIn("non-commercial", ingest_rss.USER_AGENT)
 
     def test_transport_stall_marks_the_host_and_retries_under_browser_identity(self) -> None:
@@ -323,7 +323,7 @@ class PublicLegalPage(unittest.TestCase):
 
     def test_footer_links_the_legal_page(self) -> None:
         page = brief.render_brief([story()], NOW.isoformat(), [], collection(), media={})
-        self.assertIn('<a class="legal-link" href="/legal.md">', page)
+        self.assertIn('<a class="legal-link" href="/methode/legal.html">', page)
 
     def test_legal_page_discloses_both_identities_and_retention(self) -> None:
         text = (brief.ROOT / "legal.md").read_text(encoding="utf-8")

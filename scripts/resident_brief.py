@@ -280,6 +280,115 @@ def related_sources(item: dict, issues: list[dict], eligible: dict[str, dict]) -
     return rows[:5]
 
 
+def dossier_member_ids(issues: list[dict]) -> set:
+    ids: set = set()
+    for issue in issues or []:
+        if not isinstance(issue, dict):
+            continue
+        for tension in issue.get("tensions") or []:
+            if not isinstance(tension, dict):
+                continue
+            for entry in tension.get("items") or []:
+                if isinstance(entry, dict) and entry.get("candidate_id"):
+                    ids.add(entry["candidate_id"])
+    return ids
+
+
+def why_here_line(item: dict) -> str:
+    """Visible because-clause. Geography is proposed, never a proof of effect."""
+    geo = item.get("geo")
+    if item.get("source_kind") == "official" and geo == "quebec-city":
+        return "Pourquoi ici : document d’une source officielle locale."
+    if geo == "quebec-city":
+        named = [AREAS[k][0] for k in (item.get("areas") or []) if k in AREAS]
+        if named:
+            return f"Pourquoi ici : le texte nomme {named[0]}."
+        return "Pourquoi ici : un lieu ou un acteur local apparaît dans le titre ou l’extrait."
+    if geo == "quebec":
+        return "Pourquoi ici : le classement géographique est proposé à partir du titre et de l’extrait (Québec)."
+    return "Pourquoi ici : le classement géographique est proposé à partir du titre et de l’extrait."
+
+
+HEADLINE_NEST = {"quebec-city": 0, "quebec": 1, "linked": 2}
+
+
+def _issue_dom_id(issue: dict) -> str:
+    raw = re.sub(r"[^a-zA-Z0-9_-]+", "", str(issue.get("issue_id") or ""))[:64]
+    return raw or "x"
+
+
+_SLUG_SAFE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def dossier_slug(issue: dict) -> str:
+    """Stable, filename-safe identifier for the dossier's record page.
+
+    The store issue_id is already hex, but a hostile or malformed store must
+    not be able to aim a file path: anything outside the safe pattern falls
+    back to a deterministic hash. Because the fallback is injective per raw
+    id, the brief's links and the record page's canonical URL always agree.
+    """
+    raw = str(issue.get("issue_id") or "").strip() if isinstance(issue, dict) else ""
+    if _SLUG_SAFE.match(raw):
+        return raw
+    seed = raw or str(issue.get("question") or "dossier") if isinstance(issue, dict) else "dossier"
+    return hashlib.sha256(str(seed).encode("utf-8")).hexdigest()[:16]
+
+
+def dossier_page_path(issue: dict) -> str:
+    return f"/dossiers/{dossier_slug(issue)}.html"
+
+
+def _headline_rows(issue: dict) -> list[dict]:
+    rows: list[dict] = []
+    for tension in issue.get("tensions") or []:
+        if not isinstance(tension, dict):
+            continue
+        inst = str(tension.get("institution_name") or tension.get("source_name") or "Source").strip() or "Source"
+        kind = str(tension.get("source_kind") or "").lower()
+        for entry in tension.get("items") or []:
+            if not isinstance(entry, dict):
+                continue
+            url = safe_url(entry.get("url"))
+            if not url:
+                continue
+            entry_kind = str(entry.get("source_kind") or kind or "").lower()
+            when = parse_date(entry.get("published_at"))
+            geo = str(entry.get("geo") or "")
+            rows.append({
+                "inst": inst,
+                "url": url,
+                "title": str(entry.get("title") or "Sans titre"),
+                "published": entry.get("published_at"),
+                "when": when,
+                "geo": geo,
+                "official": 1 if entry_kind == "official" else 0,
+                "nest_rank": HEADLINE_NEST.get(geo, 9),
+            })
+    rows.sort(key=lambda r: (
+        0 if r["official"] else 1,
+        0 if r["when"] else 1,
+        -(r["when"].timestamp()) if r["when"] else 0,
+        r["nest_rank"],
+        r["inst"].casefold(),
+        r["title"],
+    ))
+    return rows
+
+
+def _headline_li(row: dict) -> str:
+    date_attr = row["when"].isoformat() if row["when"] else ""
+    time_html = date_html(row["published"]) if row["when"] else ""
+    return (
+        f'<li data-url="{esc(row["url"])}" data-official="{row["official"]}" '
+        f'data-date="{esc(date_attr)}" data-nest-rank="{row["nest_rank"]}" '
+        f'data-inst="{esc(folded(row["inst"]))}">'
+        f'<span class="dossier-inst">{esc(row["inst"])}</span>'
+        f'<a href="{esc(row["url"])}" rel="noopener noreferrer">{esc(row["title"])}'
+        f'<span class="arrow" aria-hidden="true"> ↗</span></a>{time_html}</li>'
+    )
+
+
 NEST_LABELS = {"quebec-city": "Québec et environs", "quebec": "Au Québec", "linked": "Ailleurs"}
 
 
@@ -472,21 +581,36 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
     }
     spoke_names.discard("")
     spoke_count = safe_int(issue.get("source_count"), len(spoke_names))
-    bits: list[str] = []
-    for tension in tensions:
-        inst = esc(str(tension.get("institution_name") or "Source").strip())
-        for entry in (tension.get("items") or [])[:2]:
-            if not isinstance(entry, dict):
-                continue
-            url = safe_url(entry.get("url"))
-            if not url:
-                continue
-            bits.append(
-                f'<li><span class="dossier-inst">{inst}</span>'
-                f'<a href="{esc(url)}" rel="noopener noreferrer">{esc(entry.get("title") or "Sans titre")}'
-                f'<span class="arrow" aria-hidden="true"> ↗</span></a></li>'
-            )
-    sources = f'<ul class="dossier-sources">{"".join(bits)}</ul>' if bits else ""
+    headlines_rows = _headline_rows(issue)
+    seen_inst: list[str] = []
+    face: list[dict] = []
+    for row in headlines_rows:
+        key = row["inst"].casefold()
+        if key in seen_inst:
+            continue
+        seen_inst.append(key)
+        face.append(row)
+        if len(face) >= 3:
+            break
+    headlines = (
+        f'<ol class="dossier-headlines">{"".join(_headline_li(r) for r in face)}</ol>'
+        if face else ""
+    )
+    if len(headlines_rows) > len(face):
+        sources = (
+            f'<details class="dossier-more"><summary>Toutes les sources ({len(headlines_rows)})</summary>'
+            f'<ul class="dossier-sources">{"".join(_headline_li(r) for r in headlines_rows)}</ul></details>'
+        )
+    else:
+        sources = ""
+    why = (
+        f'<p class="why-here">Pourquoi ici : rapprochement proposé — {spoke_count} '
+        f'institution{"s" if spoke_count != 1 else ""}, même sujet. Pas une contradiction, '
+        "pas un verdict.</p>"
+    )
+    search_blob = folded(
+        str(issue.get("question") or "") + " " + " ".join(sorted(spoke_names))
+    )
     silence = issue.get("silence") or {}
     if not isinstance(silence, dict):
         silence = {}
@@ -516,12 +640,15 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
     ) if units else ""
     edge_line = dossier_edge_line(issue.get("issue_id"), edge_streets or {}, edge_issues or {})
     return (
-        f'<article class="dossier" data-nest="{esc(nest)}">'
+        f'<article class="dossier" id="dossier-{esc(_issue_dom_id(issue))}" '
+        f'data-nest="{esc(nest)}" data-issue-id="{esc(_issue_dom_id(issue))}" '
+        f'data-search="{esc(search_blob)}">'
         f'<div class="dossier-head"><span class="dossier-nest">{esc(NEST_LABELS[nest])}</span>'
-        f'<span class="dossier-count">{spoke_count} sources · rapprochement proposé</span></div>'
-        f'<h3 class="dossier-q">{question}</h3>'
+        f'<span class="dossier-count">{spoke_count} sources · rapprochement proposé</span>'
+        f'<a class="recit-more" href="{esc(dossier_page_path(issue))}">Récit complet ↗</a></div>'
+        f'<h3 class="dossier-q">{question}</h3>{why}'
         f"{tracking_html(issue)}{dossier_timeline_html(issue)}{dossier_voices_html(issue)}"
-        f"{sources}{silence_line}{remix_line}{units_line}{edge_line}"
+        f"{headlines}{sources}{silence_line}{remix_line}{units_line}{edge_line}"
         f"</article>"
     )
 
@@ -534,27 +661,43 @@ def dossiers_section(issues: list[dict], eligible: dict, edge_streets: dict | No
     if dossiers:
         cards = "".join(dossier_html(iss, eligible, edge_streets, edge_issues) for iss in dossiers[:6])
         label = "dossier proposé" if count == 1 else "dossiers proposés"
+        full_link = '<br><a class="recit-more" href="/dossiers.html">Tous les dossiers complets ↗</a>'
         if count > 6:
-            note = f"{count} {label} cette édition — les 6 premiers affichés ici."
+            note = f"{count} {label} cette édition — les 6 premiers affichés ici." + full_link
         else:
-            note = f"{count} {label}<br>cette édition."
+            note = f"{count} {label}<br>cette édition." + full_link
         listing = f'<div class="dossier-list">{cards}</div>'
+        tools = (
+            '<div class="dossier-tools js-only">'
+            '<label class="select-label"><span>Trier les titres</span>'
+            '<select id="dossier-sort">'
+            '<option value="official">Officiel d’abord</option>'
+            '<option value="date">Par date</option>'
+            '<option value="nest">Par échelle</option>'
+            '</select></label>'
+            '<label class="search-label dossier-find-label">'
+            '<span class="sr-only">Trouver une institution</span>'
+            '<input id="dossier-find" type="search" placeholder="Trouver une institution…" '
+            'autocomplete="off" maxlength="80"></label></div>'
+        )
     else:
         note = "Aucun dossier<br>cette édition."
         listing = (
             '<p class="no-data">Aucun sujet n’a été rapproché entre plusieurs institutions '
             "dans cette collecte. Cela ne dit rien de la couverture ailleurs.</p>"
         )
+        tools = ""
     return (
-        '<section class="dossiers" id="dossiers" aria-labelledby="dossiers-title">'
+        '<section class="dossiers" id="dossiers" data-cmdk="Les dossiers" '
+        'aria-labelledby="dossiers-title">'
         '<div class="section-top"><div><p class="eyebrow">REGARD CROISÉ</p>'
         '<h2 id="dossiers-title">Ce que les sources racontent ensemble.</h2></div>'
         f'<p class="section-note">{note}</p></div>'
         '<p class="dossiers-intro">Quand plusieurs institutions parlent du même sujet, Vigie '
         "les rassemble — sans décider qui a raison. Un rapprochement n’est pas une "
         "contradiction, et plusieurs médias ne sont pas plusieurs confirmations "
-        "indépendantes.</p>"
-        f"{listing}</section>"
+        "indépendantes. L’édition est la même pour chaque lecteur.</p>"
+        f"{tools}{listing}</section>"
     )
 
 
@@ -745,8 +888,8 @@ def anomalies_html(rows: list[dict], total: int | None = None) -> str:
         n = len(evidence) if isinstance(evidence, list) else 0
         cited = (
             f'<span class="fine">{n} entrave{"s" if n != 1 else ""} citée{"s" if n != 1 else ""}'
-            ' · <a href="/anomalies.md">comment nous mesurons</a></span>'
-        ) if n else '<span class="fine"><a href="/anomalies.md">comment nous mesurons</a></span>'
+            ' · <a href="/methode/anomalies.html">comment nous mesurons</a></span>'
+        ) if n else '<span class="fine"><a href="/methode/anomalies.html">comment nous mesurons</a></span>'
         items.append(
             f'<li class="rw-anomaly"><span class="rw-tag rw-t-anom">{esc(row.get("rule_label") or "Anomalie")}</span>'
             f'<span class="rw-anomaly-claim">{esc(row.get("claim"))}</span>{cited}</li>'
@@ -789,7 +932,7 @@ def rw_edge_line(event: dict, edge_streets: dict) -> str:
             f'<p class="rw-edge fine">Rapprochement proposé : {label} de cette édition '
             f'mentionne « {esc(info.get("display") or raw)} » — '
             '<a href="#dossiers">voir les dossiers</a> · '
-            '<a href="/edge.md">méthode</a>. Une mention textuelle, pas une '
+            '<a href="/methode/rues.html">méthode</a>. Une mention textuelle, pas une '
             'preuve géographique.</p>'
         )
     return ""
@@ -821,7 +964,7 @@ def dossier_edge_line(issue_id: object, edge_streets: dict, edge_issues: dict) -
         '<p class="dossier-edge fine">Rapprochement proposé : la collecte officielle '
         f'déclare {parts} — rue{"" if len(rows) == 1 else "s"} mentionnée{"" if len(rows) == 1 else "s"} '
         'dans ce dossier. <a href="#travaux">Voir les entraves</a> · '
-        '<a href="/edge.md">méthode</a>. Un nom de rue partagé, pas une preuve '
+        '<a href="/methode/rues.html">méthode</a>. Un nom de rue partagé, pas une preuve '
         'géographique.</p>'
     )
 
@@ -966,11 +1109,12 @@ def _rw_corridors_html(rows: list[dict]) -> str:
     return (
         f'<script type="application/json" id="vigie-streets">{island}</script>'
         '<div class="rw-corridors js-only" id="rw-corridors" hidden>'
+        '<div class="rw-corridors-head">'
         '<p class="eyebrow">VOS CORRIDORS</p>'
         '<p class="rw-corridors-note">Suivez une ou deux rues que vous empruntez souvent. '
-        "La correspondance est littérale (le nom déclaré par la Ville), sur cet appareil "
-        "seulement : aucune position demandée, aucun effet sur votre trajet calculé, et "
-        "un nom partagé n’est pas une preuve géographique.</p>"
+        "Correspondance littérale (le nom déclaré par la Ville), sur cet appareil "
+        "seulement : aucune position demandée, aucun effet calculé sur votre trajet. "
+        "Un nom partagé n’est pas une preuve géographique.</p></div>"
         '<div class="rw-corridors-add">'
         '<label class="sr-only" for="rw-corridor-input">Ajouter une rue déclarée</label>'
         '<input id="rw-corridor-input" type="text" list="rw-street-options" '
@@ -1178,7 +1322,7 @@ def roadworks_section(rw: dict | None, now: datetime, anomalies: dict | None = N
         if dataset else f"{institution} — Entraves à la circulation en temps réel"
     )
     return (
-        '<section class="roadworks" id="travaux" aria-labelledby="roadworks-title">'
+        '<section class="roadworks" id="travaux" data-cmdk="Travaux et entraves" aria-labelledby="roadworks-title">'
         '<div class="section-top"><div><p class="eyebrow">DONNÉES OFFICIELLES</p>'
         '<h2 id="roadworks-title">Travaux et entraves.</h2></div>'
         f'<p class="section-note">{count_note}</p></div>'
@@ -1193,8 +1337,101 @@ def roadworks_section(rw: dict | None, now: datetime, anomalies: dict | None = N
     )
 
 
+CIVIC_SHOW = 12
+
+
+def civic_section(store: dict | None, now: datetime) -> str:
+    """Official participation calendar. Verbatim titles and windows, never ranked."""
+    if not isinstance(store, dict) or store.get("method") != "civic-html-v1":
+        return ""
+    fetched = parse_date(store.get("fetched_at"))
+    if not fetched:
+        return ""
+    events = [
+        e for e in (store.get("events") or [])
+        if isinstance(e, dict) and str(e.get("title") or "").strip() and safe_url(e.get("url"))
+    ]
+    n = len(events)
+    if n:
+        count_note = (
+            f"{n} consultation{'s' if n != 1 else ''}<br>"
+            f"listée{'s' if n != 1 else ''} par la Ville."
+        )
+    else:
+        count_note = "Aucune consultation<br>listée cette collecte."
+    age = (now - fetched).total_seconds()
+    stale_html = (
+        '<p class="fine">Collecte à actualiser — la Ville a pu modifier le calendrier depuis.</p>'
+        if age > 6 * 3600 or age < -300 else ""
+    )
+    diff = store.get("diff") if isinstance(store.get("diff"), dict) else {}
+    diff_html = ""
+    if diff.get("has_previous"):
+        new_n = safe_int(diff.get("new_count"))
+        gone_n = safe_int(diff.get("removed_count"))
+        chg_n = safe_int(diff.get("changed_count"))
+        diff_html = (
+            f'<p class="civic-diff">Depuis la dernière collecte : <strong>+{new_n}</strong> '
+            f'nouvelle{"s" if new_n != 1 else ""}, <strong>−{gone_n}</strong> '
+            f'absente{"s" if gone_n != 1 else ""} de la liste, <strong>{chg_n}</strong> '
+            f'libellé{"s" if chg_n != 1 else ""} modifié{"s" if chg_n != 1 else ""}. '
+            "Une absence n’est pas une clôture.</p>"
+        )
+    if events:
+        items = []
+        for event in events[:CIVIC_SHOW]:
+            url = safe_url(event.get("url"))
+            window = esc(event.get("window_text") or "")
+            mode = esc(event.get("mode_text") or "")
+            title = esc(event.get("title") or "")
+            mode_html = f'<p class="civic-mode">{mode}</p>' if mode else ""
+            window_html = (
+                f'<span class="civic-window">{window}</span>'
+                if window else
+                '<span class="civic-window">Fenêtre datée absente du calendrier</span>'
+            )
+            items.append(
+                f'<li class="civic-item">{window_html}<div>'
+                f'<h3 class="civic-title"><a href="{esc(url)}" rel="noopener noreferrer">{title}'
+                f'<span class="arrow" aria-hidden="true"> ↗</span></a></h3>{mode_html}</div></li>'
+            )
+        listing = f'<ul class="civic-list">{"".join(items)}</ul>'
+        extra = n - CIVIC_SHOW
+        more = (
+            f'<p class="fine">{extra} autre{"s" if extra != 1 else ""} sur le calendrier officiel.</p>'
+            if extra > 0 else ""
+        )
+    else:
+        listing = (
+            '<p class="no-data">Aucune activité n’était listée sur le calendrier de la Ville '
+            "dans cette collecte. Cela ne dit rien des consultations ailleurs.</p>"
+        )
+        more = ""
+    homepage = safe_url(store.get("homepage") or store.get("source_url")) or (
+        "https://participationcitoyenne.ville.quebec.qc.ca/"
+    )
+    source_url = safe_url(store.get("source_url")) or homepage
+    attr = esc(store.get("attribution") or "Ville de Québec")
+    return (
+        '<section class="civic" id="participation" data-cmdk="Consultations" '
+        'aria-labelledby="civic-title">'
+        '<div class="section-top"><div><p class="eyebrow">DONNÉES OFFICIELLES</p>'
+        '<h2 id="civic-title">Consultations publiques.</h2></div>'
+        f'<p class="section-note">{count_note}</p></div>'
+        '<p class="dossiers-intro">Le calendrier de participation citoyenne de la Ville, '
+        "relayé tel quel. Vigie n’invente aucune date de clôture, n’envoie aucun rappel "
+        "et ne classe pas ces avis avec les articles.</p>"
+        f"{diff_html}{listing}{more}{stale_html}"
+        f'<p class="rw-map"><a href="{esc(source_url)}" rel="noopener noreferrer">'
+        'Ouvrir le calendrier officiel <span aria-hidden="true">↗</span></a></p>'
+        f'<p class="rw-attr fine">Source : {attr}. Collecte du {date_html(fetched.isoformat())}. '
+        f'<a href="{esc(homepage)}" rel="noopener noreferrer">Portail de participation '
+        '<span aria-hidden="true">↗</span></a></p></section>'
+    )
+
+
 def article_html(item: dict, index: int, related: list[dict], media: dict | None = None,
-                 *, priority: bool = False) -> str:
+                 *, priority: bool = False, in_dossier: bool = False) -> str:
     title = esc(item["title"])
     source = esc(item.get("source_name") or item.get("source_id") or "Source")
     media_entry = media.get(item["uid"]) if isinstance(media, dict) else None
@@ -1228,7 +1465,21 @@ def article_html(item: dict, index: int, related: list[dict], media: dict | None
             f'<figcaption class="media-credit">{caption}</figcaption></figure>'
         )
     else:
-        media_html = ""
+        # Equal skeleton (DESIGN.md): an article without a publisher image gets
+        # a typographic face of the same height, never a filler, never stock.
+        face_geo = {
+            "quebec-city": "Québec et environs",
+            "quebec": "Au Québec",
+            "linked": "Ailleurs",
+        }.get(item.get("geo"), "Ailleurs")
+        media_html = (
+            '<figure class="story-media story-media-empty" aria-hidden="true">'
+            '<div class="story-face">'
+            f'<span class="story-face-source">{source}</span>'
+            f'<span class="story-face-geo">{face_geo}</span>'
+            '<span class="story-face-note">Sans image publiée par l’éditeur</span>'
+            "</div></figure>"
+        )
     geo = {"quebec-city": "Québec et environs", "quebec": "Au Québec", "linked": "Ailleurs"}.get(item["geo"], "Ailleurs")
     topic = TOPICS.get(item["topics"][0], "Vie locale")
     summary = item["summary"]
@@ -1243,19 +1494,20 @@ def article_html(item: dict, index: int, related: list[dict], media: dict | None
     peers = "".join(f'<li><span>{esc(r.get("source_name") or r.get("source_id"))}</span><a href="{esc(safe_url(r.get("url")))}" rel="noopener noreferrer">{esc(r.get("title"))}</a>{date_html(r.get("published"))}</li>' for r in related)
     related_html = f'<p class="evidence-label">Autres articles du dossier proposé</p><ul class="source-list">{peers}</ul><p class="fine">Rapprochement automatique à vérifier. Plusieurs médias ne constituent pas plusieurs confirmations indépendantes.</p>' if peers else '<p class="fine">Aucun autre article rapproché dans cette collecte. Cela ne dit rien de la couverture ailleurs.</p>'
     kind = '<span class="official">Source officielle</span>' if item.get("source_kind") == "official" else ''
-    place_reason = "Un lieu ou acteur local a été repéré dans le titre ou l’extrait." if item["geo"] == "quebec-city" else "Le classement géographique est proposé à partir du titre et de l’extrait."
-    if item.get("source_kind") == "official" and item["geo"] == "quebec-city":
-        place_reason = "Ce document provient d’une source officielle locale."
+    why = why_here_line(item)
+    why_html = f'<p class="why-here">{esc(why)}</p>'
+    official_flag = "1" if item.get("source_kind") == "official" else "0"
+    dossier_flag = "1" if in_dossier else "0"
     # The search index carries exactly what the reader sees (title + displayed
     # excerpt), never the fuller internal summary (LEGAL_RISK.md R4).
     search_text = esc(folded(item['title'] + ' ' + excerpt_base + ' ' + str(item.get('source_name') or '')))
-    return f'''<article class="story" id="article-{esc(item['uid'])}" data-id="{esc(item['uid'])}" data-geo="{esc(item['geo'])}" data-topics="{esc(' '.join(item['topics']))}" data-areas="{esc(' '.join(item['areas']))}" data-search="{search_text}" data-published="{esc(item['published'])}">
+    return f'''<article class="story" id="article-{esc(item['uid'])}" data-id="{esc(item['uid'])}" data-geo="{esc(item['geo'])}" data-topics="{esc(' '.join(item['topics']))}" data-areas="{esc(' '.join(item['areas']))}" data-search="{search_text}" data-published="{esc(item['published'])}" data-in-dossier="{dossier_flag}" data-official="{official_flag}" data-url="{esc(safe_url(item['url']))}">
       <div class="story-number" aria-hidden="true">{index:02}</div><div class="story-body">
       {media_html}<div class="story-kicker"><span>{esc(topic)}</span><span>{geo}</span>{kind}<span class="new-label" hidden>Nouveau dans la collecte</span></div>
       <h3><a href="{esc(safe_url(item['url']))}" rel="noopener noreferrer">{title}<span class="arrow" aria-hidden="true"> ↗</span></a></h3>
       <p class="byline">{byline_author}{source}<span aria-hidden="true"> · </span>{date_html(item['published'])}{'<span class="language">Article en anglais</span>' if item.get('language') == 'en' else ''}</p>
-      {excerpt_html}
-      <div class="story-actions"><details class="evidence"><summary>Sources et contexte <span aria-hidden="true">＋</span></summary><div class="evidence-body"><p>{place_reason} Ce repérage ne prouve pas un effet sur votre situation.</p>{related_html}</div></details>
+      {why_html}{excerpt_html}
+      <div class="story-actions"><details class="evidence"><summary>Sources et contexte <span aria-hidden="true">＋</span></summary><div class="evidence-body"><p>{esc(why)} Ce repérage ne prouve pas un effet sur votre situation.</p>{related_html}</div></details>
       <button class="save js-only" type="button" data-save="{esc(item['uid'])}" aria-pressed="false" aria-label="Garder : {title}">Garder <span aria-hidden="true">＋</span></button></div>
       </div></article>'''
 
@@ -1270,7 +1522,8 @@ def _glance_item(label: str, text: str, href: str) -> str:
 
 
 def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: dict | None,
-                issues: list[dict], now: datetime, *, has_changes: bool) -> str:
+                issues: list[dict], now: datetime, *, has_changes: bool,
+                civic: dict | None = None) -> str:
     """Answer-first digest: orient in ten seconds, then let the reader drill down.
 
     Sentences, not a stat strip; every line is either a measured fact of this
@@ -1299,6 +1552,28 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
                     f"déclarée{'s' if active != 1 else ''} par la Ville"
                     + (", collecte à actualiser." if stale else " dans la dernière collecte."))
             items.append(_glance_item("Travaux", text, "#travaux"))
+    civic_fetched = parse_date(civic.get("fetched_at")) if isinstance(civic, dict) else None
+    if (isinstance(civic, dict) and civic.get("method") == "civic-html-v1"
+            and civic_fetched is not None):
+        civic_events = civic.get("events") if isinstance(civic.get("events"), list) else []
+        civic_n = sum(
+            1 for e in civic_events
+            if isinstance(e, dict) and e.get("title") and e.get("url")
+        )
+        civic_age = (now - civic_fetched).total_seconds()
+        civic_stale = civic_age > 6 * 3600 or civic_age < -300
+        if civic_n:
+            text = (
+                f"<strong>{civic_n}</strong> consultation{'s' if civic_n != 1 else ''} "
+                f"listée{'s' if civic_n != 1 else ''} par la Ville"
+                + (", collecte à actualiser." if civic_stale else " dans la dernière collecte.")
+            )
+        else:
+            text = (
+                "Aucune consultation listée par la Ville"
+                + (", collecte à actualiser." if civic_stale else " dans cette collecte.")
+            )
+        items.append(_glance_item("Consultations", text, "#participation"))
     if has_changes and isinstance(ledger, dict) and ledger.get("has_previous"):
         new = safe_int(ledger.get("new_count"))
         dev = safe_int(ledger.get("developed_count"))
@@ -1335,7 +1610,7 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
     return ('<nav class="glance" aria-label="En un coup d’œil">' + "".join(items) + "</nav>")
 
 
-def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run: dict | None = None, ledger: dict | None = None, roadworks: dict | None = None, media: dict | None = None, anomalies: dict | None = None, edges: dict | None = None) -> str:
+def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run: dict | None = None, ledger: dict | None = None, roadworks: dict | None = None, media: dict | None = None, anomalies: dict | None = None, edges: dict | None = None, civic: dict | None = None) -> str:
     now = parse_date(generated_at) or datetime.now(timezone.utc)
     rows, excluded = prepare_items(ranked, now)
     rw_html = roadworks_section(roadworks, now, anomalies, edges)
@@ -1358,9 +1633,11 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
         return file if isinstance(file, str) and _MEDIA_FILE.fullmatch(file) else None
 
     first_media_uid = next((r["uid"] for r in rows if _media_file(r["uid"])), "")
+    in_dossier = dossier_member_ids(issues)
     stories = "".join(
         article_html(r, n + 1, related_sources(r, issues, eligible), media,
-                     priority=(r["uid"] == first_media_uid))
+                     priority=(r["uid"] == first_media_uid),
+                     in_dossier=(r.get("id") in in_dossier))
         for n, r in enumerate(rows)
     )
     areas = "".join(f'<option value="{esc(k)}">{esc(v[0])}</option>' for k, v in AREAS.items())
@@ -1388,8 +1665,16 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
     coverage = f'{status["ok"]} flux disponibles sur {status["total"]}' if status["total"] else 'État des sources inconnu'
     empty = '<p class="no-data">Aucun article récent avec une date de publication exploitable. Consultez les sources officielles ci-dessous.</p>' if not rows else ''
     change_html = change_section(ledger)
+    civic_html = civic_section(civic, now)
     dossier_html = dossiers_section(issues, eligible, edge_streets, edge_issues)
-    glance = digest_html(rows, status, ledger, roadworks, issues, now, has_changes=bool(change_html))
+    glance = digest_html(rows, status, ledger, roadworks, issues, now,
+                         has_changes=bool(change_html), civic=civic)
+    services_fine = (
+        "Ces liens ouvrent les services officiels. Les consultations listées plus haut "
+        "sont collectées telles quelles; les autres avis (RTC, déneigement) ne le sont pas."
+        if civic_html else
+        "Ces liens ouvrent les services officiels. Leurs avis ne sont pas collectés par Vigie."
+    )
     # The edition stamp is the article collection, never the render clock: an
     # hourly roads-only re-render must not relabel the edition as new.
     edition_at = status.get("at") or generated_at
@@ -1415,20 +1700,21 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
 <title>{SITE_TITLE}</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><meta name="apple-mobile-web-app-title" content="Vigie"><meta name="application-name" content="Vigie"><meta name="mobile-web-app-capable" content="yes"><meta name="format-detection" content="telephone=no"><link rel="stylesheet" href="/assets/fonts.css"><link rel="stylesheet" href="/assets/brief.css"><script src="/assets/brief.js" defer></script></head>
 <body><a class="skip-link" href="#essentiel">Aller aux nouvelles</a>
 <header class="masthead"><a class="wordmark" href="/" aria-label="Vigie, accueil"><svg width="28" height="32" viewBox="0 0 28 32" aria-hidden="true"><path d="M2 5 14 28 26 5M8 5l6 12 6-12" fill="none" stroke="currentColor" stroke-width="2.5"/></svg>vigie<span class="wordmark-dot">.</span></a><span class="edition">QUÉBEC, À HAUTEUR DE VIE</span><nav aria-label="Navigation principale"><a href="#essentiel">Le point</a><a href="#dossiers">Les dossiers</a><a href="/registre.html" class="nav-registre">Le registre</a><a href="#agir">Repères utiles</a><a href="#methode">Notre méthode</a></nav><button class="cmdk-open js-only" type="button" id="cmdk-open" aria-haspopup="dialog" aria-controls="cmdk">Recherche rapide <kbd>Ctrl K</kbd></button></header>
-<main><section class="intro" aria-labelledby="intro-title"><div><p class="eyebrow">UNE VILLE. VOTRE QUOTIDIEN.</p><h1 id="intro-title">Moins de bruit.<br><em>Plus de Québec.</em></h1><p class="intro-text">Les nouvelles locales. Les sources pour comprendre. Les repères pour agir. Puis, reprenez votre journée.</p></div>
+<main><section class="intro" aria-labelledby="intro-title"><div><p class="eyebrow">UNE VILLE. VOTRE QUOTIDIEN.</p><h1 id="intro-title">Moins de bruit.<br><em>Plus de Québec.</em></h1><p class="intro-text">Les nouvelles locales. Les sources pour comprendre. Les repères pour agir. Puis, reprenez votre journée.</p><p class="intro-shared">Cette édition est la même pour chaque lecteur. Les filtres et les repères restent sur cet appareil.</p></div>
 <aside class="edition-note" aria-label="Fraîcheur des informations"><div class="compass" aria-hidden="true"><span>N</span><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="43"/><path d="M60 5v22M60 93v22M5 60h22M93 60h22M60 31l13 42-13-8-13 8Z"/></svg></div><p class="eyebrow">LE POINT DE REPÈRE</p><p id="freshness-label" role="status" class="freshness{' warning' if status['stale'] or status['partial'] else ''}" data-fetched="{esc(status['at'])}" data-partial="{str(status['partial']).lower()}" data-total="{status['total']}" data-ok="{status['ok']}">{status_label}</p><p class="edition-time">{date_html(status['at'], fallback='Aucune collecte horodatée')}</p><a class="coverage-link" href="#couverture">{coverage} <span aria-hidden="true">↗</span></a><p class="fine">Un instantané des sources. Pas un service d’alerte en temps réel.</p></aside></section>
 <section class="brief" id="essentiel" aria-labelledby="brief-title"><div class="section-top"><div><p class="eyebrow">L’ESSENTIEL, À VOTRE ÉCHELLE</p><h2 id="brief-title">Faire le point.</h2></div><p class="section-note">7 jours de publications.<br>Édition du {date_html(edition_at)}.</p></div>
 {glance}
 <div class="visit-strip js-only"><p id="visit-status" role="status">Une première visite ? Prenez vos repères.</p><button id="remember" type="button">Mémoriser ce point de lecture</button><ul class="visit-list" id="visit-list" hidden></ul></div>
 <div class="controls js-only"><div class="view-tabs" role="group" aria-label="Vue des articles"><button type="button" data-view="brief" aria-pressed="true">Le point local</button><button type="button" data-view="new" aria-pressed="false">Depuis mon repère <span id="new-count"></span></button><button type="button" data-view="saved" aria-pressed="false">Mes articles gardés <span id="saved-count"></span></button></div>
-<div class="search-row"><label class="search-label"><span class="sr-only">Rechercher dans les titres et extraits</span><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m12 12 5 5"/></svg><input id="search" type="search" placeholder="Une rue, un sujet, un nom…" autocomplete="off" maxlength="200"></label><label class="select-label"><span>Territoire</span><select id="scope"><option value="local">Québec et environs</option><option value="province">Tout le Québec</option><option value="all">Tous les flux</option></select></label><label class="select-label"><span>Lieu mentionné</span><select id="area"><option value="all">Tous les lieux</option>{areas}</select></label></div><div class="topic-filters" role="group" aria-label="Thème des articles">{filters}<button type="button" class="more-topics" id="more-topics" aria-expanded="false" aria-controls="more-topics-list">Plus de thèmes</button></div><div class="topic-filters topic-filters-more" id="more-topics-list" role="group" aria-label="Autres thèmes" hidden>{filters_more}</div><p class="filter-note">Les lieux et thèmes sont repérés automatiquement. Un lieu absent d’un extrait peut échapper au filtre.</p></div>
+<div class="search-row"><label class="search-label"><span class="sr-only">Rechercher dans les titres et extraits</span><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m12 12 5 5"/></svg><input id="search" type="search" placeholder="Une rue, un sujet, un nom…" autocomplete="off" maxlength="200"></label><label class="select-label"><span>Territoire</span><select id="scope"><option value="local">Québec et environs</option><option value="province">Tout le Québec</option><option value="all">Tous les flux</option></select></label><label class="select-label"><span>Lieu mentionné</span><select id="area"><option value="all">Tous les lieux</option>{areas}</select></label></div><div class="topic-filters" role="group" aria-label="Thème des articles">{filters}<button type="button" class="more-topics" id="more-topics" aria-expanded="false" aria-controls="more-topics-list">Plus de thèmes</button></div><div class="topic-filters topic-filters-more" id="more-topics-list" role="group" aria-label="Autres thèmes" hidden>{filters_more}</div><p class="filter-note">Les lieux et thèmes sont repérés automatiquement. Un lieu absent d’un extrait peut échapper au filtre.</p><div class="lenses js-only" role="group" aria-label="Lecture sur cet appareil"><button type="button" id="lens-title" aria-pressed="false">Titres seulement</button><button type="button" id="lens-focus" aria-pressed="false">Dossiers et officiel</button><label class="mute-label"><span class="sr-only">Masquer un mot</span><input id="mute-add" type="search" placeholder="Masquer un mot…" autocomplete="off" maxlength="40"></label><ul id="mute-list" class="mute-list" hidden></ul></div><p class="filter-note js-only">Titres seulement, focus et mots masqués restent sur cet appareil. Ils cachent des cartes, jamais l’ordre public.</p></div>
 <noscript><p class="notice">Tous les articles récents sont affichés. La recherche et les repères personnels nécessitent JavaScript.</p></noscript>
 <div class="results-bar"><p id="result-count" role="status">{len(rows)} articles récents dans les flux collectés</p><button class="text-button js-only" type="button" id="reset-filters">Réinitialiser les filtres</button></div><div id="stories">{stories}{empty}</div>
 <div id="no-results" class="no-data" hidden><h3>Aucun article dans cette vue.</h3><p>Essayez un autre lieu ou élargissez le territoire. Une absence dans nos flux ne signifie pas qu’il ne se passe rien.</p><button type="button" id="empty-reset">Voir le point local</button></div>
 <div class="brief-end"><p id="end-note">Vous avez fait le tour de cette sélection.</p><button class="js-only" id="show-more" type="button">Voir les autres articles</button><span class="fine">Pas de défilement infini. Revenez quand vous en avez besoin.</span></div></section>
 {rw_html}
+{civic_html}
 {change_html}
 {dossier_html}
-<section class="services" id="agir" aria-labelledby="services-title"><div class="section-top"><div><p class="eyebrow">L’INFORMATION DEVIENT UTILE</p><h2 id="services-title">Et maintenant ?</h2></div><p class="section-note">Quatre accès directs<br>aux services officiels.</p></div><div class="service-grid">{service_html}</div><p class="fine">Ces liens ouvrent les services officiels. Leurs avis ne sont pas collectés par Vigie.</p></section>
-<section class="method" id="methode" aria-labelledby="method-title"><div><p class="eyebrow">LA CONFIANCE SE VÉRIFIE</p><h2 id="method-title">Les sources d’abord.<br>Le jugement vous appartient.</h2><p>Vigie rassemble des titres et des extraits. Il ne réécrit pas l’actualité et ne décide pas de ce qui est vrai à votre place.</p></div><div class="method-details"><details><summary>Comment les articles sont-ils choisis ?</summary><p>Proximité géographique (60 %) et fraîcheur de publication (40 %). La fraîcheur diminue de moitié après 36 heures. Seuls les articles datés des 7 jours précédant cette édition entrent dans ce point. Aucun poids pour les clics ou la publicité.</p><p>{excluded} articles écartés de ce point : trop anciens, date absente ou invalide, ou lien inexploitable. Les filtres changent la sélection, jamais l’ordre public.</p><a href="/ranking.md">Lire le classement publié ↗</a></details><details id="couverture"><summary>Quelles sont les limites de la couverture ?</summary><p>{coverage}. Collecte : {date_html(status['at'])}. Un flux peut omettre des articles, être tronqué ou indisponible. Cette liste n’est pas toute l’actualité de Québec.</p><ul class="coverage-list">{source_rows}</ul><a href="/sources.yaml">Consulter la liste des sources ↗</a></details><details><summary>Mes repères restent-ils privés ?</summary><p>Les articles gardés, votre point de lecture et vos corridors restent sur cet appareil, dans ce navigateur. Aucun compte, suivi publicitaire ou accès à votre position. Les recherches restent dans la page. Les sites sources ont leurs propres pratiques.</p><p>Les images d’aperçu proviennent des éditeurs (og:image ou média attaché à leur propre flux) : Vigie les récupère au moment de la collecte et les sert depuis ce site — votre navigateur ne contacte aucun éditeur en lisant ce point. Un article dont l’éditeur ne publie pas d’image reste sans image : aucune image n’est inventée.</p><button id="clear-local" type="button" class="js-only">Effacer mes repères sur cet appareil</button><p id="privacy-status" role="status"></p></details><details><summary>Qui finance Vigie ?</summary><p>Le projet est actuellement financé par son fondateur. Aucun achat de placement dans le classement.</p><a href="/RENT.md">Lire le financement déclaré ↗</a></details><details><summary>Explorer le prototype et ses dossiers</summary><p>L’atelier conserve les comparaisons de sources et la méthode expérimentale. Les regroupements sont proposés, les contradictions et l’indépendance des sources ne sont pas établies.</p><a href="/explorer.html">Ouvrir l’atelier de recherche ↗</a></details></div></section></main>
-<footer><a class="wordmark" href="/">vigie<span class="wordmark-dot">.</span></a><p>Un peu plus au courant.<br>Un peu plus libre de votre temps.</p><span>Fait pour Québec.<br>Édition expérimentale.</span><a class="legal-link" href="/legal.md">Mentions légales, attribution et retrait</a><nav class="surfaces" aria-label="Autres formes de cette édition"><span class="eyebrow">LA MÊME ÉDITION, AUTREMENT</span><a href="/registre.html">Le registre <small>qui a parlé, qui n’a pas parlé — scellé</small></a><a href="/affiche.html">L’affiche <small>une feuille à imprimer pour le quartier</small></a><a href="/index.html.md">En Markdown <small>pour les agents et les lecteurs texte</small></a><a href="/explorer.html" hreflang="en">Explorer <small>l’atelier des preuves (anglais)</small></a><a href="/morning.html">Le matin <small>le point ambiant du même magasin</small></a></nav></footer><div class="cmdk js-only" id="cmdk" hidden role="dialog" aria-modal="true" aria-labelledby="cmdk-title"><div class="cmdk-panel"><h2 id="cmdk-title" class="sr-only">Recherche rapide</h2><input id="cmdk-input" class="cmdk-input" type="text" role="combobox" aria-expanded="true" aria-controls="cmdk-list" aria-autocomplete="list" placeholder="Chercher un article, un lieu, une section…" autocomplete="off" maxlength="200"><ul id="cmdk-list" class="cmdk-list" role="listbox" aria-label="Résultats"></ul><p class="cmdk-hint">Entrée pour ouvrir · Échap pour fermer · Ctrl ou ⌘ + K</p></div></div><div id="toast" role="status" aria-live="polite"></div></body></html>'''
+<section class="services" id="agir" aria-labelledby="services-title"><div class="section-top"><div><p class="eyebrow">L’INFORMATION DEVIENT UTILE</p><h2 id="services-title">Et maintenant ?</h2></div><p class="section-note">Quatre accès directs<br>aux services officiels.</p></div><div class="service-grid">{service_html}</div><p class="fine">{services_fine}</p></section>
+<section class="method" id="methode" aria-labelledby="method-title"><div><p class="eyebrow">LA CONFIANCE SE VÉRIFIE</p><h2 id="method-title">Les sources d’abord.<br>Le jugement vous appartient.</h2><p>Vigie rassemble des titres et des extraits. Il ne réécrit pas l’actualité et ne décide pas de ce qui est vrai à votre place.</p></div><div class="method-grid"><a class="method-card" href="/methode/classement.html"><span class="method-card-kicker">LE CLASSEMENT</span><span class="method-card-title">Comment les articles sont-ils choisis ?</span><span class="method-card-line">Proximité (60 %) + fraîcheur (40 %), moitié moins de poids toutes les 36 heures. Aucun poids pour les clics. {excluded} articles écartés de ce point. Les filtres changent la sélection, jamais l’ordre.</span><span class="method-card-go">Lire la loi du classement ↗</span></a><a class="method-card" href="/methode/sources.html"><span class="method-card-kicker">LES SOURCES</span><span class="method-card-title">D’où viennent les titres ?</span><span class="method-card-line">Une liste finie et publiée de flux — {coverage}. Chaque coupe est consignée avec sa raison, jamais effacée en silence.</span><span class="method-card-go">Voir la liste des sources ↗</span></a><a class="method-card" href="/methode/registre.html"><span class="method-card-kicker">LE REGISTRE</span><span class="method-card-title">Qui a parlé, qui n’a pas parlé.</span><span class="method-card-line">Chaque édition scellée par sha256, chaînée à la précédente. Vérifiable sans compte, sans clé, avec un terminal.</span><span class="method-card-go">La méthode du registre ↗</span></a><a class="method-card" href="/methode/legal.html"><span class="method-card-kicker">MENTIONS LÉGALES</span><span class="method-card-title">Attribution et retrait.</span><span class="method-card-line">Le fondement du point local, l’identité de collecte, et le retrait le jour même si un éditeur le demande.</span><span class="method-card-go">Lire les mentions ↗</span></a><a class="method-card" href="/methode/financement.html"><span class="method-card-kicker">QUI FINANCE VIGIE</span><span class="method-card-title">Le loyer, déclaré.</span><span class="method-card-line">Gratuit ne veut pas dire sans coût. Qui paie la machine — et ce qui n’est jamais à vendre, jamais.</span><span class="method-card-go">Lire le financement ↗</span></a><a class="method-card" href="/methode/vision.html"><span class="method-card-kicker">LA VISION</span><span class="method-card-title">Le serment avant la machine.</span><span class="method-card-line">Ce que Vigie est, et refuse d’être : pas de neutralité vendue, pas de vérité couronnée.</span><span class="method-card-go">Lire la vision ↗</span></a></div><div class="method-details"><details id="couverture"><summary>Quelles sont les limites de la couverture ?</summary><p>{coverage}. Collecte : {date_html(status['at'])}. Un flux peut omettre des articles, être tronqué ou indisponible. Cette liste n’est pas toute l’actualité de Québec.</p><ul class="coverage-list">{source_rows}</ul><a href="/methode/sources.html">Consulter la liste des sources ↗</a></details><details><summary>Mes repères restent-ils privés ?</summary><p>Les articles gardés, votre point de lecture, vos corridors et vos lectures (titres seulement, focus, mots masqués) restent sur cet appareil, dans ce navigateur. Aucun compte, suivi publicitaire ou accès à votre position. Les recherches restent dans la page. Les sites sources ont leurs propres pratiques.</p><p>Les images d’aperçu proviennent des éditeurs (og:image ou média attaché à leur propre flux) : Vigie les récupère au moment de la collecte et les sert depuis ce site — votre navigateur ne contacte aucun éditeur en lisant ce point. Un article dont l’éditeur ne publie pas d’image reste sans image : aucune image n’est inventée.</p><button id="clear-local" type="button" class="js-only">Effacer mes repères sur cet appareil</button><p id="privacy-status" role="status"></p></details><details><summary>Qui finance Vigie ?</summary><p>Le projet est financé à titre personnel, sans publicité et sans commandite. Aucun achat de placement dans le classement : le rang n’est jamais à vendre.</p><a href="/methode/financement.html">Lire le financement déclaré ↗</a></details><details><summary>Explorer le prototype et ses dossiers</summary><p>L’atelier conserve les comparaisons de sources et la méthode expérimentale. Les regroupements sont proposés, les contradictions et l’indépendance des sources ne sont pas établies.</p><a href="/explorer.html">Ouvrir l’atelier de recherche ↗</a></details></div><p class="fine">Toutes les pages méthode : <a href="/methode/index.html">la méthode complète</a> · la même édition pour les machines : <a href="/index.html.md">index.html.md</a>.</p></section></main>
+<footer><a class="wordmark" href="/">vigie<span class="wordmark-dot">.</span></a><p>Un peu plus au courant.<br>Un peu plus libre de votre temps.</p><span>Fait pour Québec.<br>Édition expérimentale.</span><a class="legal-link" href="/methode/legal.html">Mentions légales, attribution et retrait</a><nav class="surfaces" aria-label="Autres formes de cette édition"><span class="eyebrow">LA MÊME ÉDITION, AUTREMENT</span><a href="/registre.html">Le registre <small>qui a parlé, qui n’a pas parlé — scellé</small></a><a href="/affiche.html">L’affiche <small>une feuille à imprimer pour le quartier</small></a><a href="/index.html.md">En Markdown <small>pour les agents et les lecteurs texte</small></a><a href="/explorer.html" hreflang="en">Explorer <small>l’atelier des preuves (anglais)</small></a><a href="/morning.html">Le matin <small>le point ambiant du même magasin</small></a></nav></footer><div class="cmdk js-only" id="cmdk" hidden role="dialog" aria-modal="true" aria-labelledby="cmdk-title"><div class="cmdk-panel"><h2 id="cmdk-title" class="sr-only">Recherche rapide</h2><input id="cmdk-input" class="cmdk-input" type="text" role="combobox" aria-expanded="true" aria-controls="cmdk-list" aria-autocomplete="list" placeholder="Chercher un article, coller une URL…" autocomplete="off" maxlength="1000"><ul id="cmdk-list" class="cmdk-list" role="listbox" aria-label="Résultats"></ul><p class="cmdk-hint">Entrée pour ouvrir · Échap pour fermer · Ctrl ou ⌘ + K</p></div></div><div id="toast" role="status" aria-live="polite"></div></body></html>'''

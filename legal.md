@@ -37,9 +37,9 @@ cette licence. Les citations courtes affichées dans les dossiers proposés
 Vigie ne reproduit **jamais** le corps des articles, ne revend rien, ne
 distribue aucun flux à des tiers et n'entraîne aucun modèle sur les contenus.
 
-## Statut non commercial — engagement du fondateur
+## Statut non commercial — engagement public de Vigie
 
-Décision du fondateur (2026-09-19) : **Vigie reste gratuit et non commercial.**
+Engagement public (2026-09-19) : **Vigie reste gratuit et non commercial.**
 Pas de publicité, pas d'abonnement payant, pas de revente de données, pas de
 commandite. Aucun compte lecteur : les articles gardés et les repères de
 lecture restent dans le navigateur du visiteur. Si ce statut devait changer un
@@ -51,7 +51,7 @@ tout changement, et cette page serait mise à jour.
 La collecte des flux et des images s'identifie honnêtement :
 
 ```
-Vigie/0.2 (+https://vigieqc.com/legal.md; news aggregator; non-commercial)
+Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)
 ```
 
 Certains serveurs ralentissent ou interrompent les lecteurs automatisés au

@@ -47,7 +47,7 @@ Read [PRODUCT_AUDIT.md](PRODUCT_AUDIT.md) for the co-founder assessment, impleme
 |------|------|
 | `VISION.md` | Vow — vision / mission / kill list |
 | `sources.yaml` | Finite source chancellery |
-| `RENT.md` | Who pays (v0 = Inventor wallet) |
+| `RENT.md` | Who pays (v0 = the project bearer's wallet) |
 | `ranking.md` | Published weights + change log |
 | `FRICTION.md` | Arrival friction log + kill list |
 | `FACETS.md` | Opt-in life facets (reorder-only) |

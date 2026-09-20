@@ -28,10 +28,13 @@ Thumbs.db
 /public/delta/
 /public/llms.txt
 /public/index.html.md
+/public/dossiers/
+/public/methode/
 
 # Historical one-off patch scripts and execution logs
 /_*.py
 /_*.txt
+/firebase-debug.log
 
 .vercel
 .env*

@@ -32,7 +32,7 @@ RAW_DIR = ROOT / "data" / "raw"
 # HTTP refusal (403/406/410/429) is ALWAYS respected - never retried under
 # another identity, never circumvented. Both identities are disclosed in
 # legal.md.
-USER_AGENT = "Vigie/0.2 (+https://vigieqc.com/legal.md; news aggregator; non-commercial)"
+USER_AGENT = "Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)"
 FALLBACK_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Vigie/0.2"

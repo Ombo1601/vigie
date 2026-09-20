@@ -61,6 +61,19 @@ class AnswerFirstDigest(unittest.TestCase):
         self.assertNotIn('href="#travaux"', html)
         self.assertNotIn('href="#changements"', html)
         self.assertNotIn('href="/registre.html"', html)
+        html = self._digest(
+            civic={"method": "civic-html-v1", "events": [{"title": "x", "url": "https://x.example/"}]},
+        )
+        self.assertNotIn('href="#participation"', html)
+
+    def test_civic_glance_names_an_empty_calendar(self) -> None:
+        html = self._digest(civic={
+            "method": "civic-html-v1",
+            "fetched_at": NOW.isoformat(),
+            "events": [],
+        })
+        self.assertIn('href="#participation"', html)
+        self.assertIn("Aucune consultation listée par la Ville", html)
 
     def test_digest_is_deterministic(self) -> None:
         self.assertEqual(self._digest(), self._digest())
@@ -129,11 +142,14 @@ class WayfindingAndContinuity(unittest.TestCase):
 
     def test_script_implements_palette_and_scout(self) -> None:
         js = (ROOT / "public" / "assets" / "brief.js").read_text(encoding="utf-8")
-        for needle in ("cmdkChoose", "cmdkDraw", "IntersectionObserver", "aria-current", "visit-more"):
+        for needle in ("cmdkChoose", "cmdkDraw", "canonUrl", "IntersectionObserver", "aria-current", "visit-more"):
             self.assertIn(needle, js)
         # Storage contract and lean-scan guardrails must survive.
         self.assertIn("vigie.resident.v1", js)
+        self.assertIn("vigie.lenses.v1", js)
         self.assertIn("setTimeout(render, 150)", js)
+        self.assertIn("Cette URL n’est pas dans cette édition.", js)
+        self.assertIn("pinId", js)
         self.assertNotIn("rows.some", js)
 
     def test_roadworks_never_in_the_masthead(self) -> None:
@@ -143,6 +159,7 @@ class WayfindingAndContinuity(unittest.TestCase):
         html = path.read_text(encoding="utf-8")
         masthead = html[html.index('class="masthead"'):html.index("</header>")]
         self.assertNotIn('href="#travaux"', masthead)
+        self.assertNotIn('href="#participation"', masthead)
 
 
 class SpatialSketch(unittest.TestCase):

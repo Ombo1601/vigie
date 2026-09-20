@@ -251,12 +251,13 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
         "links": {
             "brief": f"{SITE_URL}/",
             "brief_markdown": f"{SITE_URL}/index.html.md",
+            "dossiers": f"{SITE_URL}/dossiers.html",
             "registre": f"{SITE_URL}/registre.html",
             "chain": f"{SITE_URL}/registre/chain.json",
             "institutions": f"{SITE_URL}/registre/institutions.json",
-            "sources": f"{SITE_URL}/sources.yaml",
-            "method": f"{SITE_URL}/REGISTRE.md",
-            "legal": f"{SITE_URL}/legal.md",
+            "sources": f"{SITE_URL}/methode/sources.html",
+            "method": f"{SITE_URL}/methode/registre.html",
+            "legal": f"{SITE_URL}/methode/legal.html",
         },
         "rules_for_agents": [
             "Cite the original publisher (source_name + url) for every item; Vigie is an index, never the author.",
@@ -326,6 +327,9 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
     else:
         lines.append("Aucun dossier à plusieurs voix dans cette édition.")
         lines.append("")
+    if dossiers:
+        lines.append(f"Vue complète : {SITE_URL}/dossiers.html (un dossier par page, tous les titres tels quels).")
+        lines.append("")
 
     if ledger.get("has_previous"):
         lines.append("## Depuis la dernière édition")
@@ -371,7 +375,7 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
     lines.append("")
     lines.append("- Chaque titre appartient à son éditeur ; citez l’éditeur et son lien, jamais Vigie comme auteur.")
     lines.append("- Le silence est une absence dans les flux collectés par Vigie, pas la preuve qu’une institution n’a rien dit ailleurs.")
-    lines.append(f"- Sources suivies : {SITE_URL}/sources.yaml · Méthode : {SITE_URL}/ranking.md, {SITE_URL}/REGISTRE.md · Mentions légales et retrait : {SITE_URL}/legal.md")
+    lines.append(f"- Sources suivies : {SITE_URL}/methode/sources.html · Méthode : {SITE_URL}/methode/classement.html, {SITE_URL}/methode/registre.html · Mentions légales et retrait : {SITE_URL}/methode/legal.html")
     lines.append("")
     return "\n".join(lines)
 
@@ -393,6 +397,7 @@ Current edition: {edition or "unknown"}. Rules for agents: cite the original pub
 
 - [Le point (Markdown)]({SITE_URL}/index.html.md): the front door as plain Markdown — stories with publisher and URL, dossiers with who spoke / who did not, official roadworks, the voice register.
 - [Delta]({SITE_URL}/delta/latest.json): machine-readable edition delta (delta-v1) — new / developed / quiet dossiers with items, institutions spoke and silent with streaks, roadworks diff, cursor = chain root.
+- [Dossiers complets (HTML)]({SITE_URL}/dossiers.html): one record page per dossier of the current edition — every voice with every verbatim headline, the collection timeline, who spoke and who did not.
 
 ## Registre
 
@@ -400,16 +405,19 @@ Current edition: {edition or "unknown"}. Rules for agents: cite the original pub
 - [Chain]({SITE_URL}/registre/chain.json): the sealed editions (records + sha256 leaves and roots); verify with `scripts/registre.py --verify`.
 - [Institutions]({SITE_URL}/registre/institutions.json): per followed institution — spoke or silent this edition, silent streak, last time it spoke.
 - [Roadworks chain]({SITE_URL}/registre/travaux.json): one root per change of the City's active obstruction set.
-- [Method: REGISTRE.md]({SITE_URL}/REGISTRE.md): what a seal contains, what it proves, what it does not.
+- [Method]({SITE_URL}/methode/registre.html): what a seal contains, what it proves, what it does not.
 
 ## Method
 
-- [Sources]({SITE_URL}/sources.yaml): the finite list of followed feeds, institutions and licence notes.
-- [Ranking]({SITE_URL}/ranking.md): published ranking (geo + recency; no clicks, no ads).
-- [Vision]({SITE_URL}/VISION.md): what Vigie is and refuses to be.
-- [Legal, attribution, opt-out]({SITE_URL}/legal.md): publisher rights, same-day removal.
-- [Anomalies]({SITE_URL}/anomalies.md): fixed-threshold roadworks anomaly rules.
-- [Edges]({SITE_URL}/edge.md): literal street-name joins between roadworks and dossiers.
+- [All method pages]({SITE_URL}/methode/index.html): the human-readable method, one page per rule.
+- [Ranking]({SITE_URL}/methode/classement.html): published ranking (geo + recency; no clicks, no ads).
+- [Sources]({SITE_URL}/methode/sources.html): the finite list of followed feeds, institutions, cuts and licence notes.
+- [Funding]({SITE_URL}/methode/financement.html): who pays, what is never for sale.
+- [Vision]({SITE_URL}/methode/vision.html): what Vigie is and refuses to be.
+- [Legal, attribution, opt-out]({SITE_URL}/methode/legal.html): publisher rights, same-day removal.
+- [Anomalies]({SITE_URL}/methode/anomalies.html): fixed-threshold roadworks anomaly rules.
+- [Edges]({SITE_URL}/methode/rues.html): literal street-name joins between roadworks and dossiers.
+- Raw sources (machine-readable, same content): /VISION.md /ranking.md /sources.yaml /RENT.md /FRICTION.md /FACETS.md /DESIGN.md /edge.md /anomalies.md /legal.md /REGISTRE.md.
 
 ## Optional
 

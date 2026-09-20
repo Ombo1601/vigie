@@ -3,7 +3,7 @@
 # Rule: every source is named. Cuts are logged. No single court owns the fog.
 # Voice = institution (not RSS feed). Sister feeds share one institution_id.
 # Last updated: 2026-09-17
-# Owner: Onesphore Ombinos + co-founders
+# A project shared by co-founders; every source is named, cuts are logged.
 
 version: 1
 niche:
@@ -96,6 +96,22 @@ sources:
     enabled: true
     enabled_at: 2026-09-17
     license_note: CC-BY 4.0 - attribution required (Ville de Québec, Entraves à la circulation en temps réel, via Données Québec).
+
+  - id: ville-quebec-participation
+    name: Ville de Québec — Participation citoyenne
+    institution: ville-quebec
+    institution_name: Ville de Québec
+    language: fr
+    geo: quebec-city
+    nest_role: primary
+    source_kind: official
+    type: civic-html
+    url: https://www.ville.quebec.qc.ca/citoyens/participation-citoyenne/activites/index.aspx
+    homepage: https://participationcitoyenne.ville.quebec.qc.ca/
+    notes: Public participation calendar (HTML table, IdProjet identity). Not RSS — outside the 12-feed ceiling, invisible to the article pipeline, the ranking and the silence map. Titles and date windows relayed verbatim; never ranked with articles. robots.txt was absent (404) on 2026-09-20; the collector respects Disallow if one appears.
+    enabled: true
+    enabled_at: 2026-09-20
+    license_note: Crown copyright, Ville de Québec; attribution required; non-commercial fair dealing. Titles and windows quoted from the public calendar, each item links to the City fiche.
 
   # --- Province (Quebec) ---
   - id: le-devoir
@@ -252,7 +268,7 @@ deferred:
 
 rules:
   max_enabled_rss_v0: 12
-  coverage_note: RSS coverage is publisher-capped, not Vigie-capped - probed 2026-09-20, official borough/transit/metropolitan feeds are empty or absent and publisher section feeds are empty. Densifying Near me beyond this needs a dedicated official-page collector (avis publics, RTC alerts, participation portal) with its own robots and terms review, not more RSS.
+  coverage_note: RSS coverage is publisher-capped, not Vigie-capped - probed 2026-09-20, official borough/transit/metropolitan feeds are empty or absent and publisher section feeds are empty. Near-me densification for avis/participation is the civic-html collector (participation calendar), not more RSS. RTC alerts still need their own collector.
   linked_must_be_thin: true
   on_poison_or_death: set enabled false, log cut_reason and cut_at, keep raw history
   balance_note: >
@@ -261,7 +277,7 @@ rules:
     (Ville, Gouv QC, Hydro). 12 enabled RSS = ceiling; fewer institutions when sister feeds
     share one voice (CBC, Radio-Canada). Not perfect balance — publish; adjust with scars.
   official_change_feeds: >
-    Non-RSS official feeds (type: wzdx, ...) are structured change data, not articles.
+    Non-RSS official feeds (type: wzdx, civic-html, ...) are structured change data, not articles.
     They never enter the article pipeline, the RSS ceiling, the ranking, or the silence
     map. They render in dedicated finite brief sections with attribution, source
     timestamps, collection diffs, and links to the official service. Removed from a

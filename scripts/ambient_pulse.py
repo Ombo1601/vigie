@@ -394,18 +394,18 @@ def render_morning_html(digest: dict) -> str:
     <div class="cta">
       <a class="cta-primary" href="/index.html">L'essentiel à Québec</a>
       <a href="/explorer.html">Comparer les sources</a>
-      <a href="/FRICTION.md">FRICTION</a>
-      <a href="/ranking.md">ranking</a>
+      <a href="/methode/frictions.html">FRICTION</a>
+      <a href="/methode/classement.html">ranking</a>
     </div>
     <footer>
       Ambient channel = store twin. Aggregate only. No infinite scroll. No personalization feed.
-      Method: <a href="/VISION.md">VISION</a> ·
-      <a href="/ranking.md">ranking</a> ·
-      <a href="/sources.yaml">sources</a> ·
-      <a href="/RENT.md">RENT</a> ·
-      <a href="/FRICTION.md">FRICTION</a> ·
-      <a href="/FACETS.md">FACETS</a> ·
-      <a href="/DESIGN.md">DESIGN</a>.
+      Method: <a href="/methode/vision.html">VISION</a> ·
+      <a href="/methode/classement.html">ranking</a> ·
+      <a href="/methode/sources.html">sources</a> ·
+      <a href="/methode/financement.html">RENT</a> ·
+      <a href="/methode/frictions.html">FRICTION</a> ·
+      <a href="/methode/facettes.html">FACETS</a> ·
+      <a href="/methode/design.html">DESIGN</a>.
       Morning pulse stays store order; life facets are an Arrival opt-in lens only.
     </footer>
   </div>

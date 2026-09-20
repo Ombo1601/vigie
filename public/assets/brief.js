@@ -5,6 +5,7 @@
   const all = (selector) => [...document.querySelectorAll(selector)];
   const on = (el, event, fn) => { if (el && el.addEventListener) el.addEventListener(event, fn); };
   const KEY = 'vigie.resident.v1';
+  const LKEY = 'vigie.lenses.v1';
   // Folding must match resident_brief.folded(): ligatures and typographic
   // apostrophes are mapped before diacritics are stripped, or searching
   // "oeuvre" would never match a stored "œuvre".
@@ -25,13 +26,16 @@
       areas: new Set(String(d.areas || '').split(' ')),
       topics: new Set(String(d.topics || '').split(' ')),
       search: String(d.search || ''),
+      url: String(d.url || (row.querySelector('h3 a') || {}).href || ''),
+      inDossier: d.inDossier === '1',
+      official: d.official === '1',
       newLabel: row.querySelector('.new-label'),
       saveBtn: row.querySelector('[data-save]'),
       title: h3 ? h3.textContent.trim() : '',
     };
   });
   const idSet = new Set(cards.map(c => c.id));
-  let view = 'brief', topic = 'all', limit = 6, timer, searchTimer;
+  let view = 'brief', topic = 'all', limit = 12, timer, searchTimer, pinId = '';
   let state = { saved: [], seen: null, visited: null };
   let savedSet = new Set(), seenSet = null, newCount = 0;
   const syncSets = () => {
@@ -45,6 +49,36 @@
     if (raw && typeof raw === 'object') state = { saved: validIds(raw.saved), seen: Array.isArray(raw.seen) ? validIds(raw.seen) : null, visited: typeof raw.visited === 'string' && Number.isFinite(Date.parse(raw.visited)) ? raw.visited : null };
   } catch { /* Reading remains usable when browser storage is unavailable. */ }
   syncSets();
+  let lenses = { titleOnly: false, focus: false, muted: [] };
+  try {
+    const raw = JSON.parse(localStorage.getItem(LKEY) || 'null');
+    if (raw && typeof raw === 'object') {
+      const muted = Array.isArray(raw.muted)
+        ? [...new Set(raw.muted.filter(x => typeof x === 'string').map(x => fold(x.trim())).filter(x => x.length >= 2 && x.length <= 40))].slice(0, 20)
+        : [];
+      lenses = { titleOnly: raw.titleOnly === true, focus: raw.focus === true, muted };
+    }
+  } catch { /* Lenses stay at defaults when storage is unreadable. */ }
+  const persistLenses = () => { try { localStorage.setItem(LKEY, JSON.stringify(lenses)); } catch { /* ignore */ } };
+  const drawMute = () => {
+    const list = $('#mute-list');
+    if (!list) return;
+    list.textContent = '';
+    list.hidden = lenses.muted.length === 0;
+    lenses.muted.forEach(token => {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = token + ' ×';
+      btn.setAttribute('aria-label', 'Ne plus masquer : ' + token);
+      btn.addEventListener('click', () => {
+        lenses.muted = lenses.muted.filter(m => m !== token);
+        persistLenses(); drawMute(); render();
+      });
+      li.appendChild(btn);
+      list.appendChild(li);
+    });
+  };
   const toastEl = $('#toast');
   const toast = (text) => { toastEl.textContent = text; clearTimeout(timer); timer = setTimeout(() => { toastEl.textContent = ''; }, 5000); };
   const persist = () => {
@@ -90,9 +124,16 @@
       return scopeMatch && (area === 'all' || card.areas.has(area))
         && (topic === 'all' || card.topics.has(topic))
         && terms.every(t => card.search.includes(t))
-        && (view !== 'saved' || savedSet.has(card.id)) && (view !== 'new' || isNew(card));
+        && (view !== 'saved' || savedSet.has(card.id)) && (view !== 'new' || isNew(card))
+        && (card.id === pinId || ((!lenses.focus || card.inDossier || card.official)
+        && !lenses.muted.some(m => m && card.search.includes(m))));
     });
     const visible = new Set(matches.slice(0, limit));
+    if (pinId) {
+      const pinned = cards.find(c => c.id === pinId);
+      if (pinned) visible.add(pinned);
+      pinId = '';
+    }
     cards.forEach(card => {
       card.row.hidden = !visible.has(card);
       card.newLabel.hidden = !isNew(card);
@@ -118,6 +159,10 @@
       : state.visited ? `${newCount} article(s) apparu(s) dans les flux depuis votre repère du ${dateText(state.visited)}. Ce n’est pas un suivi des modifications.`
       : 'Mémorisez votre point de lecture pour voir les nouveaux articles à votre prochaine visite.';
     if (view === 'new' && state.seen === null) visitStatusEl.textContent = 'Créez d’abord un repère avec « Mémoriser ce point de lecture ».';
+    document.body.classList.toggle('lens-title-only', lenses.titleOnly);
+    const titleBtn = $('#lens-title'), focusBtn = $('#lens-focus');
+    if (titleBtn) titleBtn.setAttribute('aria-pressed', String(lenses.titleOnly));
+    if (focusBtn) focusBtn.setAttribute('aria-pressed', String(lenses.focus));
     // Continuity (on-device only): name the newest articles since the marker,
     // so "what appeared since you left" is concrete, not just a number.
     if (visitListEl) {
@@ -141,15 +186,52 @@
       }
     }
   }
-  function reset() { topic = 'all'; view = 'brief'; limit = 6; searchEl.value = ''; scopeEl.value = 'local'; areaEl.value = 'all'; render(); }
-  viewBtns.forEach(b => on(b, 'click', () => { view = b.dataset.view; limit = 6; if (view === 'saved' || view === 'new') { scopeEl.value = 'all'; areaEl.value = 'all'; searchEl.value = ''; topic = 'all'; } else { scopeEl.value = 'local'; } render(); }));
-  topicBtns.forEach(b => on(b, 'click', () => { topic = b.dataset.topic; limit = 6; render(); }));
+  function reset() { topic = 'all'; view = 'brief'; limit = 12; searchEl.value = ''; scopeEl.value = 'local'; areaEl.value = 'all'; render(); }
+  viewBtns.forEach(b => on(b, 'click', () => { view = b.dataset.view; limit = 12; if (view === 'saved' || view === 'new') { scopeEl.value = 'all'; areaEl.value = 'all'; searchEl.value = ''; topic = 'all'; } else { scopeEl.value = 'local'; } render(); }));
+  topicBtns.forEach(b => on(b, 'click', () => { topic = b.dataset.topic; limit = 12; render(); }));
   // Debounced: filtering every row per keystroke wastes battery on phones;
   // 150 ms still feels instant and the final render is always correct.
-  on(searchEl, 'input', () => { limit = 6; clearTimeout(searchTimer); searchTimer = setTimeout(render, 150); });
-  [scopeEl, areaEl].forEach(el => on(el, 'change', () => { limit = 6; render(); }));
+  on(searchEl, 'input', () => { limit = 12; clearTimeout(searchTimer); searchTimer = setTimeout(render, 150); });
+  [scopeEl, areaEl].forEach(el => on(el, 'change', () => { limit = 12; render(); }));
   ['#reset-filters', '#empty-reset'].forEach(s => on($(s), 'click', reset));
-  on(showMoreEl, 'click', () => { limit += 6; render(); });
+  on(showMoreEl, 'click', () => { limit += 12; render(); });
+  on($('#lens-title'), 'click', () => { lenses.titleOnly = !lenses.titleOnly; persistLenses(); render(); });
+  on($('#lens-focus'), 'click', () => { lenses.focus = !lenses.focus; persistLenses(); render(); });
+  const muteAdd = $('#mute-add');
+  const addMute = () => {
+    if (!muteAdd) return;
+    const token = fold(muteAdd.value.trim());
+    if (token.length < 2 || token.length > 40) return;
+    if (!lenses.muted.includes(token) && lenses.muted.length < 20) lenses.muted.push(token);
+    muteAdd.value = '';
+    persistLenses(); drawMute(); render();
+  };
+  on(muteAdd, 'keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addMute(); } });
+  const sortDossiers = () => {
+    const mode = (($('#dossier-sort') || {}).value) || 'official';
+    all('.dossier').forEach(d => {
+      ['ol.dossier-headlines', 'ul.dossier-sources'].forEach(sel => {
+        const list = d.querySelector(sel);
+        if (!list) return;
+        const items = [...list.children];
+        items.sort((a, b) => {
+          if (mode === 'date') return String(b.dataset.date || '').localeCompare(String(a.dataset.date || ''));
+          if (mode === 'nest') return Number(a.dataset.nestRank || 9) - Number(b.dataset.nestRank || 9);
+          const ao = Number(a.dataset.official || 0), bo = Number(b.dataset.official || 0);
+          return (bo - ao) || String(b.dataset.date || '').localeCompare(String(a.dataset.date || ''));
+        });
+        items.forEach(li => list.appendChild(li));
+      });
+    });
+  };
+  on($('#dossier-sort'), 'change', sortDossiers);
+  on($('#dossier-find'), 'input', () => {
+    const q = fold((($('#dossier-find') || {}).value || '').trim());
+    all('.dossier').forEach(d => {
+      d.hidden = Boolean(q) && !String(d.dataset.search || '').includes(q);
+    });
+  });
+  drawMute();
   all('[data-save]').forEach(b => on(b, 'click', () => {
     const id = b.dataset.save;
     const wasSaved = savedSet.has(id);
@@ -170,8 +252,10 @@
   });
   on($('#clear-local'), 'click', () => {
     let cleared = true;
-    try { [KEY, 'vigie_facets_v1', 'vigie_visit_v1', 'vigie.corridors.v1'].forEach(k => localStorage.removeItem(k)); } catch { cleared = false; }
-    state = { saved: [], seen: null, visited: null }; syncSets(); reset();
+    try { [KEY, LKEY, 'vigie_facets_v1', 'vigie_visit_v1', 'vigie.corridors.v1'].forEach(k => localStorage.removeItem(k)); } catch { cleared = false; }
+    state = { saved: [], seen: null, visited: null }; syncSets();
+    lenses = { titleOnly: false, focus: false, muted: [] };
+    drawMute(); reset();
     const ps = $('#privacy-status');
     if (ps) ps.textContent = cleared ? 'Vos repères Vigie ont été effacés de cet appareil.' : 'L’accès au stockage est bloqué. Les repères de cette visite ont été effacés.';
   });
@@ -183,30 +267,102 @@
   const cmdk = $('#cmdk'), cmdkInput = $('#cmdk-input'), cmdkList = $('#cmdk-list'), cmdkOpenBtn = $('#cmdk-open');
   const navLinks = all('.masthead nav a');
   const sections = navLinks.map(a => ({ label: a.textContent.trim(), target: a.getAttribute('href') })).filter(s => s.target);
+  const seenTargets = new Set(sections.map(s => s.target));
+  all('[data-cmdk][id]').forEach(el => {
+    const target = '#' + el.id;
+    const label = (el.getAttribute('data-cmdk') || '').trim();
+    if (label && !seenTargets.has(target)) {
+      sections.push({ label, target });
+      seenTargets.add(target);
+    }
+  });
+  const dossierCards = all('.dossier').map(el => ({
+    id: el.id,
+    search: String(el.dataset.search || ''),
+    title: ((el.querySelector('.dossier-q') || {}).textContent || 'Dossier').trim(),
+    urls: [...el.querySelectorAll('[data-url], a[href]')].map(node => node.dataset.url || node.href).filter(Boolean),
+  }));
+  const looksLikeUrl = q => {
+    const t = String(q || '').trim();
+    return /^https?:\/\//i.test(t) || /^[a-z0-9.-]+\.[a-z]{2,}([/:?#].*)?$/i.test(t);
+  };
+  const canonUrl = raw => {
+    try {
+      const t = String(raw || '').trim();
+      const u = new URL(/^[a-z][a-z0-9+.-]*:/i.test(t) ? t : 'https://' + t);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+      const host = u.hostname.replace(/^www\./i, '').toLowerCase();
+      const path = (u.pathname.replace(/\/+$/, '') || '/').toLowerCase();
+      const params = new URLSearchParams(u.search);
+      [...params.keys()].filter(k => /^utm_/i.test(k) || k === 'fbclid' || k === 'gclid').forEach(k => params.delete(k));
+      const query = params.toString();
+      return host + path + (query ? '?' + query : '');
+    } catch { return ''; }
+  };
   let cmdkItems = [], cmdkActive = 0, cmdkOpener = null;
   const cmdkDraw = () => {
     const query = cmdkInput ? cmdkInput.value.trim() : '';
-    const terms = fold(query).split(/\s+/).filter(Boolean);
     const hits = [];
-    sections.forEach(s => {
-      if (!terms.length || terms.every(t => fold(s.label).includes(t))) hits.push({ kind: 'Section', title: s.label, target: s.target, id: '' });
-    });
-    if (terms.length) {
-      for (const c of cards) {
-        if (hits.length >= 10) break;
-        if (terms.every(t => c.search.includes(t))) hits.push({ kind: 'Article', title: c.title.replace(/\s*↗\s*$/, ''), target: '', id: c.id });
+    if (looksLikeUrl(query)) {
+      const needle = canonUrl(query);
+      let found = false;
+      if (needle) {
+        for (const c of cards) {
+          if (canonUrl(c.url) === needle) {
+            hits.push({ kind: 'URL', title: c.title.replace(/\s*↗\s*$/, ''), target: '', id: c.id });
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          for (const d of dossierCards) {
+            if (d.urls.some(u => canonUrl(u) === needle)) {
+              hits.push({ kind: 'Dossier', title: d.title, target: '#' + d.id, id: '' });
+              found = true;
+              break;
+            }
+          }
+        }
       }
-    }
-    cmdkItems = hits.slice(0, 9);
-    if (cmdkActive >= cmdkItems.length) cmdkActive = 0;
-    cmdkList.textContent = '';
-    if (!cmdkItems.length) {
-      const empty = document.createElement('li');
-      empty.className = 'cmdk-empty';
-      empty.textContent = terms.length ? 'Aucun résultat. Élargissez le terme.' : 'Tapez pour chercher un article, un lieu ou une section.';
-      cmdkList.appendChild(empty);
-      if (cmdkInput) cmdkInput.setAttribute('aria-activedescendant', '');
-      return;
+      cmdkItems = hits.slice(0, 9);
+      if (cmdkActive >= cmdkItems.length) cmdkActive = 0;
+      cmdkList.textContent = '';
+      if (!cmdkItems.length) {
+        const empty = document.createElement('li');
+        empty.className = 'cmdk-empty';
+        empty.textContent = 'Cette URL n’est pas dans cette édition.';
+        cmdkList.appendChild(empty);
+        if (cmdkInput) cmdkInput.setAttribute('aria-activedescendant', '');
+        return;
+      }
+    } else {
+      const terms = fold(query).split(/\s+/).filter(Boolean);
+      sections.forEach(s => {
+        if (!terms.length || terms.every(t => fold(s.label).includes(t))) hits.push({ kind: 'Section', title: s.label, target: s.target, id: '' });
+      });
+      if (terms.length) {
+        for (const d of dossierCards) {
+          if (hits.length >= 10) break;
+          if (terms.every(t => d.search.includes(t) || fold(d.title).includes(t))) {
+            hits.push({ kind: 'Dossier', title: d.title, target: '#' + d.id, id: '' });
+          }
+        }
+        for (const c of cards) {
+          if (hits.length >= 10) break;
+          if (terms.every(t => c.search.includes(t))) hits.push({ kind: 'Article', title: c.title.replace(/\s*↗\s*$/, ''), target: '', id: c.id });
+        }
+      }
+      cmdkItems = hits.slice(0, 9);
+      if (cmdkActive >= cmdkItems.length) cmdkActive = 0;
+      cmdkList.textContent = '';
+      if (!cmdkItems.length) {
+        const empty = document.createElement('li');
+        empty.className = 'cmdk-empty';
+        empty.textContent = terms.length ? 'Aucun résultat. Élargissez le terme.' : 'Tapez pour chercher un article, coller une URL, ou une section.';
+        cmdkList.appendChild(empty);
+        if (cmdkInput) cmdkInput.setAttribute('aria-activedescendant', '');
+        return;
+      }
     }
     cmdkItems.forEach((it, i) => {
       const li = document.createElement('li');
@@ -233,9 +389,17 @@
     if (!it) return;
     cmdkClose();
     if (it.id) {
-      // Reach the article whatever the current filters are.
+      // Reach the article whatever the current filters, mute or focus are.
+      // pinId unhides that one card for this render; lenses stay as the
+      // reader left them and never rewrite the public rank.
+      pinId = it.id;
       view = 'brief'; topic = 'all'; scopeEl.value = 'all'; areaEl.value = 'all'; searchEl.value = ''; limit = cards.length;
       render();
+    }
+    if (it.target && String(it.target).indexOf('#dossier') === 0) {
+      const find = $('#dossier-find');
+      if (find) find.value = '';
+      all('.dossier').forEach(d => { d.hidden = false; });
     }
     const node = document.querySelector(it.id ? '#article-' + it.id : it.target);
     if (node) {
@@ -273,7 +437,7 @@
     on(cmdk, 'mousedown', e => { if (e.target === cmdk) cmdkClose(); });
   }
   // Section scout: highlight the section you are actually reading.
-  const spyIds = ['essentiel', 'travaux', 'changements', 'dossiers', 'agir', 'methode'];
+  const spyIds = ['essentiel', 'travaux', 'participation', 'changements', 'dossiers', 'agir', 'methode'];
   if ('IntersectionObserver' in window && navLinks.length) {
     const byHref = new Map(navLinks.map(a => [a.getAttribute('href'), a]));
     const spy = new IntersectionObserver(entries => {
@@ -340,7 +504,7 @@
           const label = document.createElement('span'); label.className = 'rw-corridor-name'; label.textContent = name;
           const count = document.createElement('span'); count.className = 'rw-corridor-count';
           count.textContent = n === 0
-            ? 'aucune entrave déclarée dans cette collecte'
+            ? 'aucune entrave déclarée'
             : n + ' entrave' + (n !== 1 ? 's' : '') + ' déclarée' + (n !== 1 ? 's' : '');
           const rm = document.createElement('button'); rm.type = 'button'; rm.className = 'rw-corridor-remove';
           rm.textContent = 'Retirer'; rm.setAttribute('aria-label', 'Retirer ' + name);

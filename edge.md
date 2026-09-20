@@ -94,4 +94,4 @@ It is **not**:
 
 | Date | Decision | Owner |
 |------|----------|--------|
-| 2026-09-19 | Ship v0.1 literal joins; publish this method; ranking untouched | Bucky + Inventor |
+| 2026-09-19 | Ship v0.1 literal joins; publish this method; ranking untouched | Bucky + le porteur |

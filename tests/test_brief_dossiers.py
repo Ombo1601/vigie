@@ -114,6 +114,45 @@ class DossierRendering(unittest.TestCase):
         self.assertIn("pas un silence éditorial prouvé", page)
         self.assertIn("pas un indicateur de biais", page)
 
+    def test_story_desk_shows_face_on_headlines_and_pourquoi(self):
+        html = brief.dossier_html(issue(), {})
+        self.assertIn('class="dossier-headlines"', html)
+        self.assertIn('id="dossier-dossier-1"', html)
+        self.assertIn("Pourquoi ici : rapprochement proposé", html)
+        self.assertIn("pas un verdict", html)
+        self.assertIn("Québec dit non au tramway", html)
+        self.assertIn("Ottawa tranche pour le tramway", html)
+
+    def test_story_desk_caps_three_institutions_official_first(self):
+        extra = issue(tensions=[
+            {"institution_name": "Le Soleil", "source_kind": "media", "items": [
+                {"title": "Média A", "url": "https://a.example/a", "published_at": "2026-09-17T12:00:00+00:00"},
+            ]},
+            {"institution_name": "Radio-Canada", "source_kind": "media", "items": [
+                {"title": "Média B", "url": "https://b.example/b", "published_at": "2026-09-17T11:00:00+00:00"},
+            ]},
+            {"institution_name": "Ville de Québec", "source_kind": "official", "items": [
+                {"title": "Avis officiel", "url": "https://v.example/v", "published_at": "2026-09-17T10:00:00+00:00"},
+            ]},
+            {"institution_name": "Le Devoir", "source_kind": "media", "items": [
+                {"title": "Média C", "url": "https://c.example/c", "published_at": "2026-09-17T13:00:00+00:00"},
+            ]},
+        ])
+        html = brief.dossier_html(extra, {})
+        face = html[html.index("dossier-headlines"): html.index("</ol>")]
+        self.assertIn("Avis officiel", face)
+        self.assertLess(face.index("Avis officiel"), face.index("Média"))
+        self.assertIn("Toutes les sources (4)", html)
+        self.assertEqual(face.count("<li "), 3)
+
+    def test_shared_edition_sentence_is_on_the_front_door(self):
+        page = brief.render_brief([story()], NOW.isoformat(), [issue()], collection())
+        self.assertIn("Cette édition est la même pour chaque lecteur", page)
+        self.assertIn('id="lens-title"', page)
+        self.assertIn('id="dossier-find"', page)
+        self.assertIn("coller une URL", page)
+        self.assertIn("Pourquoi ici :", page)
+
     def test_media_remix_is_disclosed_and_cleared_when_official_speaks(self):
         remix = brief.render_brief([story()], NOW.isoformat(), [issue(media_remix=True)], collection())
         self.assertIn("Aucune source officielle sur ce dossier", remix)

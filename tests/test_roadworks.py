@@ -359,6 +359,7 @@ class PipelineWiring(unittest.TestCase):
     def test_scripts_order(self):
         self.assertEqual(pipeline.SCRIPTS[0], "ingest_rss.py")
         self.assertEqual(pipeline.SCRIPTS[1], "ingest_wzdx.py")
+        self.assertEqual(pipeline.SCRIPTS[2], "ingest_civic.py")
 
     def test_offline_flag_reaches_only_network_fetch_steps(self):
         with patch("sys.argv", ["pipeline.py", "--offline"]), patch.object(pipeline, "run") as run:
@@ -366,7 +367,7 @@ class PipelineWiring(unittest.TestCase):
         calls = [(c.args[0], c.args[1:]) for c in run.call_args_list]
         self.assertIn(("ingest_wzdx.py", ("--offline",)), calls)
         for name, extra in calls:
-            if name in ("ingest_wzdx.py", "fetch_brief_media.py"):
+            if name in ("ingest_wzdx.py", "ingest_civic.py", "fetch_brief_media.py"):
                 self.assertEqual(extra, ("--offline",))
             else:
                 self.assertEqual(extra, ())
@@ -490,6 +491,9 @@ class RoadworksRender(unittest.TestCase):
             (root / "assets").mkdir()
             for name in ("assets/brief.css", "assets/fonts.css", "assets/brief.js", "favicon.svg", "apple-touch-icon.png", "site.webmanifest", "explorer.html", "morning.html", "llms.txt", "index.html.md", *stage_public.OPTIONAL_PAGES, *stage_public.METHODS):
                 (root / name).write_text("placeholder", encoding="utf-8")
+            (root / "methode").mkdir(exist_ok=True)
+            for name in (*stage_public.METHOD_PAGES, "index"):
+                (root / "methode" / f"{name}.html").write_text("placeholder", encoding="utf-8")
             self.assertEqual(stage_public.validate_site(root), [])
 
 

@@ -39,9 +39,9 @@ presence counters). It never runs normalize/enrich/cluster, so it creates no
 edition and leaves the change ledger, dossier history and edition metrics
 untouched. It shares the `vigie-refresh` concurrency group with the full refresh.
 
-### The record layer (registre · substrate · affiche)
+### The record layer (registre · substrate · récits · méthode · affiche)
 
-The HTML brief is a *view*; the record is the product. Three emitters run
+The HTML brief is a *view*; the record is the product. Five emitters run
 inside the render step (`rank_display.main`, after the brief and the ambient
 twin), from the same stores, with no second brain:
 
@@ -58,10 +58,22 @@ twin), from the same stores, with no second brain:
   `rel="alternate" type="text/markdown"`; the brief also carries
   `rel="describedby" href="/llms.txt"`), `public/delta/latest.json`
   (`delta-v1`, cursor = chain root).
+- `scripts/recits.py` — **Les Récits**: `public/dossiers.html` + one complete,
+  addressable record page per current-edition dossier (`public/dossiers/<issue_id>.html`):
+  every voice with every verbatim headline, the full silence roster, the
+  collection timeline, measured evidence. Zero JavaScript; pages exist only for
+  the current edition (a quiet dossier keeps its counters in the registre,
+  never its page — no lingering publisher text).
+- `scripts/method_site.py` — **La Méthode**: `public/methode/<slug>.html` +
+  `public/methode/index.html` — every published method file as a first-class
+  page (zero JS, print-first, cross-links remapped to pages; the sources page
+  is data, never raw YAML). The `.md`/`.yaml` files stay staged as the machine
+  twins; human surfaces link only the pages (the sole `.md` link left anywhere
+  is the labelled `/index.html.md` twin). No served file names the founder.
 - `scripts/affiche.py` — **L'affiche**: `public/affiche.html`, a print-first
   neighbourhood sheet (`public/assets/affiche.css`), no JavaScript.
 
-All three are fail-soft *inside the render* (a fault is printed, the brief
+All five are fail-soft *inside the render* (a fault is printed, the brief
 still renders) but the front door links to `/registre.html`, `/affiche.html`,
 `/llms.txt` and `/index.html.md`, so `stage_public.validate_site` turns a
 missing artefact into a blocked release — diagnosed, never silent. The method
@@ -116,7 +128,7 @@ Tests alone: `python -X utf8 -m unittest discover -s tests`.
 | Path | Role |
 |------|------|
 | `scripts/*.py` | one pipeline stage per file, orchestrated by `scripts/pipeline.py` |
-| `scripts/registre.py`, `substrate.py`, `affiche.py` | the record layer, emitted by the render step (see above) |
+| `scripts/registre.py`, `substrate.py`, `recits.py`, `method_site.py`, `affiche.py` | the record layer, emitted by the render step (see above) |
 | `anchors/checkpoint.txt` | registre checkpoint committed by the refresh workflow after each deploy |
 | `tests/` | unittest (stdlib), live-data checks are guarded with `skipTest` |
 | `public/` | hand-authored assets; generated `*.html` is gitignored |

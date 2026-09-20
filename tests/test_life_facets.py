@@ -242,7 +242,7 @@ class FacetSignalsAndHtml(unittest.TestCase):
         self.assertIn('id="life-facets"', html)
         self.assertIn("Life facets (opt-in)", html)
         self.assertIn('id="vigie-facets"', html)
-        self.assertIn("/FACETS.md", html)
+        self.assertIn("/methode/facettes.html", html)
         self.assertIn("data-facet='renter'", html)
         self.assertIn("data-topic=", html)
         self.assertIn("vigie_facets_v1", html)

@@ -21,6 +21,7 @@ CANDIDATES = ROOT / "data" / "normalized" / "latest_candidates.json"
 ENRICHED = ROOT / "data" / "normalized" / "latest_enriched.json"
 ISSUES = ROOT / "data" / "issues" / "latest_issues.json"
 ROADWORKS = ROOT / "data" / "roadworks" / "latest_roadworks.json"
+CIVIC = ROOT / "data" / "civic" / "latest_consultations.json"
 EDGES = ROOT / "data" / "edges" / "latest_edges.json"
 ANOMALIES = ROOT / "data" / "anomalies" / "latest_verdict.json"
 OUT_JSON = ROOT / "data" / "normalized" / "latest_ranked.json"
@@ -1965,19 +1966,19 @@ def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None
         <summary>Life facets (opt-in)</summary>
         <p class="facets-note">
           Reorders Approaches only. Does not change public rank.
-          Method: <a href="/FACETS.md">FACETS.md</a>. w_impact stays gated.
+          Method: <a href="/methode/facettes.html">FACETS</a>. w_impact stays gated.
         </p>
         <div class="facet-toggles" id="facet-toggles">{facet_toggles}</div>
         <div class="facets-actions">
           <button type="button" id="facets-clear">Clear facets</button>
-          <a href="/FACETS.md">Published weights</a>
+          <a href="/methode/facettes.html">Published weights</a>
         </div>
       </details>
       <p class="facets-status" id="facets-status" hidden aria-live="polite"></p>
       <details class="arrival-ops" id="arrival-ops">
         <summary>Clock &amp; method</summary>
         <p class="clock">{esc(clock_line(clock))}</p>
-        <p class="methods" id="method">Method (real files): <a href="/VISION.md">VISION.md</a><a href="/ranking.md">ranking.md</a><a href="/sources.yaml">sources.yaml</a><a href="/RENT.md">RENT.md</a><a href="/FRICTION.md">FRICTION.md</a><a href="/FACETS.md">FACETS.md</a><a href="/DESIGN.md">DESIGN.md</a></p>
+        <p class="methods" id="method">Method (real files): <a href="/methode/vision.html">VISION</a><a href="/methode/classement.html">ranking</a><a href="/methode/sources.html">sources</a><a href="/methode/financement.html">RENT</a><a href="/methode/frictions.html">FRICTION</a><a href="/methode/facettes.html">FACETS</a><a href="/methode/design.html">DESIGN</a></p>
       </details>
     </section>
 
@@ -2036,7 +2037,7 @@ def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None
       </div>
     </div>
     </div>
-    <footer class="site-foot">Aggregate only. Arrival is Approaches from fights on disk — never a painted personalization feed. Beauty without fog: DESIGN.md. Life facets are opt-in and reorder Approaches only (FACETS.md). Lookout field (Radar / Stage / Near me) opens on invitation. Same fight only from scars. No infinite scroll. We clarify; we do not bait dwell-time. Links: <a href="/VISION.md">VISION</a> · <a href="/ranking.md">ranking</a> · <a href="/sources.yaml">sources</a> · <a href="/RENT.md">RENT</a> · <a href="/FRICTION.md">FRICTION</a> · <a href="/FACETS.md">FACETS</a> · <a href="/DESIGN.md">DESIGN</a>.</footer>
+    <footer class="site-foot">Aggregate only. Arrival is Approaches from fights on disk — never a painted personalization feed. Beauty without fog: DESIGN. Life facets are opt-in and reorder Approaches only (FACETS). Lookout field (Radar / Stage / Near me) opens on invitation. Same fight only from scars. No infinite scroll. We clarify; we do not bait dwell-time. Links: <a href="/methode/vision.html">VISION</a> · <a href="/methode/classement.html">ranking</a> · <a href="/methode/sources.html">sources</a> · <a href="/methode/financement.html">RENT</a> · <a href="/methode/frictions.html">FRICTION</a> · <a href="/methode/facettes.html">FACETS</a> · <a href="/methode/design.html">DESIGN</a>.</footer>
   </div>
   <script>
   (function () {{
@@ -2262,7 +2263,7 @@ def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None
         }} else {{
           status.hidden = false;
           status.innerHTML = "<strong>Life facets on</strong> — " + active.join(", ")
-            + " <span style='opacity:.85'>(Approaches reorder only · public rank unchanged · w_impact gated · FACETS.md)</span>";
+             + " <span style='opacity:.85'>(Approaches reorder only · public rank unchanged · w_impact gated · <a href='/methode/facettes.html'>FACETS</a>)</span>";
         }}
       }}
       var box = document.getElementById("life-facets");
@@ -2512,6 +2513,17 @@ def main() -> None:
         if roadworks:
             print(f"roadworks: {len(roadworks.get('events') or [])} active events from {ROADWORKS}")
 
+    # Official participation calendar: HTML table, never ranked with articles.
+    civic: dict = {}
+    if CIVIC.exists():
+        try:
+            loaded = json.loads(CIVIC.read_text(encoding="utf-8"))
+            civic = loaded if isinstance(loaded, dict) else {}
+        except ValueError:
+            civic = {}
+        if civic:
+            print(f"civic: {len(civic.get('events') or [])} consultations from {CIVIC}")
+
     # Sidecar stores compiled from the official collection: street-level joins
     # (edge-atlas-v1) and fixed-threshold anomaly verdicts (anomaly-beacon-v1).
     # Missing, corrupt or foreign-method stores render nothing rather than fail.
@@ -2545,7 +2557,8 @@ def main() -> None:
     store_io.write_text_atomic(
         OUT_HTML,
         resident_brief.render_brief(ranked, now.isoformat(), issues, ledger=ledger,
-                                    roadworks=roadworks, anomalies=anomalies, edges=edges),
+                                    roadworks=roadworks, anomalies=anomalies, edges=edges,
+                                    civic=civic),
     )
     near = sum(1 for c in ranked if section_for(c) == "near")
     prov = sum(1 for c in ranked if section_for(c) == "province")
@@ -2575,15 +2588,19 @@ def main() -> None:
     # so the hourly roads-only re-render never mints a new edition seal. A fault
     # here is diagnosed and reported; it never blocks the brief.
     import affiche
+    import method_site
+    import recits
     import registre
     import substrate
 
     try:
         state = registre.emit(issues_doc, roadworks)
         substrate.emit(ranked, issues, ledger, roadworks, state, now.isoformat())
+        recits.emit(issues, ranked, ledger, roadworks, edges)
+        method_site.emit()
         affiche.emit(ranked, issues, roadworks, state, now.isoformat())
     except Exception as exc:  # noqa: BLE001 - fail-soft by house law, but loudly
-        print(f"registre/substrate/affiche: FAILED ({type(exc).__name__}: {exc}); brief still rendered")
+        print(f"registre/substrate/recits/methode/affiche: FAILED ({type(exc).__name__}: {exc}); brief still rendered")
 
 
 if __name__ == "__main__":

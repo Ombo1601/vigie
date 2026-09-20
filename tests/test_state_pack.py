@@ -83,6 +83,7 @@ class CuratedMembers(unittest.TestCase):
             "normalized/latest_ranked.json",
         ):
             self.assertIn(name, state_pack.EXPLICIT)
+        self.assertIn("civic/latest_consultations.json", state_pack.EXPLICIT)
 
     def test_round_trip_restores_the_same_bytes(self) -> None:
         archive = self.root / "state.tar.gz"

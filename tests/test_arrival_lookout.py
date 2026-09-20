@@ -211,8 +211,8 @@ class ArrivalFirstPaint(unittest.TestCase):
         # Unit from scar item surfaces on Approach
         self.assertIn("120 logements", html)
         # Friction method linked
-        self.assertIn("FRICTION.md", html)
-        self.assertIn("DESIGN.md", html)
+        self.assertIn("/methode/frictions.html", html)
+        self.assertIn("/methode/design.html", html)
         self.assertIn('data-design="beauty-without-fog-v0.1"', html)
         self.assertIn('id="arrival-ops"', html)
 

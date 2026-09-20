@@ -70,4 +70,4 @@ discipline as ranking.md ↔ `score_item` and FACETS.md ↔ `life_facets`).
 
 | Date | Decision | Owner |
 |------|----------|--------|
-| 2026-09-19 | Ship v0.1 four-rule catalogue; beacon inside Travaux section only | Bucky + Inventor |
+| 2026-09-19 | Ship v0.1 four-rule catalogue; beacon inside Travaux section only | Bucky + le porteur |

@@ -98,7 +98,7 @@ class LlmsTxt(unittest.TestCase):
         self.assertEqual(lines[0], "# Vigie")
         self.assertTrue(lines[2].startswith("> "))
         for path in ("/index.html.md", "/delta/latest.json", "/registre/chain.json", "/registre/checkpoint.txt",
-                     "/sources.yaml", "/legal.md", "/REGISTRE.md"):
+                     "/methode/sources.html", "/methode/legal.html", "/methode/registre.html"):
             self.assertIn(f"https://vigieqc.com{path}", text)
         self.assertIn("## Optional", text)
         self.assertLess(len(text.encode("utf-8")), 10_000)
@@ -156,6 +156,9 @@ class Affiche(unittest.TestCase):
                          "registre/chain.json", "registre/checkpoint.txt", "registre/institutions.json", "registre/travaux.json",
                          "delta/latest.json", *stage_public.METHODS):
                 (root / name).write_text("placeholder", encoding="utf-8")
+            (root / "methode").mkdir(exist_ok=True)
+            for name in (*stage_public.METHOD_PAGES, "index"):
+                (root / "methode" / f"{name}.html").write_text("placeholder", encoding="utf-8")
             self.assertEqual(stage_public.validate_site(root), [])
 
 
@@ -169,10 +172,12 @@ class Staging(unittest.TestCase):
             self.assertNotIn("/registre.html", stage_public.sitemap_xml(root))
             (root / "registre.html").write_text("<p>r</p>", encoding="utf-8")
             (root / "affiche.html").write_text("<p>a</p>", encoding="utf-8")
+            (root / "methode").mkdir()
+            (root / "methode" / "registre.html").write_text("<p>m</p>", encoding="utf-8")
             xml = stage_public.sitemap_xml(root)
             self.assertIn("https://vigieqc.com/registre.html", xml)
             self.assertIn("https://vigieqc.com/affiche.html", xml)
-            self.assertIn("https://vigieqc.com/REGISTRE.md", xml)
+            self.assertIn("https://vigieqc.com/methode/registre.html", xml)
 
 
 if __name__ == "__main__":

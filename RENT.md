@@ -4,7 +4,8 @@ Honesty first: free to read does not mean free to run. Someone always pays.
 
 ## v0 (now)
 
-**Who pays:** Onesphore Ombinos (the Inventor).
+**Who pays:** the project bearer, out of pocket for now. No company, no donors,
+no ads.
 
 **What is covered:** domain (when bought), hosting, LLM API calls for enrich, your time.
 
@@ -31,10 +32,10 @@ Pick at most one primary rent. Do not invent all of them on day one.
 
 | Date | Decision | Owner |
 |------|----------|--------|
-| 2026-09-15 | v0 rent = Inventor’s wallet; free to read; no ads | co-founders |
-| 2026-09-16 | Ambient morning digest = presentation of store only (no extra LLM/fetch). Paid alert delivery stays v1 — payload may reuse `data/pulse/latest_morning.*` without a second ranking brain | Bucky + Inventor |
-| 2026-09-17 | Widget paste twin `latest_morning.widget.txt` ships with morning JSON/TXT/HTML; same pulse as Arrival + Stage | Bucky + Inventor |
-| TBD | Choose v1 primary rent after first scarred ingest + display | Inventor |
+| 2026-09-15 | v0 rent = the project bearer's wallet; free to read; no ads | co-founders |
+| 2026-09-16 | Ambient morning digest = presentation of store only (no extra LLM/fetch). Paid alert delivery stays v1 — payload may reuse `data/pulse/latest_morning.*` without a second ranking brain | Bucky + the bearer |
+| 2026-09-17 | Widget paste twin `latest_morning.widget.txt` ships with morning JSON/TXT/HTML; same pulse as Arrival + Stage | Bucky + the bearer |
+| TBD | Choose v1 primary rent after first scarred ingest + display | the bearer |
 
 ## Success / failure
 

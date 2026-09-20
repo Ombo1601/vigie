@@ -85,7 +85,7 @@ class BeautyWithoutFogDoD(unittest.TestCase):
         self.assertTrue(all(p >= 0 for p in positions), positions)
         self.assertEqual(positions, sorted(positions))
         self.assertIn('data-design="beauty-without-fog-v0.1"', arrival)
-        self.assertIn("/DESIGN.md", html)
+        self.assertIn("/methode/design.html", html)
         # Brand hero floors
         self.assertIn("clamp(3.6rem", html)
         self.assertIn("clamp(1.25rem", html)

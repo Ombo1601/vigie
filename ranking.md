@@ -181,7 +181,7 @@ Silent boosts = propaganda with better geography.
 
 - Scheduled thin Critical Path: ingest → normalize → enrich → cluster → rank_display.
 - Cadence: weekdays 08:00 and 17:00 America/New_York (routine lookout-pulse-v0-1).
-- Bounded by RENT.md: Inventor wallet; no fetch_media in the thin loop; no unbounded scale.
+- Bounded by RENT.md: the project wallet; no fetch_media in the thin loop; no unbounded scale.
 - Falsifiable: Ranked clock advances without a co-founder click.
 
 ## Faces v0.2 — map-scoped publisher faces (2026-09-15)
@@ -551,5 +551,5 @@ PDCA probe → enable only proven feeds (ceiling still 12 RSS).
 
 - Staged thin static root: `deploy/public/` = lookout `index.html` + method files (`VISION.md`, `ranking.md`, `sources.yaml`, `RENT.md`).
 - Helper: `scripts/stage_public.py` (run after rank_display before publish).
-- Host deploy blocked in group room (Auto-review not available there). Inventor continues publish from private chat with Bucky — cheap static host, wallet under RENT.md, no SaaS theater, method files stay public.
+- Host deploy blocked in group room (Auto-review not available there). The bearer continues publishing from a private chat with Bucky — cheap static host, wallet under RENT.md, no SaaS theater, method files stay public.
 - Falsifiable when live: stranger opens Vigie without `serve.py` / 127.0.0.1.

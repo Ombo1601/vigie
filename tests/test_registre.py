@@ -223,7 +223,7 @@ class HumanView(unittest.TestCase):
         self.assertNotIn("<script>", page)
         self.assertIn("Ville alert(1)", page)  # markup stripped from names, words kept, nothing executes
         self.assertIn('<html lang="fr-CA">', page)
-        for href in ("/registre/chain.json", "/registre/checkpoint.txt", "/registre/institutions.json", "/REGISTRE.md", "/llms.txt"):
+        for href in ("/registre/chain.json", "/registre/checkpoint.txt", "/registre/institutions.json", "/methode/registre.html", "/llms.txt"):
             self.assertIn(f'href="{href}"', page)
         self.assertIn(state["seals"][0]["root"], page)
         self.assertIn("n’a pas parlé", page)

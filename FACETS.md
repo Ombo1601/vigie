@@ -57,5 +57,5 @@ Topics come from proposed enrich/issue topic tags already on disk. Units come fr
 
 | Date | Decision | Owner |
 |------|----------|--------|
-| 2026-09-16 | Ship v0.1 opt-in reorder; publish this method; w_impact still gated | Bucky + Inventor |
-| 2026-09-17 | Verification: MD↔code lockstep guard; unit-kinds on Approach; ambient stays store order | Bucky + Inventor |
+| 2026-09-16 | Ship v0.1 opt-in reorder; publish this method; w_impact still gated | Bucky + le porteur |
+| 2026-09-17 | Verification: MD↔code lockstep guard; unit-kinds on Approach; ambient stays store order | Bucky + le porteur |

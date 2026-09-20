@@ -130,6 +130,8 @@ class StaticRelease(unittest.TestCase):
         self.assertEqual(stage_public.validate_site(self.public), [])
 
     def test_robots_and_sitemap_are_staged(self):
+        (self.public / "methode").mkdir()
+        (self.public / "methode" / "legal.html").write_text("<p>l</p>", encoding="utf-8")
         stage_public.stage(self.root, self.output)
         robots = (self.output / "robots.txt").read_text(encoding="utf-8")
         self.assertIn("User-agent: *", robots)
@@ -137,7 +139,7 @@ class StaticRelease(unittest.TestCase):
         sitemap = (self.output / "sitemap.xml").read_text(encoding="utf-8")
         self.assertIn("<urlset xmlns=", sitemap)
         self.assertIn("<loc>https://vigieqc.com/</loc>", sitemap)
-        self.assertIn("<loc>https://vigieqc.com/legal.md</loc>", sitemap)
+        self.assertIn("<loc>https://vigieqc.com/methode/legal.html</loc>", sitemap)
 
     def test_pwa_assets_are_stageable(self):
         self.assertIn(".webmanifest", stage_public.ASSET_EXTENSIONS)

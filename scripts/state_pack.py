@@ -8,7 +8,7 @@ restores it before a run and persists it after.
 
 Only the inputs the pipeline cannot regenerate are packed:
 
-  * the newest snapshot pair per RSS source (and the newest WZDX geojson),
+  * the newest snapshot pair per RSS source (and the newest WZDX geojson / civic HTML),
   * the newest raw run log plus the identity/conditional-GET caches,
   * `issues/latest_issues.json` and `issues/history.json` (the diff memory),
   * `roadworks/latest_roadworks.json` (with its per-event history),
@@ -41,6 +41,7 @@ EXPLICIT = (
     # corrupt anything, but it would reset the public record to a genesis seal.
     "registre/registre.json",
     "roadworks/latest_roadworks.json",
+    "civic/latest_consultations.json",
     "media/brief_manifest.json",
     "raw/_ua_policy.json",
     # The latest rendered inputs, so the hourly roads-only lane can re-render
@@ -62,7 +63,7 @@ def _newest_per_source() -> list[Path]:
             continue
         snapshots = sorted(
             (p for p in source.iterdir()
-             if p.is_file() and p.suffix.lower() in {".xml", ".geojson"}),
+             if p.is_file() and p.suffix.lower() in {".xml", ".geojson", ".html"}),
             key=lambda p: p.name,
         )
         if not snapshots:

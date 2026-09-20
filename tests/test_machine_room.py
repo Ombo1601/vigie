@@ -343,6 +343,8 @@ class PipelineWiring(unittest.TestCase):
     def test_machine_room_stages_sit_in_the_chain(self) -> None:
         s = pipeline.SCRIPTS
         self.assertLess(s.index("ingest_wzdx.py"), s.index("feed_health.py"))
+        self.assertLess(s.index("ingest_civic.py"), s.index("feed_health.py"))
+        self.assertLess(s.index("ingest_wzdx.py"), s.index("ingest_civic.py"))
         self.assertLess(s.index("feed_health.py"), s.index("normalize.py"))
         self.assertLess(s.index("rank_display.py"), s.index("compile_metrics.py"))
         self.assertLess(s.index("compile_metrics.py"), s.index("compile_watchdog.py"))
@@ -354,7 +356,7 @@ class PipelineWiring(unittest.TestCase):
         calls = [(c.args[0], c.args[1:]) for c in run.call_args_list]
         self.assertEqual([name for name, _ in calls], pipeline.SCRIPTS[1:])
         for name, extra in calls:
-            flagged = name in ("ingest_wzdx.py", "fetch_brief_media.py")
+            flagged = name in ("ingest_wzdx.py", "ingest_civic.py", "fetch_brief_media.py")
             self.assertEqual(extra, ("--offline",) if flagged else ())
 
     def test_render_only_is_still_exactly_the_display_step(self) -> None:

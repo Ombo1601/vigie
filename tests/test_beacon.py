@@ -14,6 +14,7 @@ from pathlib import Path
 
 import harness  # noqa: F401 - puts scripts/ on sys.path
 
+import recits
 import resident_brief as brief
 import stage_public
 
@@ -128,7 +129,7 @@ class BeaconRender(unittest.TestCase):
         self.assertIn("LECTURE STRUCTURELLE", page)
         self.assertIn("Boulevard Laurier concentre 9 entraves actives déclarées.", page)
         self.assertIn("Concentration", page)
-        self.assertIn("/anomalies.md", page)
+        self.assertIn("/methode/anomalies.html", page)
         self.assertIn("2 entraves citées", page)
 
     def test_honesty_wording_present(self):
@@ -165,7 +166,7 @@ class BeaconRender(unittest.TestCase):
     def test_evidence_free_row_still_links_the_method(self):
         row = _anomaly(ids=())
         page = _render(roadworks=_store(), anomalies=_verdict([row]))
-        self.assertIn("/anomalies.md", page)
+        self.assertIn("/methode/anomalies.html", page)
         self.assertNotIn("entraves citées", page)
 
 
@@ -177,7 +178,7 @@ class EdgeJoins(unittest.TestCase):
         self.assertIn("un dossier proposé de cette édition", page)
         self.assertIn("« Boulevard Charest Est »", page)
         self.assertIn('href="#dossiers"', page)
-        self.assertIn("/edge.md", page)
+        self.assertIn("/methode/rues.html", page)
         self.assertIn("pas une preuve géographique", page)
 
     def test_no_line_without_a_matched_dossier(self):
@@ -248,6 +249,13 @@ class SiteValidation(unittest.TestCase):
                          "explorer.html", "morning.html", "llms.txt", "index.html.md",
                          *stage_public.OPTIONAL_PAGES, *stage_public.METHODS):
                 (root / name).write_text("placeholder", encoding="utf-8")
+            # The brief links each dossier's record page: the render step emits
+            # them together, so the validated tree carries them too.
+            recits.emit([_issue()], [], {}, _store(), edges,
+                        out_dir=root / "dossiers", out_index=root / "dossiers.html")
+            (root / "methode").mkdir(exist_ok=True)
+            for name in (*stage_public.METHOD_PAGES, "index"):
+                (root / "methode" / f"{name}.html").write_text("placeholder", encoding="utf-8")
             self.assertEqual(stage_public.validate_site(root), [])
 
 

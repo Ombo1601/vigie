@@ -23,6 +23,7 @@ Established by code audit, not memory:
 | No image is invented, cropped, or modified; no image without a publisher channel → no image at all | `fetch_brief_media.py` law |
 | 403/410/bot walls are respected, never circumvented; no paywall is ever touched | media sentinel retry policy |
 | WZDX roadworks: CC-BY 4.0, attribution rendered on the page (« Données : … (CC-BY 4.0, via Données Québec) ») | `resident_brief.py` rw-attr |
+| Civic HTML calendar: Ville participation table, `IdProjet` identity, titles and date windows quoted verbatim, each item links to the City fiche; robots.txt respected; never ranked with articles | `ingest_civic.py`, `resident_brief.py` civic section |
 | 13 sources, all named in public (`sources.yaml` is served); cuts are logged, never silent | sources.yaml law |
 | No accounts, no tracking, no ads, no revenue; saved articles stay in the visitor's browser | method section |
 | Dossiers are « proposés », with « Rapprochement automatique à vérifier » disclaimer; questions never assert facts | cluster/rank law |

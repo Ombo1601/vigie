@@ -286,7 +286,7 @@ def scar_of(c: dict) -> str | None:
 MAX_AGE_DAYS = 7
 EVENT_SPAN_HOURS = 72
 FUTURE_TOLERANCE_HOURS = 6
-METHOD = "rules-cluster-v1 evidence-bounded-dossiers"
+METHOD = "rules-cluster-v1 evidence-bounded-dossiers bilingual-complete-link"
 
 
 def published_when(c: dict) -> datetime | None:
@@ -369,23 +369,113 @@ def event_scar(c: dict) -> str | None:
 
 
 _LOCATION = re.compile(r"\b(?:rue|boulevard|avenue|autoroute|route|pont|quartier|hopital|ecole)\s+(?:(?:de|du|des|la|le|l)\s+)*([a-z0-9-]+)")
+# Neighbourhood tokens used only as a *positive* bilingual guard (shared place
+# or proper name). They must never join the road-name set: adding "limoilou"
+# there would let Hamel and Charest share a place and merge.
+_PLACE_HINTS = (
+    "limoilou", "saint-roch", "saint-sauveur", "beauport", "charlesbourg",
+    "sillery", "cap-rouge", "sainte-foy", "loretteville", "val-belair",
+    "levis", "maizerets", "lairet", "vanier", "duberger", "lebourgneuf",
+    "montcalm", "vieux-quebec", "haute-saint-charles", "saint-emile",
+    "pointe-aux-lievres", "vieux-port",
+)
+# English surface (after folding + light plural stem) → French stem.
+# Nouns only. Verbs and people-words stay unmapped: precision over recall.
+_BILINGUAL = {
+    "fire": "incendie", "blaze": "incendie",
+    "mayor": "maire",
+    "airport": "aeroport",
+    "privatization": "privatisation", "privatize": "privatisation",
+    "housing": "logement", "rent": "loyer",
+    "school": "ecole", "hospital": "hopital",
+    "street": "rue", "bridge": "pont",
+    "strike": "greve", "election": "election",
+    "building": "immeuble",
+    "crash": "ecrasement", "helicopter": "helicoptere",
+    "tram": "tramway",
+    "council": "conseil",
+    "flood": "inondation", "snow": "neige",
+    "closure": "fermeture", "closed": "fermeture",
+    "outage": "panne", "blackout": "panne",
+    "protest": "manif",
+    "three": "trois", "four": "quatre", "five": "cinq",
+    "major": "majeur",
+    "dead": "mort", "death": "mort",
+    "missing": "disparu",
+}
+
+
+def language_of(c: dict) -> str:
+    lang = str(c.get("language") or "").strip().lower()
+    if lang.startswith("en"):
+        return "en"
+    if lang.startswith("fr"):
+        return "fr"
+    return ""
+
+
+def road_places(c: dict) -> set[str]:
+    return set(_LOCATION.findall(folded(str(c.get("title") or ""))))
+
+
+def place_hints(c: dict) -> set[str]:
+    title = folded(str(c.get("title") or ""))
+    found: set[str] = set()
+    for hint in _PLACE_HINTS:
+        if re.search(rf"\b{re.escape(hint)}\b", title):
+            found.add(hint)
+    return found
+
+
+def proper_names(c: dict) -> set[str]:
+    """Capitalized tokens after the first word, folded. Not a NER."""
+    title = str(c.get("title") or "")
+    words = re.findall(r"[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9'’-]*", title)
+    names: set[str] = set()
+    for i, word in enumerate(words):
+        if i == 0 or not word[:1].isupper():
+            continue
+        token = _stem(folded(word))
+        if len(token) >= 4 and token not in _STOP:
+            names.add(token)
+    return names
+
+
+def canon_tokens(tokens: set[str]) -> set[str]:
+    return {_BILINGUAL.get(word, word) for word in tokens}
 
 
 def event_features(c: dict) -> tuple:
-    return published_when(c), headline_tokens(c), set(_LOCATION.findall(folded(str(c.get("title") or ""))))
+    return (
+        published_when(c),
+        headline_tokens(c),
+        road_places(c),
+        language_of(c),
+        proper_names(c),
+        place_hints(c),
+    )
 
 
 def features_match(a: tuple, b: tuple) -> bool:
-    ta, aa, places_a = a
-    tb, bb, places_b = b
+    ta, aa, roads_a, lang_a, names_a, hints_a = a
+    tb, bb, roads_b, lang_b, names_b, hints_b = b
     if ta is None or tb is None or abs((ta - tb).total_seconds()) > EVENT_SPAN_HOURS * 3600:
         return False
     # Shared closure boilerplate must not merge different roads/neighbourhoods.
     # Preserve numeric identifiers too (route 138 is not route 175).
-    if places_a and places_b and not places_a.intersection(places_b):
+    if roads_a and roads_b and not roads_a.intersection(roads_b):
         return False
-    shared = aa & bb
-    return len(shared) >= 3 and len(shared) / max(1, len(aa | bb)) >= 0.55
+    bilingual = {lang_a, lang_b} == {"en", "fr"}
+    if not bilingual:
+        shared = aa & bb
+        return len(shared) >= 3 and len(shared) / max(1, len(aa | bb)) >= 0.55
+    # FR/EN same-event: date window already held; demand a shared place or
+    # proper name, then complete-link on bilingual-canonical tokens.
+    if not (roads_a & roads_b or hints_a & hints_b or names_a & names_b):
+        return False
+    ca, cb = canon_tokens(aa), canon_tokens(bb)
+    shared = ca & cb
+    return len(shared) >= 2 and len(shared) / max(1, len(ca | cb)) >= 0.40
 
 
 def same_event(a: dict, b: dict) -> bool:
@@ -410,14 +500,22 @@ def event_buckets(candidates: list[dict]) -> dict[str, list[dict]]:
     groups: list[list[dict]] = []
     features = {id(c): event_features(c) for c in remaining}
     token_groups: dict[str, set[int]] = defaultdict(set)
+
+    def index_keys(feature: tuple) -> set[str]:
+        tokens = feature[1]
+        return tokens | canon_tokens(tokens)
+
     for c in sorted(remaining, key=lambda x: (str(x.get("id") or ""), str(x.get("title") or ""))):
         feature = features[id(c)]
         if feature[0] is None or len(feature[1]) < 3:
             continue
-        # Only compare groups whose first article shares >=3 tokens. This
-        # preserves complete-link semantics without reparsing every pair.
-        possible = Counter(g for word in feature[1] for g in token_groups.get(word, ()))
-        for group_index in sorted(g for g, count in possible.items() if count >= 3):
+        # Index original and bilingual-canonical tokens so a FR/EN pair can
+        # find each other. Same-language still has to pass features_match
+        # (≥3 shared original tokens, Jaccard 0.55); the looser lookup only
+        # adds comparisons.
+        keys = index_keys(feature)
+        possible = Counter(g for word in keys for g in token_groups.get(word, ()))
+        for group_index in sorted(g for g, count in possible.items() if count >= 2):
             group = groups[group_index]
             if all(features_match(feature, features[id(member)]) for member in group):
                 group.append(c)
@@ -425,7 +523,7 @@ def event_buckets(candidates: list[dict]) -> dict[str, list[dict]]:
         else:
             group_index = len(groups)
             groups.append([c])
-            for word in feature[1]:
+            for word in keys:
                 token_groups[word].add(group_index)
     for group in groups:
         if len(group) < 2:
@@ -668,6 +766,7 @@ def main() -> None:
             "claims from enrich attached to voice items; "
             "silence map = snapshot absence only (sister feeds share one seat); "
             "7-day publication window; auto clusters <=72 hours; unknown dates remain unknown; "
+            "FR/EN join requires shared place or proper name then bilingual-canonical complete-link; "
             "city then latest publication then source count; no inferred contradiction/independent confirmation"
         ),
         "issue_count": len(issues),

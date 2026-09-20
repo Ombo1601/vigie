@@ -2,7 +2,7 @@
 
 Date opened: 2026-09-16  
 Last verified: 2026-09-16 (instrument re-walk post Phases 1–6 + DESIGN)  
-Owner: Bucky + Inventor
+Owner: Bucky + le porteur
 
 ## Phase 0 verdict (honest)
 

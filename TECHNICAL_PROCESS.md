@@ -6,7 +6,7 @@ How the lookout works. Physics, not poetry. Updated 2026-09-19 to match the scri
 
 One thin loop for Quebec City:
 
-**ingest (RSS + official WZDX) → feed health → normalize → enrich (proposed) → cluster Issues → edge atlas + anomaly rules → brief media → rank → display → edition metrics → watchdog**
+**ingest (RSS + official WZDX + civic HTML) → feed health → normalize → enrich (proposed) → cluster Issues → edge atlas + anomaly rules → brief media → rank → display → edition metrics → watchdog**
 
 No SaaS theater. No multi-tenant billing. Prove the method.
 
@@ -25,20 +25,29 @@ Open http://127.0.0.1:8765/
 |------|--------|--------|
 | 1 Ingest RSS | `scripts/ingest_rss.py` | `data/raw/<source_id>/` append-only; conditional GET (ETag / If-Modified-Since, body cached under `data/raw/_bodies/`) — a 304 costs zero payload bytes and is recorded as `not_modified` in the run meta |
 | 1b Ingest WZDX | `scripts/ingest_wzdx.py` | `data/raw/` + `data/roadworks/latest_roadworks.json` — official change data; bypasses the article pipeline, the RSS ceiling, the ranking and the silence map |
-| 1c Feed health | `scripts/feed_health.py` | `data/ops/feed_health.json` — per-source failure streaks, parse errors, yield trends, 304 rates, disk growth; fixed-threshold statuses (healthy / degraded / failing / dead); no wall clock |
+| 1c Ingest civic HTML | `scripts/ingest_civic.py` | `data/raw/` + `data/civic/latest_consultations.json` — Ville participation calendar (HTML table, `IdProjet` identity); robots.txt first; titles and date windows relayed verbatim; never ranked with articles; a missing robots Disallow or a 403 keeps the previous store and exits 0 |
+| 1d Feed health | `scripts/feed_health.py` | `data/ops/feed_health.json` — per-source failure streaks, parse errors, yield trends, 304 rates, disk growth; fixed-threshold statuses (healthy / degraded / failing / dead); no wall clock |
 | 2 Normalize | `scripts/normalize.py` | `data/normalized/latest_candidates.json` |
 | 3 Enrich | `scripts/enrich.py` | `data/normalized/latest_enriched.json` — **all tags proposed** |
 | 4 Cluster | `scripts/cluster_issues.py` | `data/issues/latest_issues.json` — multi-voice only |
 | 4b Edge Atlas | `scripts/edge_atlas.py` | `data/edges/latest_edges.json` — literal street-name joins between the official collection and the dossiers (`edge.md`) |
 | 4c Anomalies | `scripts/compile_anomalies.py` | `data/anomalies/latest_verdict.json` — fixed-threshold structural rules over the official collection (`anomalies.md`) |
 | 4d Brief media | `scripts/fetch_brief_media.py` | `data/media/brief/` + `brief_manifest.json` — publisher images (og:image, else the feed's own media), locally re-hosted and sniffed; every miss diagnosed + `data/ops/media_health.json` ledger |
-| 5 Rank+HTML | `scripts/rank_display.py` | `latest_ranked.json` + `public/index.html` (French brief, incl. roadworks/beacon/joins) + `explorer.html` + ambient twin via `ambient_pulse` |
+| 5 Rank+HTML | `scripts/rank_display.py` | `latest_ranked.json` + `public/index.html` (French brief, incl. roadworks/civic/beacon/joins) + `explorer.html` + ambient twin via `ambient_pulse` |
 | 5b Ambient | `scripts/ambient_pulse.py` | `data/pulse/latest_morning.{json,txt}` + `public/morning.html` (same Approaches; no second rank; store order — no facets, no beacon) |
+| 5c Récits | `scripts/recits.py` | `public/dossiers.html` + `public/dossiers/<issue_id>.html` — one complete, addressable record page per current-edition dossier (every voice, every verbatim headline, collection timeline, silence roster, measured evidence); linked from the brief, the machine substrate and the sitemap; pages exist only for the current edition (a quiet dossier keeps its counters in the history and the registre, never its page) |
+| 5d Méthode | `scripts/method_site.py` | `public/methode/<slug>.html` + `public/methode/index.html` — every published method file rendered as a first-class page (house chrome, zero JS, print-first, internal cross-links remapped to pages; the sources page is data, not raw YAML). The .md/.yaml sources stay staged as the machine twins (llms.txt, Markdown twin, tests); human surfaces never point at raw files again — the only .md link left is the labelled `/index.html.md` twin. No served file names the founder |
 | 6 Edition metrics | `scripts/compile_metrics.py` | `data/ops/edition_metrics.json` — per-edition snapshot: items, top-30 churn, per-source yield, dossier population, roadworks diff volume, image coverage; capped 120-edition history; idempotent per edition; observes the machine, never steers the ranking |
 | 6b Watchdog | `scripts/compile_watchdog.py` | `data/ops/watchdog.{md,json}` — the weekly human read: fixed-threshold attention rules over the three ledgers + refresh log + disk usage; same-week recompiles replace; capped 26-week history |
 | Serve | `scripts/serve.py` | local static server |
 
 ## Published method files
+
+The method files below are the machine source of truth. Humans read their
+rendered pages under `/methode/` (one page per file, emitted by
+`scripts/method_site.py`); no human-facing link points at a raw `.md`/`.yaml`
+file. The only exception is the labelled `/index.html.md` twin (the Markdown
+form of the edition itself).
 
 - `VISION.md` — vow
 - `sources.yaml` — finite chancellery
@@ -64,9 +73,11 @@ Open http://127.0.0.1:8765/
 ## Issues rules
 
 - Quebec-city-first founding
-- Require ≥2 distinct `source_id`s (single-voice is not contradiction)
+- Require ≥2 distinct institutions (single-voice is not contradiction); sister desks share one seat
 - Voices side by side — never crown an answer
 - Status always `proposed`
+- Same-language event buckets: complete-link, ≥3 shared headline tokens, Jaccard ≥0.55, 72h, road-name intersection
+- FR/EN event buckets: same complete-link plus a shared place or proper name, then bilingual-canonical tokens (≥2 shared, Jaccard ≥0.40). Precision over recall. Lévis is not télévision.
 
 ## Ranking (see ranking.md)
 

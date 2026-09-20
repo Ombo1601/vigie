@@ -27,7 +27,14 @@ REQUIRED_ASSETS = ("index.html", "morning.html", "explorer.html", "favicon.svg")
 # Pages emitted by the record layer (registre / affiche): listed in the sitemap
 # when present, never required, so a fixture tree or a partial render still
 # stages the front door.
-OPTIONAL_PAGES = ("registre.html", "affiche.html")
+OPTIONAL_PAGES = ("registre.html", "affiche.html", "dossiers.html")
+# Method pages rendered by scripts/method_site.py; listed in the sitemap when
+# present. The raw .md/.yaml sources remain staged (machine twins) but humans
+# are never pointed at them.
+METHOD_PAGES = (
+    "vision", "classement", "sources", "financement", "frictions",
+    "facettes", "design", "rues", "anomalies", "legal", "registre",
+)
 ASSET_EXTENSIONS = {
     ".html", ".css", ".js", ".mjs", ".svg", ".png", ".jpg", ".jpeg",
     ".webp", ".avif", ".gif", ".ico", ".woff", ".woff2", ".txt",
@@ -56,7 +63,15 @@ def sitemap_xml(directory: Path) -> str:
     except OSError:
         lastmod = None
     optional = tuple(f"/{name}" for name in OPTIONAL_PAGES if (directory / name).is_file())
-    paths = (*SITEMAP_PATHS, *optional, *(f"/{name}" for name in METHODS))
+    dossier_pages = (
+        tuple(f"/dossiers/{p.name}" for p in sorted((directory / "dossiers").glob("*.html")))
+        if (directory / "dossiers").is_dir() else ()
+    )
+    methode_pages = (
+        tuple(f"/methode/{slug}.html" for slug in METHOD_PAGES
+              if (directory / "methode" / f"{slug}.html").is_file())
+    )
+    paths = (*SITEMAP_PATHS, *optional, *dossier_pages, *methode_pages)
     parts = []
     for path in paths:
         loc = f"{SITE_URL}/" if path == "/" else f"{SITE_URL}{path}"

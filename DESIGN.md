@@ -62,6 +62,8 @@ All honor `prefers-reduced-motion: reduce`.
 
 Publisher `og:image` only, fetched at collection time (`scripts/fetch_brief_media.py`) and served from our own origin — reading the brief never contacts a publisher. Bytes are sniffed, never trusted: no SVG, no mislabeled HTML, 700 KB cap. A silent publisher means no image — not a filler, never stock. Same treatment for every card that has one: full-width strip, 1200/630, hairline `--line` border, `object-fit: cover`; no invented hierarchy. New articles get their image on the next refresh; the lag is honest, placeholders are not.
 
+**Equal skeleton (v0.6.1):** every story card carries a media block of the same height — the publisher's image, or a typographic face (source name in serif, nest label, « Sans image publiée par l'éditeur ») when the publisher published none. No image, no hole: columns stay aligned, and the absence is named, never hidden, never invented. Same law in one and two columns.
+
 ## Structural reading (roadworks section only)
 
 The anomaly beacon (`anomalies.md`, `anomaly-beacon-v1`) and street-level joins (`edge.md`, `edge-atlas-v1`) live **inside the Travaux et entraves section** — never the first viewport, never the hero. Fixed-threshold collection facts in one quiet accent-bordered block; no red, no pulse, no alert chrome. Zero measured anomalies means the brief is byte-identical to a brief without the feature. A join always presents itself as « Rapprochement proposé … une mention textuelle, pas une preuve géographique » — never as geographic proof, never as importance.
@@ -87,7 +89,8 @@ adaptive variable type, persistent wayfinding, and static maps with a legend
 3. **Adapt to the reader.** `prefers-color-scheme` and `prefers-contrast`; weight
    and grade eased for reversed contrast; `prefers-reduced-motion` honored.
 4. **Effortless finding.** Sticky masthead, scroll-spy `aria-current`, and a
-   Ctrl/⌘-K command palette (sections + articles). All progressive: without JS
+   Ctrl/⌘-K command palette (sections + articles + paste-URL jump, or an honest
+   « cette URL n’est pas dans cette édition »). All progressive: without JS
    every article still reads.
 5. **Continuity on-device.** The reading marker names the newest articles since
    the last visit; never a tracking of world changes.
@@ -122,6 +125,27 @@ adaptive variable type, persistent wayfinding, and static maps with a legend
 - **Field-level revisions** (v0.3): when the dossier question is reformulated,
   the initial question and up to two later revisions are quoted verbatim in the
   timeline. A wording change is never presented as a change of meaning.
+- **Story desk** (v0.4): a dossier is Full Coverage without a left/right bar —
+  up to three verbatim headlines (one per institution, official first, then
+  date, then nest), a « pourquoi ici » line, a device-local sort, and « trouver
+  une institution ». Mute / titles-only / focus are on-device accessories; they
+  hide cards, they never rewrite `latest_ranked.json`.
+- **Dossier record pages** (v0.5, `recits-v1`): every dossier of the edition
+  gets its own addressable page (`/dossiers/<issue_id>.html`, indexed at
+  `/dossiers.html`) — the complete confrontation: all voices with all verbatim
+  headlines, the full silence roster, the collection timeline and the measured
+  evidence. One calm column in the house palette, zero JavaScript, print-first,
+  linked from each dossier card and from the sitemap. A page exists only while
+  the dossier is in the current edition; absence is never a resolution.
+- **Shared edition sentence** (v0.4): « Cette édition est la même pour chaque
+  lecteur. Les filtres et les repères restent sur cet appareil. »
+
+### Official civic calendar (v0.4)
+
+The participation calendar (`civic-html-v1`) lives in its own section after
+Travaux, never the masthead, never the ranking, never the silence map. Titles
+and date windows are the City's words. An absence from the collection is not a
+clôture.
 
 ### Corridors (shipped)
 
@@ -166,21 +190,52 @@ the right trade until a real variant source exists.
 - **Saved-corridor validation**: the daily-mobility experiment with real
   repeated-corridor travellers.
 
+### Wide composition (v0.6, shipped)
+
+The edition is a **front page**, not a document. On desktop (≥1180 px) the canvas
+grows to the screen (container up to 1840 px, fluid margins), and every section
+flows in columns instead of one monolithic rail:
+
+- **Stories** — two columns; **Travaux, Consultations, Dossiers** — two columns
+  each; **Depuis la dernière édition** — three columns with spanning headers;
+  **Méthode** — two columns. Scroll depth roughly halves.
+- **The digest as persistent wayfinding** — « En un coup d'œil » becomes a
+  sticky strip under the masthead while the stories scroll, so the answer-first
+  sentences stay reachable at any depth.
+- **Order is method** — the DOM order and section order never change; width is
+  layout, order is the published method. Record pages (récits) keep a document
+  measure: they are records to read, not front pages to scan.
+- Mobile and tablet stacks are untouched; everything collapses to the existing
+  single column below 1180 px. Zero DOM change, zero JavaScript, deterministic
+  output, print untouched (glance hidden, links expanded).
+
+### Do not (wide composition)
+
+1. No section reordering, no dashboards, no three-zone command field on the
+   resident front door — the front page is editorial, the workbench stays in
+   the explorer.
+2. No fixed viewport tricks: everything is fluid `clamp()`/`min()` within the
+   existing palette and tokens.
+
 ## Decision log
 
 | Date | Decision | Owner |
 |------|----------|--------|
-| 2026-09-16 | Ship law + Arrival polish; no invented QC photo; nest wash only | Bucky + Inventor |
-| 2026-09-17 | Verification: composition order; silence chrome de-purpled to slate; place/ empty; tests lock Do/Do-not | Bucky + Inventor |
-| TBD | Add full-bleed only with a real named place image in `public/place/` and a row above | Inventor |
-| 2026-09-18 | Brief preview images: publisher og:image, locally re-hosted and sniffed; never stock, never invented | Bucky + Inventor |
-| 2026-09-19 | Edge Atlas + anomaly beacon: structural reading confined to the Travaux section; hero untouched; both collapse byte-identical when empty | Bucky + Inventor |
-| 2026-09-19 | Brief front-end v0.2: answer-first digest, self-hosted variable type, dark/contrast adaptation, sticky masthead + Ctrl/⌘-K palette, on-device continuity; no external font request on any surface | Bucky + Inventor |
-| 2026-09-19 | Roadworks stays out of hero and masthead; one quiet digest jump link is allowed (regression renamed to check the masthead only) | Bucky + Inventor |
-| 2026-09-19 | Phase E spatial reading: store carries each event's first official vertex; the brief draws a static self-hosted dot-density scheme with legend and scale, no basemap, no geographic-proof claim | Bucky + Inventor |
-| 2026-09-19 | Phase F cross-source reading: per-dossier voice roster (spoke + quiet, media silence named) and a collapsed collection timeline from the durable history (counters only, no escalation) | Bucky + Inventor |
-| 2026-09-19 | Saved corridors: opt-in declared street names, literal match, on-device only, no geolocation and no route effect; the street index island counts over every active event | Bucky + Inventor |
-| 2026-09-19 | Social card: deterministic graphic OG image (palette, wordmark, nest hairlines, compass glyph) — not a place photo; `public/place/` stays empty | Bucky + Inventor |
-| 2026-09-20 | Smartphone pass: 44 px touch targets, no iOS focus zoom, safe-area insets, readable small text, installable manifest + icons (no service worker) | Bucky + Inventor |
-| 2026-09-20 | Field-level revisions: dossier question reformulations recorded in the durable history and quoted verbatim (initial + up to two) | Bucky + Inventor |
-| 2026-09-20 | Images: content-addressed filenames + immutable `/media/*` caching + header-measured dimensions; generated `srcset` refused (no publisher variants, no stdlib resizing) | Bucky + Inventor |
+| 2026-09-16 | Ship law + Arrival polish; no invented QC photo; nest wash only | Bucky + le porteur |
+| 2026-09-17 | Verification: composition order; silence chrome de-purpled to slate; place/ empty; tests lock Do/Do-not | Bucky + le porteur |
+| TBD | Add full-bleed only with a real named place image in `public/place/` and a row above | le porteur |
+| 2026-09-18 | Brief preview images: publisher og:image, locally re-hosted and sniffed; never stock, never invented | Bucky + le porteur |
+| 2026-09-19 | Edge Atlas + anomaly beacon: structural reading confined to the Travaux section; hero untouched; both collapse byte-identical when empty | Bucky + le porteur |
+| 2026-09-19 | Brief front-end v0.2: answer-first digest, self-hosted variable type, dark/contrast adaptation, sticky masthead + Ctrl/⌘-K palette, on-device continuity; no external font request on any surface | Bucky + le porteur |
+| 2026-09-19 | Roadworks stays out of hero and masthead; one quiet digest jump link is allowed (regression renamed to check the masthead only) | Bucky + le porteur |
+| 2026-09-19 | Phase E spatial reading: store carries each event's first official vertex; the brief draws a static self-hosted dot-density scheme with legend and scale, no basemap, no geographic-proof claim | Bucky + le porteur |
+| 2026-09-19 | Phase F cross-source reading: per-dossier voice roster (spoke + quiet, media silence named) and a collapsed collection timeline from the durable history (counters only, no escalation) | Bucky + le porteur |
+| 2026-09-19 | Saved corridors: opt-in declared street names, literal match, on-device only, no geolocation and no route effect; the street index island counts over every active event | Bucky + le porteur |
+| 2026-09-19 | Social card: deterministic graphic OG image (palette, wordmark, nest hairlines, compass glyph) — not a place photo; `public/place/` stays empty | Bucky + le porteur |
+| 2026-09-20 | Smartphone pass: 44 px touch targets, no iOS focus zoom, safe-area insets, readable small text, installable manifest + icons (no service worker) | Bucky + le porteur |
+| 2026-09-20 | Story desk (face-on headlines, pourquoi ici, paste-URL, on-device lenses); civic HTML participation collector; conservative FR/EN event join | Bucky + le porteur |
+| 2026-09-20 | Images: content-addressed filenames + immutable `/media/*` caching + header-measured dimensions; generated `srcset` refused (no publisher variants, no stdlib resizing) | Bucky + le porteur |
+| 2026-09-20 | Dossier record pages (récits-v1): addressable per-dossier pages from the same stores, zero JS, edition-scoped retention — no lingering publisher text | Bucky + le porteur |
+| 2026-09-20 | Wide composition (v0.6): full-width modular front page on desktop — 2-col stories/travaux/civic/dossiers, 3-col changes, sticky glance wayfinding; order never changes, mobile untouched, zero DOM/JS | Bucky + le porteur |
+| 2026-09-20 | Equal card skeleton (v0.6.1): fixed-height media block on every story — publisher image or a typographic face naming the absence; corridors rebuilt as an aligned chip strip; lean-scan first view 6 → 12 cards | Bucky + le porteur |
+| 2026-09-20 | Method pages (methode-v1): the method files become first-class pages under /methode/ (house chrome, zero JS, print-first); humans never land on a raw .md/.yaml again — only the labelled /index.html.md twin remains linked; no served file names the founder | Bucky + le porteur |
