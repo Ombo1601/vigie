@@ -50,7 +50,19 @@ STRICT_CITY = re.compile(
     r"tramway\s+de\s+qu[ée]bec|(?<![\w])fcvq(?![\w])|"
     r"\bcentre vid[ée]otron\b|\buniversit[ée] laval\b|\btramcit[ée]\b|"
     r"\bpont (?:de qu[ée]bec|pierre-laporte)\b|\ba[ée]roport jean-lesage\b|"
-    r"\br[ée]seau de transport de la capitale\b|\bsaint-augustin-de-desmaures\b",
+    r"\br[ée]seau de transport de la capitale\b|\bsaint-augustin-de-desmaures\b|"
+    # Agglomeration toponyms probed 2026-09-20: unambiguous, local-only names.
+    # Ambiguous ones (Vanier, Montcalm, Neufchâtel, Saint-Jean-Baptiste) are
+    # deliberately absent — they name places elsewhere too.
+    r"(?<![\w])sillery(?![\w])|(?<![\w])duberger(?![\w])|(?<![\w])les saules(?![\w])|"
+    r"(?<![\w])lebourgneuf(?![\w])|(?<![\w])maizerets(?![\w])|(?<![\w])lairet(?![\w])|"
+    r"(?<![\w])loretteville(?![\w])|(?<![\w])lac-saint-charles(?![\w])|"
+    r"(?<![\w])pointe-aux-li[èe]vres(?![\w])|(?<![\w])[iî]le[- ]d.?orl[ée]ans(?![\w])|"
+    r"(?<![\w])saint-romuald(?![\w])|(?<![\w])charny(?![\w])|(?<![\w])pintendre(?![\w])|"
+    r"(?<![\w])saint-gabriel-de-valcartier(?![\w])|(?<![\w])sainte-brigitte-de-laval(?![\w])|"
+    r"(?<![\w])lac-beauport(?![\w])|(?<![\w])lac-delage(?![\w])|(?<![\w])lac-sergent(?![\w])|"
+    r"chu de qu[ée]bec|(?<![\w])chul(?![\w])|centre de foires|gare du palais|"
+    r"port de qu[ée]bec|expo cit[ée]",
     re.I,
 )
 AMBIGUOUS_CITY = re.compile(r"\b(?:haute-ville|basse-ville|saint-roch|vanier|neufch[âa]tel)\b", re.I)

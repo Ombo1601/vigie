@@ -255,5 +255,28 @@ class TopicLexicon(unittest.TestCase):
         self.assertNotIn("environment", self._labels("Les environs de la ville"))
 
 
+class CityTokenCoverage(unittest.TestCase):
+    """Agglomeration coverage without world-fog leakage."""
+
+    def _geo(self, text: str) -> str:
+        return enrich.propose_geo({"geo": "linked", "nest_role": "linked"}, text)["geo"]
+
+    def test_local_toponyms_promote_to_near_me(self) -> None:
+        for text in (
+            "Un incendie éclate à Sillery",
+            "Le CHUL recrute du personnel",
+            "Une nouvelle piste cyclable à Duberger",
+            "Le traversier de l’île d’Orléans reprend du service",
+            "Les résidents de Charny s'inquiètent",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self._geo(text), "quebec-city")
+
+    def test_ambiguous_elsewhere_names_do_not_crown_the_city(self) -> None:
+        # "Vanier" exists in Ottawa; without Québec context it must not be Near me.
+        self.assertNotEqual(self._geo("Le quartier Vanier à Ottawa change de nom"), "quebec-city")
+        self.assertNotEqual(self._geo("Un accord sur le Groenland et le Danemark"), "quebec-city")
+
+
 if __name__ == "__main__":
     unittest.main()

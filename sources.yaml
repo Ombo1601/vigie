@@ -228,10 +228,31 @@ deferred:
   - id: ville-quebec-borough-feeds
     name: Ville de Québec — borough RSS (cite, sfoy, …)
     homepage: https://www.ville.quebec.qc.ca/apropos/espace-presse/abonnement/rss.aspx
-    reason: v0 uses f=gen only; enable boroughs when Near me needs finer grain without doubling wallet fetch.
+    reason: Probed 2026-09-20 - the eight ?f= feeds (gen, cite, sfoy, rivi, char, beau, hstc, den) return 0-1 items each (gen=7); the City simply does not publish volume through RSS. Revisit only if the City starts using them.
+  - id: ville-de-levis
+    name: Ville de Lévis — actualités
+    homepage: https://www.ville.levis.qc.ca/
+    reason: Probed 2026-09-20 - no RSS/Atom feed published (JS application; /rss, /rss.xml, /nouvelles/rss all 404). Lévis stays a mention-level neighbour, never a silent source.
+  - id: rtc-quebec
+    name: Réseau de transport de la Capitale — avis
+    homepage: https://www.rtcquebec.ca/restez-informe
+    reason: Probed 2026-09-20 - no RSS/Atom feed (guessed endpoints answer 500 or time out; the public site publishes no feed link). Transit alerts need a dedicated official-page collector, not RSS.
+  - id: cmq
+    name: Communauté métropolitaine de Québec
+    homepage: https://www.cmq.org/
+    reason: Probed 2026-09-20 - no RSS/Atom feed (/rss.xml and /fr/rss are 404).
+  - id: canada-news-feeds
+    name: Canada.ca — departmental news (housing, infrastructure)
+    homepage: https://www.canada.ca/en/news.html
+    reason: Probed 2026-09-20 - guessed feed paths return HTML pages, not feeds; the federal newsroom publishes HTML. Federal impact still reaches the brief through CBC and Radio-Canada.
+  - id: lesoleil-section-feeds
+    name: Le Soleil — section RSS (quebec, la-capitale, politique, societe)
+    homepage: https://www.lesoleil.com
+    reason: Probed 2026-09-20 - the category feeds exist but are empty (0 items; affaires=6). The `actualites` feed already in the chancellery is the only one carrying volume, so no local section feed can be added.
 
 rules:
   max_enabled_rss_v0: 12
+  coverage_note: RSS coverage is publisher-capped, not Vigie-capped - probed 2026-09-20, official borough/transit/metropolitan feeds are empty or absent and publisher section feeds are empty. Densifying Near me beyond this needs a dedicated official-page collector (avis publics, RTC alerts, participation portal) with its own robots and terms review, not more RSS.
   linked_must_be_thin: true
   on_poison_or_death: set enabled false, log cut_reason and cut_at, keep raw history
   balance_note: >
