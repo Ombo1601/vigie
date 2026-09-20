@@ -1206,8 +1206,11 @@ def article_html(item: dict, index: int, related: list[dict], media: dict | None
         # og:image we cannot credit.
         credit = media_credit.strip() if isinstance(media_credit, str) and media_credit.strip() else None
         caption = f"Photo : {esc(credit)} / {source}" if credit else f"Photo : {source}"
+        # The first story image is above the fold: eager + high priority keeps
+        # mobile LCP honest; everything below stays lazy.
+        loading = 'loading="eager" fetchpriority="high"' if index == 1 else 'loading="lazy"'
         media_html = (
-            f'<figure class="story-media"><img src="/media/{media_file}" alt="" loading="lazy" decoding="async">'
+            f'<figure class="story-media"><img src="/media/{media_file}" alt="" {loading} decoding="async">'
             f'<figcaption class="media-credit">{caption}</figcaption></figure>'
         )
     else:

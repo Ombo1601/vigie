@@ -169,13 +169,19 @@ class RendererImages(unittest.TestCase):
 
     def test_image_renders_as_local_lazy_img(self) -> None:
         row = self.row()
-        html = brief.article_html(row, 1, [], media={row["uid"]: {"file": row["uid"] + ".jpg", "credit": None}})
+        html = brief.article_html(row, 2, [], media={row["uid"]: {"file": row["uid"] + ".jpg", "credit": None}})
         self.assertIn(
             f'<figure class="story-media"><img src="/media/{row["uid"]}.jpg" alt="" loading="lazy" decoding="async">',
             html,
         )
         self.assertIn("<figcaption class=\"media-credit\">Photo : Source locale</figcaption>", html)
         self.assertEqual(html.count("<img"), 1)
+
+    def test_first_story_image_is_prioritised_for_lcp(self) -> None:
+        row = self.row()
+        html = brief.article_html(row, 1, [], media={row["uid"]: {"file": row["uid"] + ".jpg", "credit": None}})
+        self.assertIn('loading="eager" fetchpriority="high"', html)
+        self.assertNotIn('loading="lazy"', html)
 
     def test_photographer_credit_renders_beside_the_source(self) -> None:
         row = self.row()
