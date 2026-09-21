@@ -42,6 +42,25 @@ def write_json_atomic(path: Path, doc, *, indent: int = 2) -> None:
     write_text_atomic(path, json.dumps(doc, ensure_ascii=False, indent=indent))
 
 
+def write_bytes_atomic(path: Path, data: bytes) -> None:
+    """Write bytes via a unique sibling temp, then replace. Same law as text."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        part.write_bytes(data)
+        try:
+            os.replace(part, path)
+        except OSError:
+            path.write_bytes(data)
+    finally:
+        if part.exists():
+            try:
+                part.unlink()
+            except OSError:
+                pass
+
+
 def write_bytes_dedup(path: Path, data: bytes, previous: Path | None = None) -> None:
     """Write a per-run snapshot, hard-linking an identical previous one.
 
@@ -61,4 +80,4 @@ def write_bytes_dedup(path: Path, data: bytes, previous: Path | None = None) -> 
                 return
             except OSError:
                 pass
-    path.write_bytes(data)
+    write_bytes_atomic(path, data)

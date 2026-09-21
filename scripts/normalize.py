@@ -198,7 +198,10 @@ def plain_text(raw: str | None, limit: int) -> str | None:
     parser.feed(raw)
     parser.close()  # flush a trailing "&" / incomplete charref, or it is lost
     value = " ".join("".join(parser.parts).split())
-    return (value[:limit] + "…" if len(value) > limit else value) or None
+    if len(value) > limit:
+        # The ellipsis counts toward the limit, same law as the published title cap.
+        value = (value[: max(limit - 1, 0)].rstrip() + "…") if limit else ""
+    return value or None
 
 
 def normalize_item(raw_item: dict, source_meta: dict) -> dict | None:

@@ -398,7 +398,7 @@ class UpdateMedia(unittest.TestCase):
         self.assertFalse((self.media_dir / ".leftover.part").exists())
         self.assertEqual(doc["pruned"], 2)
 
-    def test_entry_with_missing_file_is_dropped(self) -> None:
+    def test_missing_cache_file_is_diagnosed_and_not_published(self) -> None:
         self.manifest.parent.mkdir(parents=True, exist_ok=True)
         self.manifest.write_text(json.dumps({
             "method": fbm.METHOD,
@@ -408,7 +408,9 @@ class UpdateMedia(unittest.TestCase):
             doc = fbm.update_media([self.cand], offline=True,
                                    media_dir=self.media_dir, manifest_path=self.manifest)
         fh.assert_not_called()
-        self.assertEqual(doc["media"], {})
+        row = doc["media"][self.uid]
+        self.assertIsNone(row["file"])
+        self.assertEqual(row["reason"], "cache_file_missing")
 
     def test_out_of_scope_entries_retired_and_pruned(self) -> None:
         other = "cd" * 10
@@ -426,8 +428,11 @@ class UpdateMedia(unittest.TestCase):
         cands = [{"id": f"c{i}", "url": f"https://news.example/{i}"} for i in range(5)]
         with mock.patch.object(fbm, "FETCH_CAP", 2), \
                 mock.patch.object(fbm.fetch_media, "fetch_html", return_value=None) as fh:
-            fbm.update_media(cands, media_dir=self.media_dir, manifest_path=self.manifest)
+            doc = fbm.update_media(cands, media_dir=self.media_dir, manifest_path=self.manifest)
         self.assertEqual(fh.call_count, 2)
+        exhausted = [row for row in doc["media"].values() if row.get("reason") == "fetch_budget_exhausted"]
+        self.assertEqual(len(exhausted), 3)
+        self.assertTrue(all(row.get("file") is None for row in exhausted))
 
     def test_foreign_manifest_starts_fresh(self) -> None:
         self.manifest.write_text(json.dumps({

@@ -125,10 +125,8 @@ def mark_browser_identity(url: str, reason: str) -> None:
         policy = _load_ua_policy()
         policy[host] = {"identity": "browser", "reason": str(reason)[:80],
                         "marked_at": utc_now().isoformat(timespec="seconds")}
-        UA_POLICY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        part = UA_POLICY_PATH.with_name(UA_POLICY_PATH.name + ".tmp")
-        part.write_text(json.dumps(policy, ensure_ascii=False, indent=2), encoding="utf-8")
-        part.replace(UA_POLICY_PATH)
+        store_io.write_text_atomic(
+            UA_POLICY_PATH, json.dumps(policy, ensure_ascii=False, indent=2))
     except OSError:
         pass
 
@@ -304,11 +302,8 @@ def _load_http_cache() -> dict:
 
 def _save_http_cache(cache: dict) -> None:
     try:
-        path = _http_cache_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        part = path.with_name(path.name + ".tmp")
-        part.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
-        part.replace(path)
+        store_io.write_text_atomic(
+            _http_cache_path(), json.dumps(cache, ensure_ascii=False, indent=1))
     except (OSError, ValueError, TypeError):
         pass
 
@@ -323,11 +318,7 @@ def _read_body_cache(url: str) -> bytes | None:
 
 def _write_body_cache(url: str, raw: bytes) -> None:
     try:
-        path = _body_cache_path(url)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        part = path.with_name(path.name + ".tmp")
-        part.write_bytes(raw)
-        part.replace(path)
+        store_io.write_bytes_atomic(_body_cache_path(url), raw)
     except OSError:
         pass
 
@@ -416,22 +407,25 @@ def fetch_bytes(url: str) -> tuple[bytes, str | None]:
                 except ValueError:
                     raise
                 except urllib.error.HTTPError as e:
-                    if e.code == 304 and conditional:
-                        cached_body = _read_body_cache(candidate)
-                        if cached_body is not None:
-                            return cached_body, entry.get("content_type")
-                        break  # validator without body: refetch unconditionally
-                    # An HTTP refusal is respected: never identity-switched, and
-                    # a 4xx on the plain request is final for this URL. But a
-                    # 4xx raised *because of* the validators (412, a proxy that
-                    # dislikes If-None-Match) is the very case the unconditional
-                    # second pass exists for - so let it fall through first.
-                    last_err = e
-                    if 400 <= e.code < 500:
-                        if not conditional:
-                            refused = True
-                        break
-                    continue
+                    try:
+                        if e.code == 304 and conditional:
+                            cached_body = _read_body_cache(candidate)
+                            if cached_body is not None:
+                                return cached_body, entry.get("content_type")
+                            break  # validator without body: refetch unconditionally
+                        # An HTTP refusal is respected: never identity-switched, and
+                        # a 4xx on the plain request is final for this URL. But a
+                        # 4xx raised *because of* the validators (412, a proxy that
+                        # dislikes If-None-Match) is the very case the unconditional
+                        # second pass exists for - so let it fall through first.
+                        last_err = e
+                        if 400 <= e.code < 500:
+                            if not conditional:
+                                refused = True
+                            break
+                        continue
+                    finally:
+                        e.close()
                 except Exception as e:
                     if ua == USER_AGENT and is_transport_stall(e):
                         # Server-side stall of the honest identity (the CBC
@@ -444,7 +438,8 @@ def fetch_bytes(url: str) -> tuple[bytes, str | None]:
                     continue
             if refused:
                 break
-    assert last_err is not None
+    if last_err is None:
+        raise RuntimeError(f"fetch failed without an exception: {url}")
     raise last_err
 
 

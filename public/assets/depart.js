@@ -18,9 +18,16 @@
       }
     });
   } catch (e) { /* unreadable island: counts stay unknown, marks stay off */ }
-  var foldMap = { '\u0153': 'oe', '\u0152': 'oe', '\u00e6': 'ae', '\u00c6': 'ae', '\u2019': "'", '\u2018': "'", '`': "'", '\u00b4': "'" };
+  // Same fold as brief.js / resident_brief.folded(), including ß and the
+  // fi/fl ligatures that casefold expands and toLowerCase does not.
+  var foldMap = {
+    '\u0153': 'oe', '\u0152': 'oe', '\u00e6': 'ae', '\u00c6': 'ae',
+    '\u2019': "'", '\u2018': "'", '`': "'", '\u00b4': "'",
+    '\u00df': 'ss', '\u1e9e': 'ss', '\ufb01': 'fi', '\ufb02': 'fl',
+    '\ufb00': 'ff', '\ufb03': 'ffi', '\ufb04': 'ffl'
+  };
   var fold = function (text) {
-    return String(text || '').replace(/[\u0153\u0152\u00e6\u00c6\u2019\u2018`\u00b4]/g, function (ch) { return foldMap[ch]; })
+    return String(text || '').replace(/[\u0153\u0152\u00e6\u00c6\u2019\u2018`\u00b4\u00df\u1e9e\ufb01\ufb02\ufb00\ufb03\ufb04]/g, function (ch) { return foldMap[ch]; })
       .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   };
   var keyOf = function (name) { return fold(name).replace(/\s+/g, ' ').trim(); };

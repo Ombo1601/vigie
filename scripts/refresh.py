@@ -242,7 +242,10 @@ def _roads_only(python: str, *, deploy: bool) -> int:
     declarations did not change — collection clocks are not a change.
     """
     before = read_roads_signal()
-    run_step("wzdx", [python, "-X", "utf8", str(ROOT / "scripts" / "ingest_wzdx.py")], timeout=600)
+    # --strict: a fetch/parse failure must fail this lane. Exit 0 from the
+    # ingest would look like "the city did not change" and skip the deploy
+    # while production kept yesterday's obstructions.
+    run_step("wzdx", [python, "-X", "utf8", str(ROOT / "scripts" / "ingest_wzdx.py"), "--strict"], timeout=600)
     after = roads_signal()
     if not after or after == before:
         log("NOCHANGE declared obstructions unchanged; render and deploy skipped")

@@ -434,6 +434,7 @@ def collect(sources: list[dict], now: datetime, *, offline: bool = False,
                 print(f"  FAIL {source_id}: unreadable snapshot ({exc}); keeping previous store")
                 return {"ok": False, "reason": "snapshot_unreadable"}
             fetched_at = snapshot_fetched_at(snapshot) or now
+            archived = False
             print(f"  {source_id}: reusing {snapshot.name} (fetched {fetched_at.isoformat()})")
         else:
             try:
@@ -463,8 +464,8 @@ def collect(sources: list[dict], now: datetime, *, offline: bool = False,
                 same = bool(prev_snaps) and prev_snaps[-1].name.endswith(f"_{digest[:12]}.geojson")
                 store_io.write_bytes_dedup(snapshot, raw, prev_snaps[-1] if same else None)
             except OSError as exc:
-                archived = False
-                print(f"  WARN {source_id}: snapshot not archived ({exc}); continuing from memory")
+                print(f"  WARN {source_id}: snapshot not archived ({exc}); keeping previous store")
+                return {"ok": False, "reason": "snapshot_not_archived"}
         parse_error = None
         features: list = []
         try:
@@ -537,6 +538,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offline", action="store_true",
                         help="Reuse the latest raw snapshot; make no network requests")
+    parser.add_argument("--strict", action="store_true",
+                        help="Exit 1 when the store was not updated. The news pipeline "
+                             "omits this: a roadworks outage must not block the edition. "
+                             "The hourly roads lane passes it so a failed fetch is not "
+                             "reported as an unchanged city.")
     args = parser.parse_args(argv)
     sources = load_enabled_by_type(SOURCES_PATH, "wzdx")
     now = utc_now()
@@ -559,7 +565,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"store: {result['store_path'].relative_to(ROOT)}")
         except ValueError:
             print(f"store: {result['store_path']}")
-    # Always 0: a roadwork feed outage must never block the news pipeline.
+    # Exit 0 by default: a roadwork feed outage must never block the news
+    # pipeline. --strict is the roads lane, whose only job is this feed.
+    if args.strict and not result.get("ok"):
+        return 1
     return 0
 
 

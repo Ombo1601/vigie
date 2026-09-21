@@ -74,6 +74,14 @@ PROVINCE_HINT = re.compile(
     r"\blegault\b|\bduhaime\b|\bcanada\b|\bcanadien(?:ne)?s?\b|\bf[ée]d[ée]ral(?:e)?s?\b",
     re.I,
 )
+# Bare "Canada" must not defeat the world-fog guard. A wire about Trump and
+# Canada is not a Quebec story; Québec, Montréal, Ottawa and the provincial
+# parties are.
+QC_ANCHOR = re.compile(
+    r"\bqu[ée]bec\b|montr[ée]al|\bottawa\b|assembl[ée]e nationale|\bcaq\b|\bplq\b|\bqs\b|\bpq\b|"
+    r"\blegault\b|\bduhaime\b",
+    re.I,
+)
 # Strong world anchors without local scar — do not let province nest cloak these
 WORLD_FOG = re.compile(
     r"\bdanemark\b|\brussie\b|\brussia\b|\biran\b|\bisra[eë]l\b|\bukraine\b|"
@@ -103,7 +111,11 @@ TOPIC_RULES: list[tuple[str, re.Pattern]] = [
         re.I,
     )),
     ("transport", re.compile(
-        r"\btramway\b|\btgv\b|\bopus\b|\bmetro\b|\bmétro\b|\bautobus\b|"
+        r"\btramway\b|\btgv\b|\bopus\b|\bmétro\b|"
+        r"\bm[eé]tro\s+de\b|\bstation\s+de\s+m[eé]tro\b|"
+        r"\bligne\s+(?:de\s+)?(?:m[eé]tro|metro)\b|"
+        r"\bmontr[ée]al\s+metro\b|\bmetro\s+(?:station|line|system)\b|"
+        r"\bautobus\b|"
         r"\btramcit[ée]\b|\brtc\b|\br[ée]seau de transport de la capitale\b|"
         r"\bd[ée]tours?\b|\bentraves?\b|\bpistes? cyclables?\b|"
         r"\bcyclis(?:te|tes)?\b|\bv[ée]los?\b|\bpi[ée]tons?\b|\bpi[ée]tonniers?\b|"
@@ -439,9 +451,10 @@ def propose_geo(c: dict, text: str) -> dict:
             "reason": "strict city/Lévis/borough/mayor token (word-boundary)",
             "evidence": (city_match or AMBIGUOUS_CITY.search(text)).group(0),
         }
-    # World fog without city scar must not wear quebec cloak
-    # (summary may mention Canada; that is not Quebec impact)
-    if WORLD_FOG.search(text) and not PROVINCE_HINT.search(text):
+    # World fog without a Québec anchor must not wear a quebec cloak.
+    # Bare "Canada" is not that anchor: a note about Trump and Canada is not
+    # a Quebec story, including when the feed itself is official.
+    if WORLD_FOG.search(text) and not QC_ANCHOR.search(text):
         return {
             "status": "proposed",
             "geo": "linked",
@@ -621,8 +634,11 @@ def propose_impact_units(title: str, summary: str) -> list[dict]:
             for m in RE_PRICE_CAD.finditer(text):
                 raw = m.group(0)
                 # A dollar symbol alone does not establish Canadian currency.
-                # Skip explicit foreign-dollar comparisons instead of relabelling them.
-                if FOREIGN_DOLLAR.search(text):
+                # A foreign marker on this amount is skipped; a later US$
+                # comparison must not erase a separate local price in the
+                # same sentence.
+                local = text[max(0, m.start() - 8): m.end() + 12]
+                if FOREIGN_DOLLAR.search(local):
                     continue
                 num = next((g for g in m.groups() if g), None)
                 val = _parse_number(num or "")

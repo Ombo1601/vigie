@@ -416,8 +416,8 @@ def collect(sources: list[dict], now: datetime, *, offline: bool = False,
                 same = bool(prev_snaps) and prev_snaps[-1].name.endswith(f"_{digest[:12]}.html")
                 store_io.write_bytes_dedup(snapshot, raw, prev_snaps[-1] if same else None)
             except OSError as exc:
-                archived = False
-                print(f"  WARN {source_id}: snapshot not archived ({exc}); continuing from memory")
+                print(f"  WARN {source_id}: snapshot not archived ({exc}); keeping previous store")
+                return {"ok": False, "reason": "snapshot_not_archived"}
         html = decode_html(raw, content_type if not offline else None)
         events, counts = parse_activities(html, page_url)
         parse_error = counts.pop("parse_error", None)

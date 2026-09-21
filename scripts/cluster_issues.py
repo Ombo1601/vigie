@@ -369,6 +369,16 @@ def event_scar(c: dict) -> str | None:
 
 
 _LOCATION = re.compile(r"\b(?:rue|boulevard|avenue|autoroute|route|pont|quartier|hopital|ecole)\s+(?:(?:de|du|des|la|le|l)\s+)*([a-z0-9-]+)")
+# Compass points count only when the publisher capitalized them (Est, OUEST).
+# A lowercase "est" is the verb "is" ("le boulevard Hamel est fermé") and must
+# not split that headline from one that names the street without a direction.
+_COMPASS = re.compile(
+    r"(?i:\b(?:rue|boulevard|avenue|autoroute|route|pont|quartier|"
+    r"h[oô]pital|hopital|[eé]cole|ecole)\s+"
+    r"(?:(?:de|du|des|la|le|l)\s+)*)"
+    r"([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9-]*)"
+    r"\s+(Est|Ouest|Nord|Sud|EST|OUEST|NORD|SUD)\b(?!-)"
+)
 # Neighbourhood tokens used only as a *positive* bilingual guard (shared place
 # or proper name). They must never join the road-name set: adding "limoilou"
 # there would let Hamel and Charest share a place and merge.
@@ -414,8 +424,51 @@ def language_of(c: dict) -> str:
     return ""
 
 
+def _road_bases(tokens: set[str]) -> dict[str, set[str]]:
+    grouped: dict[str, set[str]] = {}
+    for token in tokens:
+        name, sep, direction = token.partition("|")
+        grouped.setdefault(name, set()).add(direction if sep else "")
+    return grouped
+
+
+def _roads_conflict(a: set[str], b: set[str]) -> bool:
+    """True when both headlines name streets and those streets cannot be one place.
+
+    A bare name is compatible with the same name plus a compass point.
+    Opposite compass points on the same name are different places: Hamel Est
+    is not Hamel Ouest. No shared street name is the same veto as before.
+    """
+    if not a or not b:
+        return False
+    ga, gb = _road_bases(a), _road_bases(b)
+    if not (set(ga) & set(gb)):
+        return True
+    for name in set(ga) & set(gb):
+        dirs_a = ga[name] - {""}
+        dirs_b = gb[name] - {""}
+        if dirs_a and dirs_b and not (dirs_a & dirs_b):
+            return True
+    return False
+
+
 def road_places(c: dict) -> set[str]:
-    return set(_LOCATION.findall(folded(str(c.get("title") or ""))))
+    title = str(c.get("title") or "")
+    names = set(_LOCATION.findall(folded(title)))
+    compass: dict[str, set[str]] = {}
+    for match in _COMPASS.finditer(title):
+        name = folded(match.group(1))
+        if name not in names:
+            continue
+        compass.setdefault(name, set()).add(folded(match.group(2)))
+    out: set[str] = set()
+    for name in names:
+        directions = compass.get(name) or set()
+        if directions:
+            out.update(f"{name}|{direction}" for direction in directions)
+        else:
+            out.add(name)
+    return out
 
 
 def place_hints(c: dict) -> set[str]:
@@ -463,7 +516,7 @@ def features_match(a: tuple, b: tuple) -> bool:
         return False
     # Shared closure boilerplate must not merge different roads/neighbourhoods.
     # Preserve numeric identifiers too (route 138 is not route 175).
-    if roads_a and roads_b and not roads_a.intersection(roads_b):
+    if _roads_conflict(roads_a, roads_b):
         return False
     bilingual = {lang_a, lang_b} == {"en", "fr"}
     if not bilingual:

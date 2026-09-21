@@ -5,6 +5,8 @@ name: Vigie roads refresh
 # creates an edition, so "depuis la dernière édition", the dossier history and
 # the edition metrics are untouched. If the declarations did not change, the
 # render and deploy are skipped entirely (collection clocks are not a change).
+# A failed fetch is a failed job: it is not logged as "unchanged", which would
+# leave production on the previous obstructions and look like a healthy lane.
 #
 # Shares the `vigie-refresh` concurrency group so it can never overlap a full
 # refresh; both write production.

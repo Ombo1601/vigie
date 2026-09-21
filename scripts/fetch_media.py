@@ -144,6 +144,7 @@ def fetch_html(url: str, *, retries: int = 2, diag: dict | None = None) -> str |
             return None
         except urllib.error.HTTPError as exc:
             last = (_classify_http_error(exc.code, "article"), f"HTTP {exc.code}")
+            exc.close()
             # An HTTP refusal is respected - never retried under another identity.
         except (OSError, urllib.error.URLError, http.client.HTTPException) as exc:
             reason = "article_timeout" if _is_timeout(exc) else "article_network_error"

@@ -41,10 +41,9 @@ SUMMARY_CAP = 280
 
 
 def _plain(value: object, cap: int | None = None) -> str:
-    text = brief.plain(value)
-    if cap is not None and len(text) > cap:
-        text = text[:cap].rstrip() + "…"
-    return text
+    if cap is None:
+        return brief.plain(value)
+    return brief.relayed(value, cap)
 
 
 def _md(value: object, cap: int | None = None) -> str:

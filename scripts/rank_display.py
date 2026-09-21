@@ -250,10 +250,7 @@ def title_html(value: object, cap: int = TITLE_CAP) -> str:
     longer here than on the brief. Truncate before escaping so an entity is
     never split.
     """
-    text = resident_brief.sanitize(value if isinstance(value, str) else "")
-    text = text or "(no title)"
-    if len(text) > cap:
-        text = text[: cap - 1].rstrip() + "…"
+    text = resident_brief.relayed(value, cap) or "(no title)"
     return esc(text)
 
 
@@ -942,7 +939,7 @@ def issue_stage_html(iss: dict, continuity: dict | None = None, *, panel_id: str
                 claims_html = "<ul class='claims'>" + "".join(claim_bits) + "</ul>"
             items_html.append(
                 f"<a class='voice-link' href=\"{esc(link_url(it.get('url')))}\" "
-                f"target=\"_blank\" rel=\"noopener\">{esc(it.get('title') or '(no title)')}</a>"
+                f"target=\"_blank\" rel=\"noopener\">{title_html(it.get('title'))}</a>"
                 f"{claims_html}"
                 f"{vface}"
             )

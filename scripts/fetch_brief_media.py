@@ -239,6 +239,7 @@ def fetch_image(url: str, referer: str = "", *, retries: int = 2,
             return None  # a guarded redirect failure is never retried
         except urllib.error.HTTPError as exc:
             last = (fetch_media._classify_http_error(exc.code, "image"), f"HTTP {exc.code}")
+            exc.close()
             if attempt + 1 < attempts:
                 time.sleep(0.35 * (attempt + 1))
             continue  # an HTTP refusal is respected - never identity-switched
@@ -541,11 +542,24 @@ def update_media(scope: list[dict], *, offline: bool = False,
     manifest_path = Path(manifest_path)
     entries: dict[str, dict] = {}
     reused = 0
+    now = datetime.now(timezone.utc)
     for uid, _ in scoped:
         prev = previous.get(uid)
         if not isinstance(prev, dict):
             continue
         file = prev.get("file")
+        if isinstance(file, str) and FILE_RE.fullmatch(file) and not (media_dir / file).is_file():
+            # The manifest named a file that is gone. Do not publish it, and
+            # do not forget the article: a negative row is the diagnosed
+            # absence, and the next online run can fetch again.
+            entries[uid] = {
+                "status": "proposed",
+                "file": None,
+                "article_url": prev.get("article_url"),
+                "reason": "cache_file_missing",
+                "fetched_at": now.isoformat(timespec="seconds"),
+            }
+            continue
         if isinstance(file, str) and FILE_RE.fullmatch(file) and (media_dir / file).is_file():
             # Backfill the intrinsic size for images stored before dimensions
             # were measured: reading a header is free and the browser then
@@ -563,7 +577,6 @@ def update_media(scope: list[dict], *, offline: bool = False,
         elif not file:
             entries[uid] = prev  # negative result - retried per policy below
 
-    now = datetime.now(timezone.utc)
     budget = 0 if offline else FETCH_CAP
     fetched = 0
     feed_resolved = 0
@@ -652,6 +665,23 @@ def update_media(scope: list[dict], *, offline: bool = False,
             _apply_policy(entry, reason, attempts, now)
         entries[uid] = entry
         time.sleep(SLEEP)
+
+    if not offline:
+        # Scoped articles the fetch budget never reached are an absence, not
+        # a silent hole in the manifest. They are retried on the next run.
+        for uid, cand in scoped:
+            if uid in entries:
+                continue
+            url = brief.safe_url(cand.get("url"))
+            if not url:
+                continue
+            entries[uid] = {
+                "status": "proposed",
+                "file": None,
+                "article_url": url,
+                "reason": "fetch_budget_exhausted",
+                "fetched_at": now.isoformat(timespec="seconds"),
+            }
 
     # The manifest only ever references files that exist on disk.
     entries = {

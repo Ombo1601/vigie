@@ -20,6 +20,8 @@ output is reproducible from the same inputs.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 METHOD = "change-ledger-v1 edition-diff"
 
 # Minimal, honest projection of a dossier. Never adds resolution/impact/truth.
@@ -62,6 +64,36 @@ def _latest_pub(issue: dict) -> str:
     return str(value) if isinstance(value, str) else ""
 
 
+def _pub_instant(value: str) -> datetime | None:
+    """Parse a publication stamp. Z and numeric offsets are the same clock."""
+    if not value or not value.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    try:
+        return dt.astimezone(timezone.utc)
+    except (OverflowError, ValueError):
+        return None
+
+
+def _publication_is_newer(current: str, previous: str) -> bool:
+    """True only when the current stamp is a later instant.
+
+    ISO strings do not sort chronologically across formats: ``Z`` sorts after
+    ``+00:00`` for the same instant, and a ``-04:00`` local time can sort
+    after a later UTC instant. Compare clocks; fall back to text only when a
+    stamp does not parse.
+    """
+    cur_dt, prev_dt = _pub_instant(current), _pub_instant(previous)
+    if cur_dt is not None and prev_dt is not None:
+        return cur_dt > prev_dt
+    return bool(current and previous and current > previous)
+
+
 def _count(value: object) -> int | None:
     """An int count, or None when absent/unusable.
 
@@ -96,8 +128,7 @@ def _development(current: dict, previous: dict) -> dict:
     if cur_off is not None and prev_off is not None and cur_off > prev_off:
         delta["official_voice_joined"] = True
     cur_pub, prev_pub = _latest_pub(current), _latest_pub(previous)
-    # Same-format UTC ISO strings sort lexicographically = chronologically.
-    if cur_pub and prev_pub and cur_pub > prev_pub:
+    if _publication_is_newer(cur_pub, prev_pub):
         delta["newer_publication"] = True
     return delta
 

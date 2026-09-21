@@ -104,6 +104,19 @@ def _after(a: object, b: object) -> bool:
     return str(a or "") > str(b or "")
 
 
+def _same_instant(a: object, b: object) -> bool:
+    """True when two edition keys are the same collection clock.
+
+    ``2026-09-10T12:00:00Z`` and ``2026-09-10T12:00:00+00:00`` are one instant.
+    String equality would ignore a re-render of that edition and leave the
+    previous leaf in place.
+    """
+    da, db = parse_ts(a), parse_ts(b)
+    if da and db:
+        return da == db
+    return str(a or "") == str(b or "")
+
+
 def plain(value: object) -> str:
     raw = re.sub(r"</?[a-zA-Z][^>]*>", " ", str(value or ""))
     return re.sub(r"\s+", " ", _SPOOF.sub("", html.unescape(raw))).strip()
@@ -290,11 +303,13 @@ def seal_edition(state: dict, record: dict) -> tuple[dict, str]:
     edition = record["edition"]
     if seals:
         last = seals[-1]
-        if last.get("edition") == edition:
+        if _same_instant(last.get("edition"), edition):
             prev = seals[-2]["root"] if len(seals) > 1 else ""
             seq = _int(last.get("seq")) or len(seals)
             seals[-1] = _seal(seq, prev, record)
-            state["voice"] = [v for v in state["voice"] if v.get("edition") != edition] + [voice_row(record)]
+            state["voice"] = [
+                v for v in state["voice"] if not _same_instant(v.get("edition"), edition)
+            ] + [voice_row(record)]
             return state, "replaced"
         if not _after(edition, last.get("edition")):
             return state, "ignored"

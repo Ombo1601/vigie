@@ -35,9 +35,11 @@ first place a broken commit surfaces.
 official WZDX lane (`refresh.py --roads-only`): ingest → anomalies/edges →
 `pipeline --render-only` → verify → deploy, and **only when the declared
 obstructions actually changed** (a content signal ignores collection clocks and
-presence counters). It never runs normalize/enrich/cluster, so it creates no
-edition and leaves the change ledger, dossier history and edition metrics
-untouched. It shares the `vigie-refresh` concurrency group with the full refresh.
+presence counters). A failed WZDX fetch fails the job (`ingest_wzdx.py --strict`);
+it is not reported as an unchanged city. It never runs normalize/enrich/cluster,
+so it creates no edition and leaves the change ledger, dossier history and
+edition metrics untouched. It shares the `vigie-refresh` concurrency group with
+the full refresh.
 
 ### The record layer (registre · mémoire · substrate · récits · méthode · départ · affiche)
 

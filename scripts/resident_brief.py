@@ -100,6 +100,18 @@ def plain(value: object) -> str:
     return re.sub(r"\s+", " ", sanitize(html.unescape(raw))).strip()
 
 
+def relayed(value: object, cap: int) -> str:
+    """Publisher text, verbatim, never longer than the published cap.
+
+    The ellipsis counts: a 300-character title plus "…" would be 301, which
+    breaks the cap in LEGAL_RISK.md. Truncation is the only rewrite allowed.
+    """
+    text = plain(value)
+    if cap >= 1 and len(text) > cap:
+        text = text[: cap - 1].rstrip() + "…"
+    return text
+
+
 # Folding law: ligatures and typographic apostrophes are mapped before the
 # diacritics are stripped, so the client fold in brief.js and this server-side
 # search index agree (searching "oeuvre" must match a stored "œuvre").
@@ -218,11 +230,7 @@ def prepare_items(ranked: list[dict], now: datetime) -> tuple[list[dict], int]:
             excluded += 1
             continue
         url = safe_url(item.get("url"))
-        title = plain(item.get("title"))
-        if len(title) > TITLE_CAP:
-            # The ellipsis counts: the relayed title stays within the published
-            # cap (LEGAL_RISK.md "≤300 chars"), never one over.
-            title = title[:TITLE_CAP - 1].rstrip() + "…"
+        title = relayed(item.get("title"), TITLE_CAP)
         when = parse_date(item.get("published_at"))
         if not title or not url:
             excluded += 1
@@ -362,10 +370,11 @@ def _headline_rows(issue: dict) -> list[dict]:
             entry_kind = str(entry.get("source_kind") or kind or "").lower()
             when = parse_date(entry.get("published_at"))
             geo = str(entry.get("geo") or "")
+            title = relayed(entry.get("title"), TITLE_CAP) or "Sans titre"
             rows.append({
-                "inst": inst,
+                "inst": plain(inst) or "Source",
                 "url": url,
-                "title": str(entry.get("title") or "Sans titre"),
+                "title": title,
                 "published": entry.get("published_at"),
                 "when": when,
                 "geo": geo,

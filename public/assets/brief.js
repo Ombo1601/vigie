@@ -9,8 +9,15 @@
   // Folding must match resident_brief.folded(): ligatures and typographic
   // apostrophes are mapped before diacritics are stripped, or searching
   // "oeuvre" would never match a stored "œuvre".
-  const LIGATURES = { 'œ': 'oe', 'Œ': 'oe', 'æ': 'ae', 'Æ': 'ae', '’': "'", '‘': "'", '`': "'", '´': "'" };
-  const fold = (text) => String(text || '').replace(/[œŒæÆ’‘`´]/g, ch => LIGATURES[ch])
+  // Python str.casefold() expands ß and the fi/fl ligatures; NFD + toLowerCase
+  // does not. Map them first so a search for "strasse" or "fichier" hits the
+  // stored form. The character class must list every key.
+  const LIGATURES = {
+    'œ': 'oe', 'Œ': 'oe', 'æ': 'ae', 'Æ': 'ae',
+    '’': "'", '‘': "'", '`': "'", '´': "'",
+    'ß': 'ss', 'ẞ': 'ss', 'ﬁ': 'fi', 'ﬂ': 'fl', 'ﬀ': 'ff', 'ﬃ': 'ffi', 'ﬄ': 'ffl',
+  };
+  const fold = (text) => String(text || '').replace(/[œŒæÆ’‘`´ßẞﬁﬂﬀﬃﬄ]/g, ch => LIGATURES[ch])
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const rows = all('.story');
   // Per-row refs and parsed facets are cached once: render() runs on every
