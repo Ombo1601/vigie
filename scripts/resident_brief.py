@@ -1058,6 +1058,15 @@ def _rw_history_line(event: dict, history: dict) -> str:
     return f'<p class="rw-history fine">{text}</p>'
 
 
+def _update_key(event: dict) -> tuple[int, object]:
+    """Most-recently-updated sort key: parsed datetimes compare
+    chronologically (mixed Z/+00:00/-04:00 offsets), unparseable stamps sort
+    below parsed ones, deterministically by raw string."""
+    raw = str(event.get("update_date") or "")
+    dt = parse_date(raw)
+    return (1, dt) if dt is not None else (0, raw)
+
+
 def _street_key(raw: object) -> str:
     """Folded literal street key shared with the client and the atlas: a shared
     name is a match, never geographic proof."""
@@ -1282,7 +1291,7 @@ def roadworks_section(rw: dict | None, now: datetime, anomalies: dict | None = N
     stale = (now - fetched).total_seconds() > 6 * 3600 or (now - fetched).total_seconds() < -300
     # Stable three-pass sort: severity first, then most recently updated, then id.
     ordered = sorted(events, key=lambda e: str(e.get("event_id")))
-    ordered.sort(key=lambda e: str(e.get("update_date") or ""), reverse=True)
+    ordered.sort(key=_update_key, reverse=True)
     ordered.sort(key=lambda e: RW_SEVERITY.get(str(e.get("vehicle_impact") or ""), 6))
     new_ids = {e.get("event_id") for e in (diff.get("new") or []) if isinstance(e, dict)}
     changed_by_id = {

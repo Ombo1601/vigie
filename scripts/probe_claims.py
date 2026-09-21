@@ -7,10 +7,16 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+import store_io
 
 PATS = {
     "guillemets_fr": re.compile(r"«\s*.{8,180}?\s*»"),
@@ -81,7 +87,7 @@ def main() -> int:
     }
     try:
         path = ROOT / "data/normalized/_probe_claims.json"
-        path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+        store_io.write_json_atomic(path, out)
     except OSError as exc:
         print(f"probe_claims: WARN report not written ({exc})")
         path = None

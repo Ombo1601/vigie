@@ -43,7 +43,8 @@ def _safe_int(value: object, default: int = 0) -> int:
 
 def _parse_ts(value: str) -> datetime | None:
     try:
-        return datetime.fromisoformat(value)
+        text = str(value).strip().replace("Z", "+00:00") if isinstance(value, str) else value
+        return datetime.fromisoformat(text)
     except (TypeError, ValueError):
         return None
 

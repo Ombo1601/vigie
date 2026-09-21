@@ -189,9 +189,11 @@ IMPACT_FROM_TOPIC = {
 # --- Impact units (proposed only). Falsifiable amounts/ids — not topic theater. ---
 # French/EN grouped thousands: 1 234 or 1,234 or 1234; decimal , or .
 # (?<![\d]) blocks greedy .{0,N} from landing mid-number (scar: "1 450" → "0").
+# \s does not match every French thousands separator (NBSP U+00A0, narrow NBSP
+# U+202F), so they are listed explicitly.
 RE_NUM = (
     r"(?<![\d])("
-    r"\d{1,3}(?:[\s\u00a0]\d{3})+(?:[.,]\d+)?"
+    r"\d{1,3}(?:[\s\u00a0\u202f\u2009]\d{3})+(?:[.,]\d+)?"
     r"|"
     r"\d{1,3}(?:,\d{3})+(?:\.\d+)?"
     r"|"
@@ -200,10 +202,11 @@ RE_NUM = (
 )
 # Word boundaries are law here (same scar as the topic rules): an unanchored
 # "rent" matched parent/different and "utility" matched futility, publishing a
-# false price. Prefix stems (électricit, tarif, facture, loyer) keep a leading
-# boundary; whole words get both, so "hydrogène" is not "hydro".
+# false price. Only the électricit- prefix stem keeps a leading boundary alone;
+# whole words (loyer, tarif, facture, hydro, …) get both, so "hydrogène" is not
+# "hydro" and "loyersX" is not a price context.
 PRICE_CTX = (
-    r"\bloyers?|\brents?\b|\btarifs?|\bfactures?|"
+    r"\bloyers?\b|\brents?\b|\btarifs?\b|\bfactures?\b|"
     r"\b[ée]lectricit|\bessence\b|\bcarburant\b|\bdiesel\b|\bgasoline\b|"
     r"\bhydro\b|\bpower\s+rates?\b|\butilit(?:y|ies)\b"
 )
@@ -562,7 +565,7 @@ def propose_impacts(topics: list[dict], title: str = "", summary: str = "") -> l
 
 
 def _parse_number(raw: str) -> float | None:
-    s = re.sub(r"\s+", "", raw or "")
+    s = re.sub(r"[\s\u00a0\u202f\u2009]+", "", raw or "")
     if not s:
         return None
     if "," in s and "." in s:

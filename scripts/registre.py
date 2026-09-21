@@ -299,7 +299,9 @@ def seal_edition(state: dict, record: dict) -> tuple[dict, str]:
         if not _after(edition, last.get("edition")):
             return state, "ignored"
         prev = last["root"]
-        seq = _int(last.get("seq")) + 1
+        # A corrupt last seq (0/missing) must never mint a duplicate: the chain
+        # position is the floor.
+        seq = max(_int(last.get("seq")), len(seals)) + 1
     else:
         prev, seq = "", 1
     seals.append(_seal(seq, prev, record))
@@ -331,9 +333,9 @@ def verify_chain(seals: list[dict], anchor_root: str = "") -> tuple[bool, str]:
         try:
             leaf = leaf_of(seal["record"])
             root = chain_hash(prev, leaf)
-        except (TypeError, ValueError, UnicodeEncodeError):
-            # A hostile/corrupt chain (surrogate text, non-hex prev) is a
-            # verification failure, never a traceback.
+        except (TypeError, ValueError, UnicodeEncodeError, RecursionError):
+            # A hostile/corrupt chain (surrogate text, non-hex prev, deeply
+            # nested record) is a verification failure, never a traceback.
             return False, f"seal {seal.get('seq')}: uncomputable record"
         if seal.get("leaf") != leaf:
             return False, f"seal {seal.get('seq')}: leaf mismatch"
@@ -366,7 +368,7 @@ def seal_roadworks(state: dict, roadworks: dict) -> tuple[dict, str]:
             return state, "ignored"
         if last.get("signal") == signal:
             return state, "unchanged"
-        prev, seq = last["root"], _int(last.get("seq")) + 1
+        prev, seq = last["root"], max(_int(last.get("seq")), len(seals)) + 1
     else:
         prev, seq = "", 1
     seals.append(_roads_seal(seq, prev, record, signal))
@@ -473,8 +475,8 @@ def public_chain(state: dict) -> dict:
         ),
         "note": (
             "Le silence enregistré est une absence dans les flux collectés par Vigie, "
-            "pas la preuve qu'une institution n'a rien dit ailleurs. Identifiants et comptes seulement ; "
-            "aucun texte d'éditeur."
+            "pas la preuve qu’une institution n’a rien dit ailleurs. Identifiants et comptes seulement ; "
+            "aucun texte d’éditeur."
         ),
         "seals": shown,
     }
@@ -487,8 +489,8 @@ def public_institutions(state: dict) -> dict:
         "edition": seals[-1].get("edition", "") if seals else "",
         "edition_count": len([v for v in state.get("voice") or [] if v.get("established")]),
         "note": (
-            "Une institution « n'a pas parlé » quand aucun de ses flux suivis n'apparaît dans un dossier "
-            "de l'édition. Compteur d'absence, jamais un verdict."
+            "Une institution « n’a pas parlé » quand aucun de ses flux suivis n’apparaît dans un dossier "
+            "de l’édition. Compteur d’absence, jamais un verdict."
         ),
         "institutions": institution_register(state),
     }

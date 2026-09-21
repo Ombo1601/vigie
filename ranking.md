@@ -95,6 +95,7 @@ Silent boosts = propaganda with better geography.
 | Date | Change | Owner |
 |------|--------|--------|
 | 2026-09-15 | v0 weights: geo 0.60, recency 0.40; tension/impact off | Marcus (co-founder) |
+| 2026-09-21 | enrich: price-context trailing boundaries (loyers/tarifs/factures no longer match mid-word); French narrow-NBSP thousands parse; w_impact still 0 | audit |
 | 2026-09-20 | enrich: price context word-bounded (rent≠parent, utility≠futility, hydro≠hydrogène); housing-unit trailing boundary; `CAD_per_kWh` added and unit schema synced; w_impact still 0 | audit |
 | 2026-09-15 | enrich.py rules-v0 writes proposed geo/topic/impact; w_impact still 0 until we choose to score proposals | Niccolo (co-founder) |
 | 2026-09-15 | Display nest + geo_proximity use proposed enrich.geo; primary source without city token no longer auto Near me | Bucky (co-founder) |

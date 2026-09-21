@@ -162,7 +162,17 @@ def reorder_approaches(
     its original relative order at the end. Never mutates input list objects.
     """
     annotated = annotate_approaches(approaches, issues)
-    others = [ap for ap in (approaches or []) if not isinstance(ap, dict)]
+    # Non-object rows keep their relative order at the end; copy when possible
+    # so the caller cannot mutate the input through the output, but never fail
+    # on an un-copyable sentinel.
+    others = []
+    for ap in (approaches or []):
+        if isinstance(ap, dict):
+            continue
+        try:
+            others.append(deepcopy(ap))
+        except Exception:
+            others.append(ap)
     ids = normalize_facet_ids(active_facets)
     if not ids:
         return annotated + others

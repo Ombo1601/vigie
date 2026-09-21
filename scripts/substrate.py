@@ -159,7 +159,7 @@ def roadworks_view(roadworks: dict | None, cap: int) -> dict | None:
         return None
     events = [e for e in events if isinstance(e, dict) and e.get("event_id")]
     ordered = sorted(events, key=lambda e: str(e.get("event_id")))
-    ordered.sort(key=lambda e: str(e.get("update_date") or ""), reverse=True)
+    ordered.sort(key=brief._update_key, reverse=True)
     ordered.sort(key=lambda e: brief.RW_SEVERITY.get(str(e.get("vehicle_impact") or ""), 6))
     diff = rw.get("diff") if isinstance(rw.get("diff"), dict) else {}
     return {

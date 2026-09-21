@@ -43,7 +43,9 @@ LOG_PATH = ROOT / "data" / "ops" / "refresh.log"
 LOCK_PATH = ROOT / "data" / "ops" / "refresh.lock"
 ROADS_SIGNAL_PATH = ROOT / "data" / "ops" / "roads_signal.json"
 ROADWORKS_STORE = ROOT / "data" / "roadworks" / "latest_roadworks.json"
-ROADS_SIGNAL_METHOD = "roads-signal-v1"
+# v2 sorts multi-valued declared fields before hashing, so a feed reorder of
+# road_names/restrictions alone never mints a deploy (v1 compared raw order).
+ROADS_SIGNAL_METHOD = "roads-signal-v2"
 SITE_URL = "https://vigieqc.com"
 INDEXNOW_KEY = "c977ad1a490feff9553222dafa4921b4"
 INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow"
@@ -183,8 +185,15 @@ def roads_signal(store_path: Path = ROADWORKS_STORE) -> str:
     events = doc.get("events") if isinstance(doc, dict) else None
     if not isinstance(events, list):
         return ""
+
+    def _canon(value):
+        # The feed may reorder multi-valued fields without changing what the
+        # City declared; sort them so order alone never mints a deploy.
+        if isinstance(value, list):
+            return sorted(str(v) for v in value)
+        return value
     rows = [
-        [str(event.get("event_id") or "")] + [event.get(field) for field in _ROADS_FIELDS]
+        [str(event.get("event_id") or "")] + [_canon(event.get(field)) for field in _ROADS_FIELDS]
         for event in sorted(
             (e for e in events if isinstance(e, dict)),
             key=lambda e: str(e.get("event_id") or ""),

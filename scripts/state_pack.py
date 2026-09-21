@@ -26,11 +26,19 @@ Usage:
 """
 from __future__ import annotations
 
+import os
 import sys
 import tarfile
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+import store_io
+
 DATA = ROOT / "data"
 
 # Explicit small files (relative to data/).
@@ -148,9 +156,20 @@ def members() -> list[Path]:
 def pack(out_path: Path) -> int:
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(out, "w:gz") as tar:
-        for path in members():
-            tar.add(path, arcname=path.relative_to(ROOT).as_posix(), recursive=False)
+    # Atomic publish: a crash mid-pack must never leave a truncated tarball
+    # that a later upload step could ship as the cross-edition memory.
+    tmp = out.with_name(f"{out.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        with tarfile.open(tmp, "w:gz") as tar:
+            for path in members():
+                tar.add(path, arcname=path.relative_to(ROOT).as_posix(), recursive=False)
+        os.replace(tmp, out)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
     return len(members())
 
 
@@ -182,7 +201,7 @@ def unpack(in_path: Path) -> int:
             extracted = tar.extractfile(info)
             if extracted is None:
                 continue
-            target.write_bytes(extracted.read())
+            store_io.write_bytes_atomic(target, extracted.read())
             count += 1
     return count
 

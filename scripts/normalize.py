@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
@@ -115,6 +116,8 @@ def prune_candidate_history(out_dir: Path, days: int = HISTORY_RETENTION_DAYS,
             except OSError:
                 continue
     # Orphaned temp files from a crashed atomic write are never a store.
+    # Stamped temps carry their edition date in the name; latest_* temps carry
+    # none, so they are aged by mtime (a day is far beyond any overlapping run).
     for path in entries:
         m = STAMPED_TMP_RE.match(path.name)
         if m and m.group(1) < cutoff:
@@ -123,6 +126,17 @@ def prune_candidate_history(out_dir: Path, days: int = HISTORY_RETENTION_DAYS,
                 removed += 1
             except OSError:
                 continue
+        if path.name.startswith("latest_") and path.name.endswith(".tmp"):
+            try:
+                old = time.time() - path.stat().st_mtime > 24 * 3600
+            except OSError:
+                continue
+            if old:
+                try:
+                    path.unlink()
+                    removed += 1
+                except OSError:
+                    continue
     return removed
 
 

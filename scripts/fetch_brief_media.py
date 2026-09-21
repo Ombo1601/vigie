@@ -109,6 +109,14 @@ DOCTYPE_RE = re.compile(br"<!\s*(?:DOCTYPE|ENTITY)\b", re.I)
 
 HEALTH_METHOD = "media-health-v1"
 HEALTH_HISTORY_CAP = 28
+TMP_PRUNE_AFTER_SECONDS = 24 * 3600  # crashed atomic temps older than a day
+
+
+def _is_old_tmp(path: Path) -> bool:
+    try:
+        return time.time() - path.stat().st_mtime > TMP_PRUNE_AFTER_SECONDS
+    except OSError:
+        return False
 
 
 def sniff_image(raw: bytes) -> str | None:
@@ -153,7 +161,10 @@ def image_dimensions(raw: bytes) -> tuple[int | None, int | None]:
                     i += 1
                     continue
                 marker = raw[i + 1]
-                if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                # Lengthless markers: SOI, TEM, RSTn and EOI. EOI has no length
+                # field; reading the next two bytes as a length would jump past
+                # the SOF in a truncated file.
+                if marker in (0xD8, 0xD9, 0x01) or 0xD0 <= marker <= 0xD7:
                     i += 2
                     continue
                 seg_len = int.from_bytes(raw[i + 2:i + 4], "big")
@@ -362,8 +373,14 @@ def build_feed_media_index(raw_dir: Path = RAW_DIR) -> dict[str, dict]:
             if not link or not link.startswith(("https://", "http://")):
                 continue
             image = _feed_item_image(item)
-            if image and index.setdefault(_norm_url(link),
-                                          {"image": image, "credit": ingest_rss._item_credit(item)}) is not None:
+            if not image:
+                continue
+            key = _norm_url(link)
+            # setdefault returns the existing entry when the URL is already
+            # indexed: only a genuinely new key consumes the per-source budget,
+            # so a feed repeating URLs cannot starve later items.
+            if key not in index:
+                index[key] = {"image": image, "credit": ingest_rss._item_credit(item)}
                 added += 1
     return index
 
@@ -631,9 +648,9 @@ def update_media(scope: list[dict], *, offline: bool = False,
                 # immutably with no stale-copy risk.
                 name = f"{hashlib.sha256(raw).hexdigest()[:20]}.{ext}"
                 media_dir.mkdir(parents=True, exist_ok=True)
-                part = media_dir / f".{name}.part"
-                part.write_bytes(raw)
-                part.replace(media_dir / name)
+                # Unique-temp atomic publish: two overlapping runs fetching the
+                # same image must never share one fixed `.part` file.
+                store_io.write_bytes_atomic(media_dir / name, raw)
                 entry.update(reason="publisher og:image" if source == "og:image" else "publisher feed media",
                              image_url=image_url, image_source=source,
                              file=name, bytes=len(raw), format=ext, attempts=attempts)
@@ -690,7 +707,10 @@ def update_media(scope: list[dict], *, offline: bool = False,
             if not path.is_file() or path.is_symlink():
                 continue
             stale_part = path.name.startswith(".") and path.name.endswith(".part")
-            if path.name in referenced or not (stale_part or FILE_RE.fullmatch(path.name)):
+            # Crashed atomic writes leave `<file>.<pid>.<uuid>.tmp`; only prune
+            # when old enough that no overlapping run could still own them.
+            stale_tmp = path.name.endswith(".tmp") and _is_old_tmp(path)
+            if path.name in referenced or not (stale_part or stale_tmp or FILE_RE.fullmatch(path.name)):
                 continue
             try:
                 path.unlink()

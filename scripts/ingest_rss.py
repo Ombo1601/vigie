@@ -125,10 +125,7 @@ def mark_browser_identity(url: str, reason: str) -> None:
         policy = _load_ua_policy()
         policy[host] = {"identity": "browser", "reason": str(reason)[:80],
                         "marked_at": utc_now().isoformat(timespec="seconds")}
-        UA_POLICY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        part = UA_POLICY_PATH.with_name(UA_POLICY_PATH.name + ".tmp")
-        part.write_text(json.dumps(policy, ensure_ascii=False, indent=2), encoding="utf-8")
-        part.replace(UA_POLICY_PATH)
+        store_io.write_json_atomic(UA_POLICY_PATH, policy)
     except OSError:
         pass
 
@@ -219,7 +216,13 @@ def _public_address(address) -> bool:
     return address.is_global and not address.is_multicast
 
 
-def _public_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None):
+# http.client signals "no explicit timeout" with socket's private sentinel.
+# Capture it once with a fallback so a future stdlib rename degrades to
+# "always set the timeout" instead of an AttributeError at import.
+_DEFAULT_TIMEOUT = getattr(socket, "_GLOBAL_DEFAULT_TIMEOUT", object())
+
+
+def _public_connection(address, timeout=_DEFAULT_TIMEOUT, source_address=None):
     """Resolve once, validate every answer, then connect to an exact IP address.
 
     HTTP Host and HTTPS certificate/SNI still use the original hostname. No second
@@ -233,7 +236,7 @@ def _public_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_a
     for family, socktype, proto, _, sockaddr in answers:
         connection = socket.socket(family, socktype, proto)
         try:
-            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+            if timeout is not _DEFAULT_TIMEOUT:
                 connection.settimeout(timeout)
             if source_address:
                 connection.bind(source_address)
@@ -304,11 +307,7 @@ def _load_http_cache() -> dict:
 
 def _save_http_cache(cache: dict) -> None:
     try:
-        path = _http_cache_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        part = path.with_name(path.name + ".tmp")
-        part.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
-        part.replace(path)
+        store_io.write_json_atomic(_http_cache_path(), cache, indent=1)
     except (OSError, ValueError, TypeError):
         pass
 
@@ -323,11 +322,7 @@ def _read_body_cache(url: str) -> bytes | None:
 
 def _write_body_cache(url: str, raw: bytes) -> None:
     try:
-        path = _body_cache_path(url)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        part = path.with_name(path.name + ".tmp")
-        part.write_bytes(raw)
-        part.replace(path)
+        store_io.write_bytes_atomic(_body_cache_path(url), raw)
     except OSError:
         pass
 
@@ -444,7 +439,11 @@ def fetch_bytes(url: str) -> tuple[bytes, str | None]:
                     continue
             if refused:
                 break
-    assert last_err is not None
+    if last_err is None:
+        # Unreachable in practice (candidates is never empty), but `assert`
+        # is stripped under `python -O` and `raise None` would mask the real
+        # failure with a TypeError.
+        raise RuntimeError("fetch failed without a recorded error")
     raise last_err
 
 
@@ -653,7 +652,10 @@ def ingest_one(src: dict, fetched_at: datetime) -> dict:
             "fetched_at": fetched_at.isoformat(),
         }
         err_path = dest_dir / f"{stamp}_error.json"
-        err_path.write_text(json.dumps(err, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            store_io.write_json_atomic(err_path, err)
+        except OSError:
+            pass
         return err
 
     digest = sha256_hex(raw)
@@ -733,7 +735,7 @@ def ingest_one(src: dict, fetched_at: datetime) -> dict:
         ],
     }
     meta_path = dest_dir / f"{stamp}_{digest[:12]}.json"
-    meta_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    store_io.write_json_atomic(meta_path, payload)
     payload["meta_file"] = rel_or_abs(meta_path)
     return payload
 
@@ -827,7 +829,7 @@ def main() -> int:
     stamp = fetched_at.strftime("%Y%m%dT%H%M%SZ")
     run_path = RAW_DIR / f"_run_{stamp}.json"
     run["pruned_snapshots"] = prune_raw_snapshots(now=fetched_at)
-    run_path.write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
+    store_io.write_json_atomic(run_path, run)
     ok_n = sum(1 for r in run["results"] if r["ok"])
     items_n = sum(r.get("item_count") or 0 for r in run["results"])
     print(f"run log: {run_path.relative_to(ROOT)}")

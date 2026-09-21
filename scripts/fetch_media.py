@@ -3,6 +3,11 @@
 Fetches og:image / twitter:image only for what the lookout shows:
 Near me, Province/Linked life-hit crown, fight Stage voices.
 Not all 244. Empty strip when the publisher is silent.
+
+NOTE: the v2 media pipeline (scripts/fetch_brief_media.py, brief-media-v2) is
+the production image collector; this module's main() is legacy and not in the
+pipeline. The network helpers (fetch_html, extract_og, safe_image_url) remain
+the shared, guarded implementation imported by fetch_brief_media.
 """
 from __future__ import annotations
 
@@ -26,6 +31,7 @@ from ingest_rss import (  # noqa: E402
     public_http_url, public_opener, choose_user_agent, mark_browser_identity,
     is_transport_stall, USER_AGENT, FALLBACK_USER_AGENT,
 )
+import store_io  # noqa: E402 (atomic writes for the legacy faces store)
 
 ENRICHED = ROOT / "data" / "normalized" / "latest_enriched.json"
 RANKED = ROOT / "data" / "normalized" / "latest_ranked.json"
@@ -300,7 +306,7 @@ def main() -> int:
         "faces": faces,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    store_io.write_json_atomic(OUT, out)
     print(f"faces -> {OUT.relative_to(ROOT) if OUT.is_relative_to(ROOT) else OUT}")
     print(
         f"  map_scope={len(scope)} entries={len(faces)} with_image={out['with_image']} "

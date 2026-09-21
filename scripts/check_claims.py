@@ -3,10 +3,16 @@ An empty claim set is valid: a feed need not contain quoted speech.
 """
 from __future__ import annotations
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+import store_io
 
 
 def normalized_span(value: object) -> str:
@@ -94,7 +100,7 @@ def main() -> int:
     report = audit_claims(enriched, issues)
     try:
         path = ROOT / "data/normalized/_check_claims.json"
-        path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        store_io.write_json_atomic(path, report)
     except OSError as exc:
         print(f"check_claims: WARN report not written ({exc})")
     print(json.dumps(report, ensure_ascii=False, indent=2))

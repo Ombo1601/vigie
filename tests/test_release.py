@@ -338,5 +338,25 @@ class StageSwapHardening(unittest.TestCase):
         self.assertIn("index.html", manifest["files"])
 
 
+class VercelConfigSync(unittest.TestCase):
+    """The two vercel.json files serve different deploys but must agree on headers.
+
+    Root vercel.json configures the (disabled) git integration; public/vercel.json
+    ships inside the staged release and configures `vercel deploy deploy/public`
+    (headers, immutable media cache). The headers lists are the production
+    security policy — a drift between the two means the reviewed policy is not
+    the shipped policy.
+    """
+
+    def test_headers_are_identical_in_both_configs(self):
+        root_cfg = json.loads((harness.ROOT / "vercel.json").read_text(encoding="utf-8"))
+        shipped_cfg = json.loads((harness.ROOT / "public" / "vercel.json").read_text(encoding="utf-8"))
+        self.assertEqual(shipped_cfg["headers"], root_cfg["headers"])
+
+    def test_git_auto_deploy_stays_disabled(self):
+        root_cfg = json.loads((harness.ROOT / "vercel.json").read_text(encoding="utf-8"))
+        self.assertFalse(root_cfg["git"]["deploymentEnabled"])
+
+
 if __name__ == "__main__":
     unittest.main()

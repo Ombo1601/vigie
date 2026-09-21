@@ -394,7 +394,7 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(rw, dict) or rw.get("method") != ROADWORKS_METHOD:
             atlas = empty_atlas(
                 "Aucune collecte officielle exploitable (données absentes, corrompues "
-                "ou d'une autre méthode) : aucun rapprochement proposé."
+                "ou d’une autre méthode) : aucun rapprochement proposé."
             )
         else:
             issues_doc = _load_json(ISSUES)

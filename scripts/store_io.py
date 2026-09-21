@@ -42,6 +42,24 @@ def write_json_atomic(path: Path, doc, *, indent: int = 2) -> None:
     write_text_atomic(path, json.dumps(doc, ensure_ascii=False, indent=indent))
 
 
+def write_bytes_atomic(path: Path, data: bytes) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        part.write_bytes(data)
+        try:
+            os.replace(part, path)
+        except OSError:
+            path.write_bytes(data)
+    finally:
+        if part.exists():
+            try:
+                part.unlink()
+            except OSError:
+                pass
+
+
 def write_bytes_dedup(path: Path, data: bytes, previous: Path | None = None) -> None:
     """Write a per-run snapshot, hard-linking an identical previous one.
 
@@ -50,9 +68,11 @@ def write_bytes_dedup(path: Path, data: bytes, previous: Path | None = None) -> 
     would otherwise copy the same body every run. A hard link keeps the new
     name and every reader intact at zero extra disk. Linking is best-effort:
     if the filesystem refuses (non-NTFS, cross-volume, permissions) the bytes
-    are written normally, never an error.
+    are written atomically via a unique temp file, never an error and never
+    a truncated snapshot a concurrent reader could observe.
     """
     path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     if previous is not None:
         previous = Path(previous)
         if previous.exists():
@@ -61,4 +81,4 @@ def write_bytes_dedup(path: Path, data: bytes, previous: Path | None = None) -> 
                 return
             except OSError:
                 pass
-    path.write_bytes(data)
+    write_bytes_atomic(path, data)

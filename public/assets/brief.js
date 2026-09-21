@@ -291,8 +291,10 @@
       const t = String(raw || '').trim();
       const u = new URL(/^[a-z][a-z0-9+.-]*:/i.test(t) ? t : 'https://' + t);
       if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+      // Host is case-insensitive; the path is not (servers may serve distinct
+      // resources at /Article and /article), so only the host is folded.
       const host = u.hostname.replace(/^www\./i, '').toLowerCase();
-      const path = (u.pathname.replace(/\/+$/, '') || '/').toLowerCase();
+      const path = u.pathname.replace(/\/+$/, '') || '/';
       const params = new URLSearchParams(u.search);
       [...params.keys()].filter(k => /^utm_/i.test(k) || k === 'fbclid' || k === 'gclid').forEach(k => params.delete(k));
       const query = params.toString();

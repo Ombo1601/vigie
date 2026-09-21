@@ -401,8 +401,7 @@ def collect(sources: list[dict], now: datetime, *, offline: bool = False,
                     "error": f"{type(exc).__name__}: {exc}", "fetched_at": now.isoformat(),
                 }
                 try:
-                    (dest_dir / f"{stamp}_error.json").write_text(
-                        json.dumps(error, ensure_ascii=False, indent=2), encoding="utf-8")
+                    store_io.write_json_atomic(dest_dir / f"{stamp}_error.json", error)
                 except OSError:
                     pass
                 print(f"  FAIL {source_id}: {error['error']} — keeping previous store")
@@ -435,8 +434,7 @@ def collect(sources: list[dict], now: datetime, *, offline: bool = False,
                 "item_count": counts.get("parsed", 0), "parse_error": parse_error,
             }
             try:
-                snapshot.with_suffix(".json").write_text(
-                    json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                store_io.write_json_atomic(snapshot.with_suffix(".json"), meta)
             except OSError as exc:
                 print(f"  WARN {source_id}: meta not archived ({exc}); continuing")
         if parse_error:

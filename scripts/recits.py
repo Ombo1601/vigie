@@ -366,6 +366,17 @@ def emit(issues: list[dict], ranked: list[dict], ledger: dict, roadworks: dict,
         i for i in (issues or [])
         if isinstance(i, dict) and i.get("issue_id")
     ]
+    # A malformed store may repeat an issue_id: keep the first occurrence so
+    # the written pages, the index and the brief's links (same slug function)
+    # all agree instead of linking two cards at one page.
+    seen_ids: set[str] = set()
+    unique: list[dict] = []
+    for iss in dossiers:
+        iid = str(iss.get("issue_id"))
+        if iid not in seen_ids:
+            seen_ids.add(iid)
+            unique.append(iss)
+    dossiers = unique
     eligible = {
         str(c.get("id")): c for c in (ranked or [])
         if isinstance(c, dict) and c.get("id")
@@ -382,27 +393,32 @@ def emit(issues: list[dict], ranked: list[dict], ledger: dict, roadworks: dict,
     out_dir.mkdir(parents=True, exist_ok=True)
     slug_of: dict[str, str] = {}
     written: set[str] = set()
+    written_iids: set[str] = set()
     for iss in sorted(dossiers, key=lambda i: str(i.get("issue_id") or "")):
         iid = str(iss.get("issue_id") or "")
         slug = brief.dossier_slug(iss)
         slug_of[iid] = slug
         if slug in written:
-            continue  # duplicate issue_id in a malformed store: keep the first page
+            continue  # fallback-hash collision: keep the first page
         page = render_recit(
             iss, eligible, ledger, slug=slug,
             rw_ok=rw_ok, edge_streets=edge_streets, edge_issues=edge_issues,
         )
         store_io.write_text_atomic(out_dir / f"{slug}.html", page)
         written.add(f"{slug}.html")
+        written_iids.add(iid)
     for stale in sorted(out_dir.glob("*.html")):
         if stale.name not in written:
             try:
                 stale.unlink()
             except OSError:
                 pass
-    store_io.write_text_atomic(out_index, render_index(dossiers, slug_of))
-    print(f"recits: {len(dossiers)} dossiers, {len(written)} pages -> {out_index}")
-    return {"method": METHOD, "dossiers": len(dossiers), "pages": len(written)}
+    # The index lists only dossiers that actually have a page: a skipped
+    # collision must not link at another dossier's record.
+    indexed = [i for i in dossiers if str(i.get("issue_id")) in written_iids]
+    store_io.write_text_atomic(out_index, render_index(indexed, slug_of))
+    print(f"recits: {len(indexed)} dossiers, {len(written)} pages -> {out_index}")
+    return {"method": METHOD, "dossiers": len(indexed), "pages": len(written)}
 
 
 def main() -> int:

@@ -74,6 +74,8 @@ class _StreetGroup:
             self.event_ids.append(event_id)
 
     def display(self) -> str:
+        if not self.variants:
+            return "voie non précisée"
         return sorted(self.variants.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
 
 
@@ -258,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(rw, dict) or rw.get("method") != ROADWORKS_METHOD:
             verdict = empty_verdict(
                 "Aucune collecte officielle exploitable (données absentes, corrompues "
-                "ou d'une autre méthode) : aucune anomalie mesurée."
+                "ou d’une autre méthode) : aucune anomalie mesurée."
             )
         else:
             verdict = compile_verdict(rw)
@@ -269,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
             shown = OUT_PATH
         print(f"anomalies: {verdict['anomaly_count']} measured "
               f"({len(verdict['anomalies'])} in verdict) -> {shown}")
-    except (OSError, ValueError, TypeError, RecursionError) as exc:
+    except (OSError, ValueError, TypeError, RecursionError, IndexError, KeyError) as exc:
         # Always 0: a missing official feed or an unwritable store must never
         # block the edition.
         print(f"anomalies: FAIL {type(exc).__name__}: {exc} - keeping previous verdict")

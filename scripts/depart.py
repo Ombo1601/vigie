@@ -64,7 +64,7 @@ def _event_when(event: dict) -> str:
 
 def _ordered_events(events: list[dict]) -> list[dict]:
     ordered = sorted(events, key=lambda e: str(e.get("event_id") or ""))
-    ordered.sort(key=lambda e: str(e.get("update_date") or ""), reverse=True)
+    ordered.sort(key=brief._update_key, reverse=True)
     ordered.sort(key=lambda e: brief.RW_SEVERITY.get(str(e.get("vehicle_impact") or ""), 6))
     return ordered
 
@@ -308,7 +308,7 @@ def emit(roadworks: dict, issues: list[dict], ledger: dict, state: dict,
         return {"method": METHOD, "written": False}
     out.parent.mkdir(parents=True, exist_ok=True)
     store_io.write_text_atomic(out, page)
-    print(f"depart: ecran de depart -> {out}")
+    print(f"depart: écran de départ -> {out}")
     return {"method": METHOD, "written": True}
 
 
