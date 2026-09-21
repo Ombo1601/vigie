@@ -47,7 +47,11 @@ ROADS_SIGNAL_METHOD = "roads-signal-v1"
 SITE_URL = "https://vigieqc.com"
 INDEXNOW_KEY = "c977ad1a490feff9553222dafa4921b4"
 INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow"
-INDEXNOW_URLS = (f"{SITE_URL}/", f"{SITE_URL}/explorer.html", f"{SITE_URL}/morning.html")
+INDEXNOW_URLS = (
+    f"{SITE_URL}/", f"{SITE_URL}/explorer.html", f"{SITE_URL}/morning.html",
+    f"{SITE_URL}/registre.html", f"{SITE_URL}/memoire.html",
+    f"{SITE_URL}/dossiers.html", f"{SITE_URL}/partir.html", f"{SITE_URL}/affiche.html",
+)
 LOCK_STALE_SECONDS = 2 * 3600
 LOG_ROTATE_BYTES = 5 * 1024 * 1024  # one previous log kept as refresh.log.1
 TEAM = "deemto"

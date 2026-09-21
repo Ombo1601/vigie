@@ -43,7 +43,16 @@ def _day(value: object) -> str:
 
 def _story(r: dict) -> str:
     src = esc(r.get("source_name") or r.get("source_id") or "")
-    return (f'<li><span class="af-title">{esc(r.get("title"))}</span>'
+    url = brief.safe_url(r.get("url"))
+    title = esc(r.get("title"))
+    # Attribution/link-out is house law on every surface: a sheet read on a
+    # screen must still reach the original. (On paper the wordmark and source
+    # line carry the citation.)
+    inner = (
+        f'<a href="{esc(url)}" rel="noopener noreferrer">{title}</a>'
+        if url else title
+    )
+    return (f'<li><span class="af-title">{inner}</span>'
             f'<span class="af-src">{src} · {_day(r.get("published"))}</span></li>')
 
 
@@ -77,8 +86,12 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
     run = brief.latest_run() if run is None else run
     status = brief.collection_status(run, now)
     edition_at = status.get("at") or generated_at
-    seals = state.get("seals") or []
+    state = state if isinstance(state, dict) else {}
+    seals = state.get("seals") if isinstance(state.get("seals"), list) else []
     seal = seals[-1] if seals else None
+    if not (isinstance(seal, dict) and isinstance(seal.get("seq"), int)
+            and isinstance(seal.get("root"), str)):
+        seal = None
 
     local = [r for r in rows if r.get("geo") == "quebec-city"]
     lead = local[:LEAD_CAP] if local else rows[:LEAD_CAP]
@@ -105,7 +118,8 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
     silent = [r for r in register if r["current"] == "silent"]
     silent_names = ", ".join(esc(r["institution_name"]) for r in silent[:SILENT_NAMES_CAP])
     if len(silent) > SILENT_NAMES_CAP:
-        silent_names += f" et {len(silent) - SILENT_NAMES_CAP} autres"
+        rest = len(silent) - SILENT_NAMES_CAP
+        silent_names += f" et {rest} autre" + ("s" if rest != 1 else "")
     voices_html = (
         f'<p><strong>{len(spoke)}</strong> institution{"s" if len(spoke) != 1 else ""} suivie{"s" if len(spoke) != 1 else ""} '
         f'{"ont" if len(spoke) != 1 else "a"} parlé dans les dossiers de cette édition ; '

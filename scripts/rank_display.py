@@ -178,14 +178,17 @@ def display_geo(c: dict) -> str:
     g = impact_block(c).get("geo") or {}
     if isinstance(g, dict) and g.get("geo"):
         return str(g["geo"]).lower()
-    nest = (c.get("nest_role") or "").lower()
+    # str() before .lower(): a foreign store with a numeric nest_role or an
+    # object geo must degrade, never abort the edition with AttributeError.
+    nest = str(c.get("nest_role") or "").lower()
     if nest == "primary":
         return "quebec-city"
     if nest == "province":
         return "quebec"
     if nest == "linked":
         return "linked"
-    return (c.get("geo") or "linked").lower()
+    geo = c.get("geo")
+    return geo.lower() if isinstance(geo, str) else "linked"
 
 
 def geo_proximity(c: dict) -> float:
@@ -235,6 +238,23 @@ def safe_int(value: object, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError, OverflowError):
         return default
+
+
+TITLE_CAP = resident_brief.TITLE_CAP
+
+
+def title_html(value: object, cap: int = TITLE_CAP) -> str:
+    """Relayed title, escaped and capped at the published limit.
+
+    The explorer is a public surface too: a 301-500-char feed title must not be
+    longer here than on the brief. Truncate before escaping so an entity is
+    never split.
+    """
+    text = resident_brief.sanitize(value if isinstance(value, str) else "")
+    text = text or "(no title)"
+    if len(text) > cap:
+        text = text[: cap - 1].rstrip() + "…"
+    return esc(text)
 
 
 def link_url(value: object) -> str:
@@ -425,16 +445,22 @@ def approach_fp_of(ap: dict) -> str:
 
 
 def format_store_clock(iso: str) -> str:
-    """Compact UTC store clock for the Since-you-left strip."""
+    """Compact UTC store clock for the Since-you-left strip.
+
+    Converts an aware offset to UTC before labelling it (the JS twin does the
+    same); a zoneless stamp is never relabelled UTC.
+    """
     s = str(iso or "").strip()
     if not s:
         return "unknown"
-    # 2026-09-16T22:40:14... → 2026-09-16 22:40 UTC
-    if "T" in s:
-        date, rest = s.split("T", 1)
-        hhmm = rest[:5] if len(rest) >= 5 else rest
-        return f"{date} {hhmm} UTC"
-    return s[:19]
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, OverflowError):
+        return s[:19]
+    if dt.tzinfo is None:
+        return s[:16].replace("T", " ")
+    dt = dt.astimezone(timezone.utc)
+    return f"{dt:%Y-%m-%d %H:%M} UTC"
 
 
 def since_left_delta(prev: list[dict], curr: list[dict]) -> dict:
@@ -715,7 +741,7 @@ def face_img(cid: str | None, faces: dict[str, dict] | None, *, css: str = "face
 
 def card_html(c: dict, continuity: dict | None = None) -> str:
     c = c if isinstance(c, dict) else {}
-    title = esc(c.get("title") or "(no title)")
+    title = title_html(c.get("title"))
     url = esc(link_url(c.get("url")))
     source = esc(c.get("source_name") or c.get("source_id") or "")
     try:
@@ -968,7 +994,7 @@ def issue_stage_html(iss: dict, continuity: dict | None = None, *, panel_id: str
 def near_rail_item(c: dict, continuity: dict | None = None, faces: dict | None = None, *, pin: bool = True) -> str:
     """Compact Near me approach for the persistent right rail."""
     c = c if isinstance(c, dict) else {}
-    title = esc(c.get("title") or "(no title)")
+    title = title_html(c.get("title"))
     url = esc(link_url(c.get("url")))
     source = esc(c.get("source_name") or c.get("source_id") or "")
     geo = esc(display_geo(c))
@@ -1011,7 +1037,7 @@ def near_rail_item(c: dict, continuity: dict | None = None, faces: dict | None =
 def news_deck_html(c: dict, continuity: dict | None = None) -> str:
     """Mobile deck card for Near me."""
     c = c if isinstance(c, dict) else {}
-    title = esc(c.get("title") or "(no title)")
+    title = title_html(c.get("title"))
     url = esc(link_url(c.get("url")))
     source = esc(c.get("source_name") or c.get("source_id") or "")
     try:
@@ -1279,7 +1305,7 @@ def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None
         moved_bits = []
         for c in demoted_booth_items:
             cid = str(c.get("id") or "").strip()
-            title = esc((c.get("title") or "(no title)")[:72])
+            title = title_html(c.get("title"), 72)
             if cid and cid in pinned_ids:
                 moved_bits.append(
                     f"<li><a class='moved-pin' href=\"#pin-{esc(cid)}\">{title}</a></li>"
@@ -2451,13 +2477,41 @@ def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None
 </html>
 """
 
+def _load_candidate_store(path: Path) -> list[dict] | None:
+    """Read a candidate/enriched store, or None when unreadable/misshapen.
+
+    The primary store is the one input that must never traceback: a truncated
+    JSON or a foreign shape (list, scalar entries) falls back to the other
+    store, and a clear diagnosis stops the chain if neither is usable.
+    """
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        rows = payload.get("candidates")
+    else:
+        return None
+    if not isinstance(rows, list):
+        return None
+    return [c for c in rows if isinstance(c, dict)]
+
+
 def main() -> None:
-    src = ENRICHED if ENRICHED.exists() else CANDIDATES
-    if not src.exists():
-        raise SystemExit(f"Missing {CANDIDATES}. Run normalize first.")
-    payload = json.loads(src.read_text(encoding="utf-8"))
+    candidates: list[dict] | None = None
+    src: Path | None = None
+    for path in (ENRICHED, CANDIDATES):
+        if not path.exists():
+            continue
+        loaded = _load_candidate_store(path)
+        if loaded is not None:
+            candidates, src = loaded, path
+            break
+    if candidates is None:
+        raise SystemExit(f"No readable candidates in {CANDIDATES}. Run normalize first.")
     print(f"rank input: {src}")
-    candidates = payload.get("candidates") or []
     now = datetime.now(timezone.utc)
     ranked = []
     for c in candidates:
@@ -2508,7 +2562,7 @@ def main() -> None:
         try:
             loaded = json.loads(ROADWORKS.read_text(encoding="utf-8"))
             roadworks = loaded if isinstance(loaded, dict) else {}
-        except ValueError:
+        except (OSError, ValueError, RecursionError):
             roadworks = {}
         if roadworks:
             print(f"roadworks: {len(roadworks.get('events') or [])} active events from {ROADWORKS}")
@@ -2519,7 +2573,7 @@ def main() -> None:
         try:
             loaded = json.loads(CIVIC.read_text(encoding="utf-8"))
             civic = loaded if isinstance(loaded, dict) else {}
-        except ValueError:
+        except (OSError, ValueError, RecursionError):
             civic = {}
         if civic:
             print(f"civic: {len(civic.get('events') or [])} consultations from {CIVIC}")
@@ -2532,7 +2586,7 @@ def main() -> None:
             return {}
         try:
             loaded = json.loads(path.read_text(encoding="utf-8"))
-        except ValueError:
+        except (OSError, ValueError, RecursionError):
             return {}
         return loaded if isinstance(loaded, dict) else {}
 
@@ -2595,16 +2649,27 @@ def main() -> None:
     import registre
     import substrate
 
-    try:
-        state = registre.emit(issues_doc, roadworks)
-        memoire.emit(state, issues)
-        substrate.emit(ranked, issues, ledger, roadworks, state, now.isoformat())
-        recits.emit(issues, ranked, ledger, roadworks, edges)
-        method_site.emit()
-        depart.emit(roadworks, issues, ledger, state, now.isoformat())
-        affiche.emit(ranked, issues, roadworks, state, now.isoformat())
-    except Exception as exc:  # noqa: BLE001 - fail-soft by house law, but loudly
-        print(f"registre/memoire/substrate/recits/methode/depart/affiche: FAILED ({type(exc).__name__}: {exc}); brief still rendered")
+    # Each emitter is independently fail-soft: one fault is printed and the
+    # others still run, so a registre fault can never leave a fresh brief
+    # beside a stale memory/index (the "all seven are fail-soft" house law).
+    def _emit(name, fn):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - diagnosed, never silent
+            print(f"{name}: FAILED ({type(exc).__name__}: {exc}); brief still rendered")
+            return None
+
+    state = _emit("registre", lambda: registre.emit(issues_doc, roadworks))
+    if not isinstance(state, dict):
+        # Registre failed: render the rest from the on-disk (last good) state
+        # instead of skipping every later emitter.
+        state = registre.load_state()
+    _emit("memoire", lambda: memoire.emit(state, issues))
+    _emit("substrate", lambda: substrate.emit(ranked, issues, ledger, roadworks, state, now.isoformat()))
+    _emit("recits", lambda: recits.emit(issues, ranked, ledger, roadworks, edges))
+    _emit("methode", method_site.emit)
+    _emit("depart", lambda: depart.emit(roadworks, issues, ledger, state, now.isoformat()))
+    _emit("affiche", lambda: affiche.emit(ranked, issues, roadworks, state, now.isoformat()))
 
 
 if __name__ == "__main__":

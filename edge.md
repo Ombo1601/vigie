@@ -55,8 +55,9 @@ It is **not**:
 
 ## Determinism and fail-soft
 
-- No wall clock: `built_at` is the roadworks collection stamp. A render-only
-  rebuild is byte-identical.
+- No wall clock: `built_at` is the newer of the roadworks collection stamp and
+  the dossiers' `clustered_at` — both store facts. A render-only rebuild is
+  byte-identical.
 - The atlas is rebuilt from scratch each edition; it accumulates nothing, so
   it can never inflate.
 - Absent, corrupt or foreign-method stores produce an empty atlas and exit 0.

@@ -472,8 +472,10 @@ class RoadworksRender(unittest.TestCase):
         ledger = {"status": "proposed", "has_previous": True, "new": [], "developed": [],
                   "quiet": [], "new_count": 0, "developed_count": 0, "quiet_count": 0}
         page = brief.render_brief([], TS, [], _run(), ledger=ledger, roadworks=_store())
-        self.assertLess(page.index('id="essentiel"'), page.index('id="travaux"'))
-        self.assertLess(page.index('id="travaux"'), page.index('id="changements"'))
+        # The departure strip (roadworks) answers the most urgent question first —
+        # it precedes the editorial content (essentiel/stories) and changes.
+        self.assertLess(page.index('id="travaux"'), page.index('id="essentiel"'))
+        self.assertLess(page.index('id="essentiel"'), page.index('id="changements"'))
 
     def test_roadworks_is_not_promoted_into_the_masthead(self):
         # Design law: the structural / roadworks reading never reaches the hero

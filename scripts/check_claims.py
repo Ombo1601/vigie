@@ -88,7 +88,7 @@ def main() -> int:
     try:
         enriched = json.loads((ROOT / "data/normalized/latest_enriched.json").read_text(encoding="utf-8"))
         issues = json.loads((ROOT / "data/issues/latest_issues.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         print(f"check_claims: FAIL unreadable store ({type(exc).__name__}: {exc})")
         return 1
     report = audit_claims(enriched, issues)

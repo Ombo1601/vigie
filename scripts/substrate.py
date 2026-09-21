@@ -16,7 +16,6 @@ feeds. Stdlib only; no network.
 """
 from __future__ import annotations
 
-import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -141,6 +140,14 @@ def dossier_view(issue: dict, names: dict, cap: int) -> dict:
     }
     if tracking.get("editions_seen") is not None:
         view["tracking"] = {k: tracking.get(k) for k in ("first_seen", "last_seen", "editions_seen", "editions_missed") if tracking.get(k) is not None}
+    # Publisher text must travel with its owner: an attributed dossier exposes
+    # the source name + URL so a machine can cite it, never just the headline.
+    if view["label_kind"] == "attributed_headline":
+        source = issue.get("label_source")
+        if isinstance(source, dict):
+            view["label_source"] = {
+                k: source.get(k) for k in ("source_id", "source_name", "url") if source.get(k)
+            }
     return view
 
 
@@ -210,9 +217,16 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
             if iid in by_id:
                 view = dossier_view(by_id[iid], names, DELTA_ITEMS_CAP)
             else:
-                # Quiet dossiers left the collection: identity and question only.
+                # Quiet dossiers left the collection: identity, label and owner
+                # only — never a publisher headline without its source.
                 view = {"issue_id": iid, "question": _plain(entry.get("question"), registre.QUESTION_CAP),
+                        "label_kind": str(entry.get("label_kind") or ""),
                         "geo_focus": sorted(str(g) for g in (entry.get("geo_focus") or []) if isinstance(g, str))}
+                source = entry.get("label_source")
+                if isinstance(source, dict) and view["label_kind"] == "attributed_headline":
+                    view["label_source"] = {
+                        k: source.get(k) for k in ("source_id", "source_name", "url") if source.get(k)
+                    }
             if key == "developed" and isinstance(entry.get("delta"), dict):
                 view["delta"] = dict(entry["delta"])
             out.append(view)
@@ -338,7 +352,15 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
         lines.append("")
         for key, label in (("new", "Nouveaux dossiers"), ("developed", "Dossiers développés"), ("quiet", "Disparus de cette collecte (jamais « résolus »)")):
             entries = [e for e in (ledger.get(key) or []) if isinstance(e, dict)]
-            lines.append(f"- {label} : {len(entries)}" + (" — " + "; ".join(_md(e.get("question"), 120) for e in entries[:6]) if entries else ""))
+            names_out = []
+            for e in entries[:6]:
+                if str(e.get("label_kind") or "") == "attributed_headline":
+                    src = e.get("label_source") if isinstance(e.get("label_source"), dict) else {}
+                    owner = _md(src.get("source_name") or src.get("source_id") or "", 120)
+                    names_out.append(f"titre d’un éditeur ({owner})" if owner else "titre d’un éditeur")
+                else:
+                    names_out.append(_md(e.get("question"), 120))
+            lines.append(f"- {label} : {len(entries)}" + (" — " + "; ".join(names_out) if names_out else ""))
         lines.append("")
 
     rw = roadworks_view(roadworks, MD_ROADS_CAP)

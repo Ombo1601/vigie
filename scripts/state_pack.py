@@ -105,10 +105,28 @@ def _media() -> list[Path]:
 
 
 def _ops() -> list[Path]:
+    """Ops ledgers, minus anything that is process state, not a fact.
+
+    The refresh lock (`refresh.lock` and its `.takeover` sidecar) must never
+    travel in the archive: a run killed before its `finally` would otherwise
+    pack the lock, CI would unpack it with a fresh mtime, and every later
+    refresh would refuse to run ("another refresh is already running") while
+    reporting success. Partial writes (`.tmp`) are never a store either.
+    """
     ops = DATA / "ops"
     if not ops.is_dir():
         return []
-    return [p for p in sorted(ops.iterdir()) if p.is_file()]
+    return [
+        p for p in sorted(ops.iterdir())
+        if p.is_file() and not _is_process_state(p.name)
+    ]
+
+
+_PROCESS_STATE_SUFFIXES = (".lock", ".lock.takeover", ".takeover", ".tmp")
+
+
+def _is_process_state(name: str) -> bool:
+    return name.startswith(".") or name.endswith(_PROCESS_STATE_SUFFIXES)
 
 
 def members() -> list[Path]:
@@ -139,12 +157,20 @@ def pack(out_path: Path) -> int:
 def unpack(in_path: Path) -> int:
     src = Path(in_path)
     count = 0
+    data_root = (ROOT / "data").resolve()
     with tarfile.open(src, "r:gz") as tar:
         for info in tar.getmembers():
             name = info.name.replace("\\", "/")
+            # Mirror the pack-side filter: an archive packed by an older run can
+            # still carry refresh.lock, and unpacking it with a fresh mtime
+            # would silently skip every future refresh.
+            if _is_process_state(Path(name).name):
+                continue
             target = (ROOT / name).resolve()
-            # Refuse absolute paths and traversal outside the repo.
-            if name.startswith("/") or not target.is_relative_to(ROOT.resolve()):
+            # A state snapshot only ever carries data/ inputs. Refuse absolute
+            # paths, traversal, and any member that would overwrite code or
+            # method files (a compromised state asset must not become RCE).
+            if name.startswith("/") or not target.is_relative_to(data_root):
                 raise ValueError(f"unsafe archive member: {name}")
             if info.isdir():
                 continue

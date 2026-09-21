@@ -152,7 +152,11 @@ class BeaconRender(unittest.TestCase):
 
     def test_beacon_never_reaches_the_first_viewport(self):
         page = _render(roadworks=_store(), anomalies=_verdict([_anomaly()]))
-        self.assertLess(page.index('id="essentiel"'), page.index('id="anomalies"'))
+        # The beacon sits inside the roadworks section, after the sketch
+        # (>320 px SVG), diff summary and corridors. It is never the first
+        # viewport, even with the departure strip preceding editorial content.
+        self.assertLess(page.index('id="travaux"'), page.index('id="anomalies"'))
+        self.assertIn('<svg', page[:page.index('id="anomalies"')])
 
     def test_xss_in_verdict_is_escaped(self):
         row = _anomaly(claim='<script>alert(1)</script>', label='<b>Boom</b>',

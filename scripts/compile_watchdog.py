@@ -64,7 +64,7 @@ DISK_WATCH_BYTES = 2 * 1024 ** 3
 def _load_json(path: Path) -> dict:
     try:
         doc = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return {}
     return doc if isinstance(doc, dict) else {}
 
@@ -143,7 +143,10 @@ def read_refresh_log(path: Path = REFRESH_LOG, tail: int = LOG_TAIL_LINES,
         if not msg.startswith("FAIL"):
             continue
         ts = _parse_ts(stamp)
-        if ts is None or anchor is None or (anchor - ts).days <= window_days:
+        # total_seconds, not .days: `.days` floors toward zero, so a FAIL
+        # 7.9 days old passed a 7-day window as if it were 7.0.
+        if (ts is None or anchor is None
+                or (anchor - ts).total_seconds() <= window_days * 86400):
             fails += 1
             if i > last_ok_index:
                 fails_since_ok += 1

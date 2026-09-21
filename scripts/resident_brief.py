@@ -220,7 +220,9 @@ def prepare_items(ranked: list[dict], now: datetime) -> tuple[list[dict], int]:
         url = safe_url(item.get("url"))
         title = plain(item.get("title"))
         if len(title) > TITLE_CAP:
-            title = title[:TITLE_CAP].rstrip() + "…"
+            # The ellipsis counts: the relayed title stays within the published
+            # cap (LEGAL_RISK.md "≤300 chars"), never one over.
+            title = title[:TITLE_CAP - 1].rstrip() + "…"
         when = parse_date(item.get("published_at"))
         if not title or not url:
             excluded += 1
@@ -229,6 +231,10 @@ def prepare_items(ranked: list[dict], now: datetime) -> tuple[list[dict], int]:
             excluded += 1
             continue
         if url in seen:
+            # Syndication: a second row for the same canonical URL is dropped,
+            # but it is still an article excluded from this point, so the
+            # published "écartés" counter stays honest.
+            excluded += 1
             continue
         seen.add(url)
         enrich = item.get("enrich")
@@ -533,24 +539,30 @@ def dossier_voices_html(issue: dict) -> str:
             f'<li class="dv-row dv-spoke">{chip}<span class="dv-inst">{esc(name)}</span>'
             f'<span class="dv-state">{state}</span></li>'
         )
-    quiet: list[str] = []
+    quiet_names: list[str] = []
+    quiet_rows: list[dict] = []
     for entry in (silence.get("silent") or []):
         if not isinstance(entry, dict):
             continue
         name = str(
             entry.get("institution_name") or entry.get("source_name") or entry.get("source_id") or ""
         ).strip()
-        if name and name not in spoke_names and name not in quiet:
-            quiet.append(name)
-    quiet.sort(key=lambda value: value.casefold())
-    for name in quiet:
+        if name and name not in spoke_names and name not in quiet_names:
+            quiet_names.append(name)
+            quiet_rows.append({
+                "name": name,
+                "official": str(entry.get("source_kind") or "").lower() == "official",
+            })
+    quiet_rows.sort(key=lambda row: row["name"].casefold())
+    for row in quiet_rows:
+        chip = '<span class="dv-kind">officiel</span>' if row["official"] else ""
         rows.append(
-            f'<li class="dv-row dv-quiet"><span class="dv-inst">{esc(name)}</span>'
+            f'<li class="dv-row dv-quiet">{chip}<span class="dv-inst">{esc(row["name"])}</span>'
             '<span class="dv-state">n’a pas parlé dans cette collecte</span></li>'
         )
     if not rows:
         return ""
-    n_spoke, n_quiet = len(spoke_names), len(quiet)
+    n_spoke, n_quiet = len(spoke_names), len(quiet_names)
     head = (
         f'{n_spoke} institution{"s" if n_spoke != 1 else ""} '
         f'{"ont" if n_spoke != 1 else "a"} parlé · '
@@ -566,12 +578,16 @@ def dossier_voices_html(issue: dict) -> str:
 
 
 def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
-                 edge_issues: dict | None = None) -> str:
+                  edge_issues: dict | None = None) -> str:
     """One dossier: the question, who spoke, who stayed silent, sources to compare.
 
-    Grouping is never a contradiction; absence is never proven editorial silence;
-    several media are never several independent confirmations. Judgment stays with
-    the reader. A malformed store entry is skipped, never fatal.
+    Reading order: framing meta (pourquoi ici, promesse, suivi), then the
+    verbatim headlines (the evidence), then the full chambre (roster), then the
+    official-only silence emphasis. This mirrors the record page (voices before
+    roster) and keeps the glance in the card head. Grouping is never a
+    contradiction; absence is never proven editorial silence; several media are
+    never several independent confirmations. Judgment stays with the reader.
+    A malformed store entry is skipped, never fatal.
     """
     issue = issue if isinstance(issue, dict) else {}
     question = esc(issue.get("question") or "Sujet suivi")
@@ -582,6 +598,14 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
     }
     spoke_names.discard("")
     spoke_count = safe_int(issue.get("source_count"), len(spoke_names))
+    silence = issue.get("silence") or {}
+    if not isinstance(silence, dict):
+        silence = {}
+    silent_count = len([s for s in (silence.get("silent") or []) if isinstance(s, dict)])
+    silent_names = [
+        str(s.get("institution_name") or s.get("source_name") or s.get("source_id") or "").strip()
+        for s in (silence.get("silent") or []) if isinstance(s, dict)
+    ]
     headlines_rows = _headline_rows(issue)
     seen_inst: list[str] = []
     face: list[dict] = []
@@ -610,11 +634,9 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
         "pas un verdict.</p>"
     )
     search_blob = folded(
-        str(issue.get("question") or "") + " " + " ".join(sorted(spoke_names))
+        str(issue.get("question") or "") + " "
+        + " ".join(sorted(spoke_names | {name for name in silent_names if name}))
     )
-    silence = issue.get("silence") or {}
-    if not isinstance(silence, dict):
-        silence = {}
     quiet = [
         str(s.get("institution_name") or s.get("source_id") or "").strip()
         for s in (silence.get("silent") or [])
@@ -624,8 +646,7 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
     silence_line = (
         '<p class="dossier-silence">Officiellement muets dans cette collecte : <strong>'
         + " · ".join(esc(n) for n in quiet[:3])
-        + '</strong>. <span class="fine">Une absence dans nos flux n’est pas un silence '
-        'éditorial prouvé, et ce n’est pas un indicateur de biais.</span></p>'
+        + "</strong>.</p>"
     ) if quiet else ""
     remix_line = (
         '<p class="dossier-remix fine">Aucune source officielle sur ce dossier — '
@@ -640,16 +661,25 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
         + "</p>"
     ) if units else ""
     edge_line = dossier_edge_line(issue.get("issue_id"), edge_streets or {}, edge_issues or {})
+    voice_bars = (
+        '<span class="dossier-viz" aria-hidden="true"><span class="dossier-viz-bar" '
+        f'style="--voices:{spoke_count};--silent:{silent_count}" '
+        f'title="{spoke_count} ont parlé · {silent_count} n\'ont pas parlé"></span></span>'
+    )
     return (
         f'<article class="dossier" id="dossier-{esc(_issue_dom_id(issue))}" '
         f'data-nest="{esc(nest)}" data-issue-id="{esc(_issue_dom_id(issue))}" '
+        f'data-voices="{spoke_count}" data-silent="{silent_count}" '
         f'data-search="{esc(search_blob)}">'
-        f'<div class="dossier-head"><span class="dossier-nest">{esc(NEST_LABELS[nest])}</span>'
-        f'<span class="dossier-count">{spoke_count} sources · rapprochement proposé</span>'
+        f'<div class="dossier-head">{voice_bars}'
+        f'<span class="dossier-nest">{esc(NEST_LABELS[nest])}</span>'
+        f'<span class="dossier-count">{spoke_count} ont parlé · '
+        f'{silent_count} n\'ont pas parlé</span>'
         f'<a class="recit-more" href="{esc(dossier_page_path(issue))}">Récit complet ↗</a></div>'
         f'<h3 class="dossier-q">{question}</h3>{why}{promesse.html_of(issue)}'
-        f"{tracking_html(issue)}{dossier_timeline_html(issue)}{dossier_voices_html(issue)}"
-        f"{headlines}{sources}{silence_line}{remix_line}{units_line}{edge_line}"
+        f"{tracking_html(issue)}{dossier_timeline_html(issue)}"
+        f"{headlines}{sources}{dossier_voices_html(issue)}"
+        f"{silence_line}{remix_line}{units_line}{edge_line}"
         f"</article>"
     )
 
@@ -718,6 +748,17 @@ def _delta_text(delta: dict | None) -> str:
     return " · ".join(parts)
 
 
+def _ledger_label(entry: dict) -> str:
+    """Reader label for a change-ledger row: Vigie's own question, or — for a
+    dossier labelled by an attributed publisher headline — a neutral label
+    naming the source instead of reproducing (and re-attributing) the title."""
+    if str(entry.get("label_kind") or "") == "attributed_headline":
+        source = entry.get("label_source") if isinstance(entry.get("label_source"), dict) else {}
+        name = plain(source.get("source_name") or source.get("source_id") or "un éditeur")
+        return f"Titre d’un éditeur ({name})"
+    return str(entry.get("question") or "Dossier suivi")
+
+
 def change_section(ledger: dict | None) -> str:
     """Editorial “what changed in the city since the last edition” — public.
 
@@ -730,9 +771,10 @@ def change_section(ledger: dict | None) -> str:
     ledger = ledger or {}
     if not ledger.get("has_previous"):
         return ""
-    new = ledger.get("new") or []
-    developed = ledger.get("developed") or []
-    quiet = ledger.get("quiet") or []
+    # A corrupt/older ledger may carry scalars; only dossier objects are facts.
+    new = [e for e in (ledger.get("new") or []) if isinstance(e, dict)]
+    developed = [e for e in (ledger.get("developed") or []) if isinstance(e, dict)]
+    quiet = [e for e in (ledger.get("quiet") or []) if isinstance(e, dict)]
     if not (new or developed or quiet):
         body = (
             '<p class="no-data">Aucun dossier n’a changé depuis la dernière édition '
@@ -743,16 +785,19 @@ def change_section(ledger: dict | None) -> str:
         blocks: list[str] = []
 
         def truncated(total: int, shown: int = 6) -> str:
+            rest = total - shown
+            if rest <= 0:
+                return ""
+            label = "autre" if rest == 1 else "autres"
             return (
-                f'<p class="fine">+ {total - shown} autres dans les données'
+                f'<p class="fine">+ {rest} {label} dans les données'
                 " de cette édition.</p>"
-                if total > shown else ""
             )
 
         if new:
             items = "".join(
                 '<li><span class="chg-tag chg-new">Nouveau</span>'
-                f'<a href="#dossiers">{esc(e.get("question") or "Dossier suivi")}</a></li>'
+                f'<a href="#dossiers">{esc(_ledger_label(e))}</a></li>'
                 for e in new[:6]
             )
             blocks.append(
@@ -762,7 +807,7 @@ def change_section(ledger: dict | None) -> str:
         if developed:
             items = "".join(
                 '<li><span class="chg-tag chg-dev">Développé</span>'
-                f'<a href="#dossiers">{esc(e.get("question") or "Dossier suivi")}</a>'
+                f'<a href="#dossiers">{esc(_ledger_label(e))}</a>'
                 f'<span class="chg-delta">{esc(_delta_text(e.get("delta")))}</span></li>'
                 for e in developed[:6]
             )
@@ -773,7 +818,7 @@ def change_section(ledger: dict | None) -> str:
         if quiet:
             items = "".join(
                 '<li><span class="chg-tag chg-quiet">Retiré</span>'
-                f'<span class="chg-q">{esc(e.get("question") or "Dossier suivi")}</span></li>'
+                f'<span class="chg-q">{esc(_ledger_label(e))}</span></li>'
                 for e in quiet[:6]
             )
             blocks.append(
@@ -1265,9 +1310,11 @@ def roadworks_section(rw: dict | None, now: datetime, anomalies: dict | None = N
     count_note = f"{count} entrave déclarée<br>du flux officiel." if count == 1 else f"{count} entraves déclarées<br>du flux officiel."
     if ordered:
         listing = f'<ul class="rw-list">{cards}</ul>'
+        rest = count - RW_DISPLAY_CAP
         more = (
-            f'<p class="rw-more">+ {count - RW_DISPLAY_CAP} autres entraves déclarées dans cette collecte.</p>'
-            if count > RW_DISPLAY_CAP else ""
+            f'<p class="rw-more">+ {rest} autre{"s" if rest != 1 else ""} entrave'
+            f'{"s" if rest != 1 else ""} déclarée{"s" if rest != 1 else ""} dans cette collecte.</p>'
+            if rest > 0 else ""
         )
     else:
         listing = (
@@ -1484,8 +1531,10 @@ def article_html(item: dict, index: int, related: list[dict], media: dict | None
     geo = {"quebec-city": "Québec et environs", "quebec": "Au Québec", "linked": "Ailleurs"}.get(item["geo"], "Ailleurs")
     topic = TOPICS.get(item["topics"][0], "Vie locale")
     summary = item["summary"]
+    # The ellipsis is part of the displayed excerpt: keep the whole thing
+    # within the published ≤240-char cap.
     truncated = len(summary) > 240
-    excerpt_base = summary[:240].rsplit(" ", 1)[0] if truncated else summary
+    excerpt_base = summary[:239].rsplit(" ", 1)[0] if truncated else summary
     excerpt = excerpt_base + "…" if truncated else summary
     excerpt_html = f'<p class="excerpt">{esc(excerpt)}</p><span class="excerpt-label">Extrait du flux de {source}</span>' if excerpt else '<p class="excerpt-label">Le flux ne fournit pas de résumé. Consultez l’article original.</p>'
     # Attribution law (LEGAL_RISK.md R1): the author name when the publisher's
@@ -1546,13 +1595,17 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
         counts = roadworks.get("counts") if isinstance(roadworks.get("counts"), dict) else {}
         active = safe_int(counts.get("active"))
         fetched = parse_date(roadworks.get("fetched_at"))
-        age = (now - fetched).total_seconds() if fetched else None
-        stale = age is None or age > 6 * 3600 or age < -300
-        if active or stale:
-            text = (f"<strong>{active}</strong> entrave{'s' if active != 1 else ''} "
-                    f"déclarée{'s' if active != 1 else ''} par la Ville"
-                    + (", collecte à actualiser." if stale else " dans la dernière collecte."))
-            items.append(_glance_item("Travaux", text, "#travaux"))
+        # roadworks_section renders only with a parseable collection stamp, so
+        # an unstamped store must not emit a `#travaux` glance (dead anchor and
+        # a "0 entraves" line that was never measured).
+        if fetched is not None:
+            age = (now - fetched).total_seconds()
+            stale = age > 6 * 3600 or age < -300
+            if active or stale:
+                text = (f"<strong>{active}</strong> entrave{'s' if active != 1 else ''} "
+                        f"déclarée{'s' if active != 1 else ''} par la Ville"
+                        + (", collecte à actualiser." if stale else " dans la dernière collecte."))
+                items.append(_glance_item("Travaux", text, "#travaux"))
     civic_fetched = parse_date(civic.get("fetched_at")) if isinstance(civic, dict) else None
     if (isinstance(civic, dict) and civic.get("method") == "civic-html-v1"
             and civic_fetched is not None):
@@ -1611,6 +1664,100 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
     return ('<nav class="glance" aria-label="En un coup d’œil">' + "".join(items) + "</nav>")
 
 
+def silence_bar(issues: list[dict]) -> str:
+    """The silence bar — Vigie's most radical innovation made visible.
+
+    A horizontal strip showing every followed institution and whether it spoke
+    or stayed silent across the edition's dossiers. Spoke = accent (present),
+    silent = muted (absent from the collected feeds — never a verdict).
+    Renders only when at least two institutions were tracked across dossiers.
+    """
+    spoke: dict[str, dict] = {}
+    silent: dict[str, dict] = {}
+    for iss in issues or []:
+        if not isinstance(iss, dict):
+            continue
+        for tension in iss.get("tensions") or []:
+            if not isinstance(tension, dict):
+                continue
+            name = str(tension.get("institution_name") or "").strip()
+            kind = str(tension.get("source_kind") or "").lower()
+            if name and name not in spoke:
+                spoke[name] = {"kind": kind, "count": spoke.get(name, {}).get("count", 0) + 1}
+            elif name:
+                spoke[name]["count"] += 1
+        silence = iss.get("silence") if isinstance(iss.get("silence"), dict) else {}
+        for entry in silence.get("silent") or []:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("institution_name") or "").strip()
+            kind = str(entry.get("source_kind") or "").lower()
+            if name and name not in spoke and name not in silent:
+                silent[name] = {"kind": kind, "count": 1}
+            elif name and name not in spoke:
+                silent[name]["count"] = silent[name].get("count", 0) + 1
+    n_spoke = len(spoke)
+    n_silent = len(silent)
+    if n_spoke + n_silent < 2:
+        return ""
+    # One measured instrument strip: a ruled ledger line, not a chip cloud.
+    # Spoke names carry a present tick; quiet names sit muted. The count line
+    # is the fact; the names are its evidence; absence is named, never hidden.
+    def _name_list(names: dict, spoken: bool) -> str:
+        out = []
+        for name in sorted(names, key=lambda n: n.casefold()):
+            official = names[name]["kind"] == "official"
+            mark = "●" if spoken else "·"
+            cls = "sb-name sb-official" if official else "sb-name"
+            title = " institution officielle" if official else ""
+            out.append(f'<li class="{cls}" title="{esc(name)}{title}">{esc(name)}</li>')
+        return "".join(out)
+
+    spoke_names = _name_list(spoke, True)
+    quiet_names = _name_list(silent, False)
+    return (
+        '<section class="silence-bar" id="silence" aria-label="Qui a parlé, qui n\'a pas parlé" data-cmdk="Qui a parlé">'
+        '<div class="bar-header"><p class="eyebrow">QUI A PARLÉ · QUI N\'A PAS PARLÉ</p>'
+        f'<p class="bar-summary"><strong>{n_spoke}</strong> institution{"s" if n_spoke != 1 else ""} '
+        f'{"ont" if n_spoke != 1 else "a"} parlé dans les dossiers · '
+        f'<strong>{n_silent}</strong> n\'{"ont" if n_silent != 1 else "a"} pas parlé '
+        'dans cette édition.</p></div>'
+        '<div class="sb-ledger">'
+        f'<div class="sb-row sb-spoke"><span class="sb-row-label">Ont parlé</span><ul class="sb-names">{spoke_names}</ul></div>'
+        f'<div class="sb-row sb-quiet"><span class="sb-row-label">N\'ont pas parlé</span><ul class="sb-names">{quiet_names}</ul></div>'
+        '</div>'
+        '<p class="bar-note fine">Absence dans nos flux, pas un silence éditorial prouvé. '
+        '<a href="/registre.html">Le registre garde la trace scellée ↗</a></p>'
+        '</section>'
+    )
+
+
+def load_registre_checkpoint() -> dict:
+    """Read the registre checkpoint for the seal line.
+
+    Returns a dict with chain_size, root (first 8 chars for display), and
+    edition stamp, or an empty dict when no checkpoint exists yet. Never
+    blocks the render — the seal line shows the registre link either way.
+    """
+    path = ROOT / "public" / "registre" / "checkpoint.txt"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        return {}
+    if len(lines) < 3:
+        return {}
+    root = lines[2].strip()
+    if not root or len(root) < 8:
+        return {}
+    size = lines[1].strip() if len(lines) > 1 else ""
+    edition_line = ""
+    for line in lines[3:]:
+        if line.startswith("edition "):
+            edition_line = line[8:].strip()
+            break
+    return {"size": size, "root_short": root[:8], "root_full": root, "edition": edition_line}
+
+
 def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run: dict | None = None, ledger: dict | None = None, roadworks: dict | None = None, media: dict | None = None, anomalies: dict | None = None, edges: dict | None = None, civic: dict | None = None) -> str:
     now = parse_date(generated_at) or datetime.now(timezone.utc)
     rows, excluded = prepare_items(ranked, now)
@@ -1660,7 +1807,7 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
     filters = "".join(_topic_chip(k, v) for k, v in primary_topics)
     filters_more = "".join(_topic_chip(k, v) for k, v in secondary_topics)
     service_html = "".join(f'<a class="service" href="{url}" rel="noopener noreferrer"><span class="service-index">{num} / {esc(eyebrow)}</span><h3>{esc(title)} <span aria-hidden="true">↗</span></h3><p>{esc(desc)}</p></a>' for num, eyebrow, title, desc, url in SERVICES)
-    outcomes = {r.get("source_id"): r for r in run.get("results", []) if isinstance(r, dict)}
+    outcomes = {r.get("source_id"): r for r in (run.get("results") or []) if isinstance(r, dict)}
     source_rows = "".join(f'<li><span>{esc(sid)}</span><span>{"Collecté" if outcomes.get(sid, {}).get("ok") and not outcomes.get(sid, {}).get("parse_error") else "Indisponible"}</span></li>' for sid in (run.get("enabled_rss") or list(outcomes)))
     status_label = "État des sources inconnu" if not status["total"] else "Collecte indisponible" if not status["ok"] else "Collecte à actualiser" if status["stale"] else "Collecte partielle" if status["partial"] else "Dernière collecte"
     coverage = f'{status["ok"]} flux disponibles sur {status["total"]}' if status["total"] else 'État des sources inconnu'
@@ -1670,6 +1817,8 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
     dossier_html = dossiers_section(issues, eligible, edge_streets, edge_issues)
     glance = digest_html(rows, status, ledger, roadworks, issues, now,
                          has_changes=bool(change_html), civic=civic)
+    bar = silence_bar(issues)
+    reg = load_registre_checkpoint()
     services_fine = (
         "Ces liens ouvrent les services officiels. Les consultations listées plus haut "
         "sont collectées telles quelles; les autres avis (RTC, déneigement) ne le sont pas."
@@ -1679,6 +1828,13 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
     # The edition stamp is the article collection, never the render clock: an
     # hourly roads-only re-render must not relabel the edition as new.
     edition_at = status.get("at") or generated_at
+    seal_hash = (
+        f'<span class="seal-hash">sceau {esc(reg["size"])} · '
+        f'<code>{esc(reg["root_short"])}…</code> '
+        f'<a class="seal-link" href="/registre.html">chaîne vérifiable ↗</a></span>'
+        if reg else
+        '<span class="seal-hash">registre <a class="seal-link" href="/registre.html">chaîne vérifiable ↗</a></span>'
+    )
     verifications = "".join(
         f'<meta name="{name}" content="{esc(token)}">'
         for name, token in (
@@ -1700,11 +1856,14 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
 <link rel="describedby" href="/llms.txt"><link rel="alternate" type="text/markdown" href="/index.html.md" title="Le point en Markdown">
 <title>{SITE_TITLE}</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><meta name="apple-mobile-web-app-title" content="Vigie"><meta name="application-name" content="Vigie"><meta name="mobile-web-app-capable" content="yes"><meta name="format-detection" content="telephone=no"><link rel="stylesheet" href="/assets/fonts.css"><link rel="stylesheet" href="/assets/brief.css"><script src="/assets/brief.js" defer></script></head>
 <body><a class="skip-link" href="#essentiel">Aller aux nouvelles</a>
-<header class="masthead"><a class="wordmark" href="/" aria-label="Vigie, accueil"><svg width="28" height="32" viewBox="0 0 28 32" aria-hidden="true"><path d="M2 5 14 28 26 5M8 5l6 12 6-12" fill="none" stroke="currentColor" stroke-width="2.5"/></svg>vigie<span class="wordmark-dot">.</span></a><span class="edition">QUÉBEC, À HAUTEUR DE VIE</span><nav aria-label="Navigation principale"><a href="#essentiel">Le point</a><a href="#dossiers">Les dossiers</a><a href="/registre.html" class="nav-registre">Le registre</a><a href="#agir">Repères utiles</a><a href="#methode">Notre méthode</a></nav><button class="cmdk-open js-only" type="button" id="cmdk-open" aria-haspopup="dialog" aria-controls="cmdk">Recherche rapide <kbd>Ctrl K</kbd></button></header>
-<main><section class="intro" aria-labelledby="intro-title"><div><p class="eyebrow">UNE VILLE. VOTRE QUOTIDIEN.</p><h1 id="intro-title">Moins de bruit.<br><em>Plus de Québec.</em></h1><p class="intro-text">Les nouvelles locales. Les sources pour comprendre. Les repères pour agir. Puis, reprenez votre journée.</p><p class="intro-shared">Cette édition est la même pour chaque lecteur. Les filtres et les repères restent sur cet appareil.</p></div>
+<header class="masthead"><a class="wordmark" href="/" aria-label="Vigie, accueil"><svg width="28" height="32" viewBox="0 0 28 32" aria-hidden="true"><path d="M2 5 14 28 26 5M8 5l6 12 6-12" fill="none" stroke="currentColor" stroke-width="2.5"/></svg>vigie<span class="wordmark-dot">.</span></a><span class="edition">QUÉBEC, À HAUTEUR DE VIE</span><nav aria-label="Navigation principale"><a href="#essentiel">Le point</a><a href="#dossiers">Les dossiers</a><a href="/registre.html" class="nav-registre">Le registre</a><a href="/partir.html">Avant de partir</a><a href="#agir">Agir</a><a href="#methode">Méthode</a></nav><button class="cmdk-open js-only" type="button" id="cmdk-open" aria-haspopup="dialog" aria-controls="cmdk">Recherche rapide <kbd>Ctrl K</kbd></button></header>
+<div class="seal-line" aria-label="État de l'édition"><span class="seal-mark"><span class="seal-dot{' warning' if status['stale'] or status['partial'] else ''}"></span>{status_label} · {coverage}</span>{seal_hash}</div>
+<main><section class="intro" aria-labelledby="intro-title"><div><p class="eyebrow">UNE VILLE. VOTRE QUOTIDIEN.</p><h1 id="intro-title">Moins de bruit.<br><em>Plus de Québec.</em></h1><p class="intro-text">Les sources pour comprendre. Les repères pour agir.<br>Puis, reprenez votre journée.</p><p class="intro-shared">Cette édition est la même pour chaque lecteur. Les filtres et les repères restent sur cet appareil.</p></div>
 <aside class="edition-note" aria-label="Fraîcheur des informations"><div class="compass" aria-hidden="true"><span>N</span><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="43"/><path d="M60 5v22M60 93v22M5 60h22M93 60h22M60 31l13 42-13-8-13 8Z"/></svg></div><p class="eyebrow">LE POINT DE REPÈRE</p><p id="freshness-label" role="status" class="freshness{' warning' if status['stale'] or status['partial'] else ''}" data-fetched="{esc(status['at'])}" data-partial="{str(status['partial']).lower()}" data-total="{status['total']}" data-ok="{status['ok']}">{status_label}</p><p class="edition-time">{date_html(status['at'], fallback='Aucune collecte horodatée')}</p><a class="coverage-link" href="#couverture">{coverage} <span aria-hidden="true">↗</span></a><p class="fine">Un instantané des sources. Pas un service d’alerte en temps réel.</p></aside></section>
-<section class="brief" id="essentiel" aria-labelledby="brief-title"><div class="section-top"><div><p class="eyebrow">L’ESSENTIEL, À VOTRE ÉCHELLE</p><h2 id="brief-title">Faire le point.</h2></div><p class="section-note">7 jours de publications.<br>Édition du {date_html(edition_at)}.</p></div>
 {glance}
+{bar}
+{rw_html}
+<section class="brief" id="essentiel" aria-labelledby="brief-title"><div class="section-top"><div><p class="eyebrow">L’ESSENTIEL, À VOTRE ÉCHELLE</p><h2 id="brief-title">Faire le point.</h2></div><p class="section-note">7 jours de publications.<br>Édition du {date_html(edition_at)}.</p></div>
 <div class="visit-strip js-only"><p id="visit-status" role="status">Une première visite ? Prenez vos repères.</p><button id="remember" type="button">Mémoriser ce point de lecture</button><ul class="visit-list" id="visit-list" hidden></ul></div>
 <div class="controls js-only"><div class="view-tabs" role="group" aria-label="Vue des articles"><button type="button" data-view="brief" aria-pressed="true">Le point local</button><button type="button" data-view="new" aria-pressed="false">Depuis mon repère <span id="new-count"></span></button><button type="button" data-view="saved" aria-pressed="false">Mes articles gardés <span id="saved-count"></span></button></div>
 <div class="search-row"><label class="search-label"><span class="sr-only">Rechercher dans les titres et extraits</span><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m12 12 5 5"/></svg><input id="search" type="search" placeholder="Une rue, un sujet, un nom…" autocomplete="off" maxlength="200"></label><label class="select-label"><span>Territoire</span><select id="scope"><option value="local">Québec et environs</option><option value="province">Tout le Québec</option><option value="all">Tous les flux</option></select></label><label class="select-label"><span>Lieu mentionné</span><select id="area"><option value="all">Tous les lieux</option>{areas}</select></label></div><div class="topic-filters" role="group" aria-label="Thème des articles">{filters}<button type="button" class="more-topics" id="more-topics" aria-expanded="false" aria-controls="more-topics-list">Plus de thèmes</button></div><div class="topic-filters topic-filters-more" id="more-topics-list" role="group" aria-label="Autres thèmes" hidden>{filters_more}</div><p class="filter-note">Les lieux et thèmes sont repérés automatiquement. Un lieu absent d’un extrait peut échapper au filtre.</p><div class="lenses js-only" role="group" aria-label="Lecture sur cet appareil"><button type="button" id="lens-title" aria-pressed="false">Titres seulement</button><button type="button" id="lens-focus" aria-pressed="false">Dossiers et officiel</button><label class="mute-label"><span class="sr-only">Masquer un mot</span><input id="mute-add" type="search" placeholder="Masquer un mot…" autocomplete="off" maxlength="40"></label><ul id="mute-list" class="mute-list" hidden></ul></div><p class="filter-note js-only">Titres seulement, focus et mots masqués restent sur cet appareil. Ils cachent des cartes, jamais l’ordre public.</p></div>
@@ -1712,7 +1871,6 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
 <div class="results-bar"><p id="result-count" role="status">{len(rows)} articles récents dans les flux collectés</p><button class="text-button js-only" type="button" id="reset-filters">Réinitialiser les filtres</button></div><div id="stories">{stories}{empty}</div>
 <div id="no-results" class="no-data" hidden><h3>Aucun article dans cette vue.</h3><p>Essayez un autre lieu ou élargissez le territoire. Une absence dans nos flux ne signifie pas qu’il ne se passe rien.</p><button type="button" id="empty-reset">Voir le point local</button></div>
 <div class="brief-end"><p id="end-note">Vous avez fait le tour de cette sélection.</p><button class="js-only" id="show-more" type="button">Voir les autres articles</button><span class="fine">Pas de défilement infini. Revenez quand vous en avez besoin.</span></div></section>
-{rw_html}
 {civic_html}
 {change_html}
 {dossier_html}

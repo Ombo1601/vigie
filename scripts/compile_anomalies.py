@@ -204,7 +204,11 @@ def rule_fenetre_depassee(events: list[dict], fetched_at) -> list[dict]:
 
 def compile_verdict(rw: dict) -> dict:
     """Pure: roadworks store in, verdict out. No clock, no I/O."""
-    events = [e for e in (rw.get("events") or []) if isinstance(e, dict) and e.get("event_id")]
+    raw_events = rw.get("events")
+    events = (
+        [e for e in raw_events if isinstance(e, dict) and e.get("event_id")]
+        if isinstance(raw_events, list) else []
+    )
     diff = rw.get("diff") if isinstance(rw.get("diff"), dict) else {}
     fetched = ingest_wzdx._parse_iso(rw.get("fetched_at"))
     anomalies: list[dict] = []
@@ -244,7 +248,7 @@ def empty_verdict(note: str) -> dict:
 def _load_json(path: Path) -> object:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
 
 
@@ -265,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
             shown = OUT_PATH
         print(f"anomalies: {verdict['anomaly_count']} measured "
               f"({len(verdict['anomalies'])} in verdict) -> {shown}")
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
         # Always 0: a missing official feed or an unwritable store must never
         # block the edition.
         print(f"anomalies: FAIL {type(exc).__name__}: {exc} - keeping previous verdict")

@@ -198,10 +198,14 @@ RE_NUM = (
     r"\d+(?:[.,]\d+)?"
     r")(?![\d])"
 )
+# Word boundaries are law here (same scar as the topic rules): an unanchored
+# "rent" matched parent/different and "utility" matched futility, publishing a
+# false price. Prefix stems (électricit, tarif, facture, loyer) keep a leading
+# boundary; whole words get both, so "hydrogène" is not "hydro".
 PRICE_CTX = (
-    r"loyer|loyers|rent|rents|tarif|tarifs|facture|factures|"
-    r"[ée]lectricit|electricit|essence|carburant|diesel|gasoline|"
-    r"hydro|power\s+rate|utility|utilities"
+    r"\bloyers?|\brents?\b|\btarifs?|\bfactures?|"
+    r"\b[ée]lectricit|\bessence\b|\bcarburant\b|\bdiesel\b|\bgasoline\b|"
+    r"\bhydro\b|\bpower\s+rates?\b|\butilit(?:y|ies)\b"
 )
 PRICE_CTX_RE = re.compile(PRICE_CTX, re.I)
 # Capital-market noise — never a citizen price check
@@ -238,7 +242,9 @@ RE_BYLAW = re.compile(
     re.I,
 )
 RE_HOUSING_COUNT = re.compile(
-    rf"{RE_NUM}\s*(?:logements?|habitations?|housing\s+units?|rental\s+units?)|"
+    # Trailing boundary: "150 housing unity" is not a housing count
+    # (ranking.md gate #3 denies English "unit/unity" theater).
+    rf"{RE_NUM}\s*(?:logements?|habitations?|housing\s+units?|rental\s+units?)(?![\w])|"
     rf"(?:logements?|habitations?)\s*[:\-–]\s*{RE_NUM}",
     re.I,
 )
@@ -605,7 +611,10 @@ def propose_impact_units(title: str, summary: str) -> list[dict]:
         seen.add(key)
         out.append(u)
 
-    for field, text in (("title", title or ""), ("summary", summary or "")):
+    for field, raw_text in (("title", title), ("summary", summary)):
+        # A foreign/hand-edited store may carry a number or object here; a
+        # regex on a non-string would abort the whole enrich chain.
+        text = raw_text if isinstance(raw_text, str) else ""
         if not text:
             continue
         if not PRICE_DENY.search(text):
@@ -625,8 +634,14 @@ def propose_impact_units(title: str, summary: str) -> list[dict]:
                 price_context = low + suffix
                 if re.search(r"\$\s*/\s*l\b", price_context):
                     unit += "_per_L"
-                if "kwh" in low or "\u00a2" in raw or re.search(r"cents?\s*/\s*k", low):
-                    unit = "cents_per_kWh"
+                if "kwh" in price_context:
+                    # The denominator can sit after the matched span; ¢/kWh is
+                    # the published cent unit, a dollar amount per kWh keeps
+                    # its own unit rather than being silently relabelled cents.
+                    if "\u00a2" in raw or re.search(r"cents?\s*/\s*k", price_context):
+                        unit = "cents_per_kWh"
+                    else:
+                        unit = "CAD_per_kWh"
                 if re.search(r"\$\s*(?:/\s*mois\b|per month\b|par mois\b)", price_context):
                     unit += "_per_month"
                 add(
@@ -691,17 +706,23 @@ def propose_impact_units(title: str, summary: str) -> list[dict]:
     return out[:5]
 
 
-def enrich_one(c: dict) -> dict:
+def enrich_one(c: dict, *, enriched_at: str | None = None) -> dict:
     item = dict(c)
     text = blob(c)
     geo = propose_geo(c, text)
     topics = propose_topics(text)
-    impacts = propose_impacts(topics, c.get("title") or "", c.get("summary") or "")
+    # A foreign/hand-edited store may carry non-string text fields; coerce
+    # rather than let a regex raise and abort the whole chain.
+    title = c.get("title") if isinstance(c.get("title"), str) else ""
+    summary = c.get("summary") if isinstance(c.get("summary"), str) else ""
+    impacts = propose_impacts(topics, title, summary)
     claims = propose_claims(c)
     item["enrich_status"] = "proposed"
     item["enrich"] = {
         "method": "rules-v0.7-impact-units-claims",
-        "enriched_at": datetime.now(timezone.utc).isoformat(),
+        # The collection clock when the caller has one (deterministic store);
+        # the build clock is a last-resort fallback for direct calls only.
+        "enriched_at": enriched_at or datetime.now(timezone.utc).isoformat(),
         "geo": geo,
         "topics": topics,
         "impacts": impacts,
@@ -724,13 +745,18 @@ def main() -> int:
     cands = cands if isinstance(cands, list) else []
     enriched: list[dict] = []
     skipped = 0
+    # Enrichment is of the collection, so the store stamps the collection clock
+    # (same edition -> byte-identical rebuild), never the rebuild clock.
+    edition_clock = (
+        payload.get("normalized_at") if isinstance(payload.get("normalized_at"), str) else None
+    )
     for c in cands:
         if not isinstance(c, dict):
             # Same fail-soft posture as cluster_issues: a malformed entry is
             # diagnosed by its count, never a traceback that kills the chain.
             skipped += 1
             continue
-        enriched.append(enrich_one(c))
+        enriched.append(enrich_one(c, enriched_at=edition_clock))
     now = datetime.now(timezone.utc)
     with_claims = sum(1 for c in enriched if c["enrich"]["claims"])
     with_units = sum(
@@ -739,7 +765,7 @@ def main() -> int:
         if any((imp.get("units") or []) for imp in c["enrich"]["impacts"])
     )
     out = {
-        "enriched_at": now.isoformat(),
+        "enriched_at": edition_clock or now.isoformat(),
         "method": (
             "scripts/enrich.py rules-v0.7 impact-units claims word-boundary — proposals only; "
             "quote+speaker objects; falsifiable units (price/bylaw_id/housing_count); "

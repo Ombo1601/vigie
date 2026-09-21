@@ -57,7 +57,11 @@ ROADS_SEAL_CAP = 2000      # roadworks roots kept (hourly lane, tiny records)
 QUESTION_CAP = 300
 HTML_SEALS_SHOWN = 12
 
-_SPOOF = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\xad\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+# Includes unpaired surrogates: a JSON escape can carry \ud800, which would
+# make canonical() raise UnicodeEncodeError inside the seal.
+_SPOOF = re.compile(
+    "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\xad\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff\ud800-\udfff]"
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -155,9 +159,11 @@ def edition_record(payload: dict, edition: str) -> dict | None:
             for row in (silence.get("silent") or [])
             if isinstance(row, dict) and (row.get("institution_id") or row.get("source_id"))
         })
-        # Only Vigie's own subject labels are sealed. An attributed headline is a
-        # publisher's text: it stays in the brief (with attribution, removable
-        # the same day under R10) and never enters an immutable record.
+        # Only Vigie's own subject labels are sealed. An explicit
+        # attributed_headline is the publisher's text: it stays in the brief
+        # (attributed, removable the same day under R10) and never enters an
+        # immutable record. A missing label_kind is the legacy (pre-attribution)
+        # shape, i.e. a Vigie subject label.
         label_kind = str(iss.get("label_kind") or "subject_label")
         question = "" if label_kind == "attributed_headline" else plain(iss.get("question"))[:QUESTION_CAP]
         dossiers.append({
@@ -257,7 +263,18 @@ def load_state(path: Path = STATE) -> dict:
     if loaded.get("method") != METHOD or not isinstance(loaded.get("seals"), list):
         return empty_state()
     state = empty_state()
-    state["seals"] = [s for s in loaded["seals"] if isinstance(s, dict) and isinstance(s.get("record"), dict)]
+    # A seal is only usable by every reader (memoire, substrate, affiche) when
+    # its identity fields are present: a corrupt/older store carrying a record
+    # without seq/root must render nothing, never KeyError downstream.
+    state["seals"] = [
+        s for s in loaded["seals"]
+        if isinstance(s, dict)
+        and isinstance(s.get("record"), dict)
+        and isinstance(s.get("seq"), int)
+        and isinstance(s.get("root"), str)
+        and isinstance(s["record"].get("edition"), str)
+        and isinstance(s.get("edition"), str)
+    ]
     state["voice"] = [v for v in (loaded.get("voice") or []) if isinstance(v, dict) and v.get("edition")]
     state["names"] = loaded.get("names") if isinstance(loaded.get("names"), dict) else {}
     trav = loaded.get("travaux") if isinstance(loaded.get("travaux"), dict) else {}
@@ -311,10 +328,15 @@ def verify_chain(seals: list[dict], anchor_root: str = "") -> tuple[bool, str]:
             return False, f"seal {n}: malformed"
         if seal.get("prev", "") != prev:
             return False, f"seal {seal.get('seq')}: prev mismatch"
-        leaf = leaf_of(seal["record"])
+        try:
+            leaf = leaf_of(seal["record"])
+            root = chain_hash(prev, leaf)
+        except (TypeError, ValueError, UnicodeEncodeError):
+            # A hostile/corrupt chain (surrogate text, non-hex prev) is a
+            # verification failure, never a traceback.
+            return False, f"seal {seal.get('seq')}: uncomputable record"
         if seal.get("leaf") != leaf:
             return False, f"seal {seal.get('seq')}: leaf mismatch"
-        root = chain_hash(prev, leaf)
         if seal.get("root") != root:
             return False, f"seal {seal.get('seq')}: root mismatch"
         prev = root
@@ -423,9 +445,11 @@ def checkpoint_text(state: dict) -> str:
     if not seals:
         return f"{ORIGIN}\n0\n\n"
     last = seals[-1]
-    lines = [ORIGIN, str(last["seq"]), last["root"], "", f"edition {last['edition']}"]
+    lines = [ORIGIN, str(last.get("seq", "")), str(last.get("root", "")), "",
+             f"edition {last.get('edition', '')}"]
     if trav:
-        lines.append(f"travaux {trav[-1]['seq']} {trav[-1]['root']} {trav[-1]['fetched_at']}")
+        t = trav[-1]
+        lines.append(f"travaux {t.get('seq', '')} {t.get('root', '')} {t.get('fetched_at', '')}")
     lines.append(f"method {METHOD}")
     return "\n".join(lines) + "\n"
 
@@ -435,12 +459,12 @@ def public_chain(state: dict) -> dict:
     shown = seals[-PUBLIC_SEAL_CAP:]
     anchor = ""
     if len(seals) > len(shown):
-        anchor = seals[len(seals) - len(shown) - 1]["root"]
+        anchor = seals[len(seals) - len(shown) - 1].get("root", "")
     return {
         "method": METHOD,
         "origin": ORIGIN,
         "size": len(seals),
-        "root": seals[-1]["root"] if seals else "",
+        "root": seals[-1].get("root", "") if seals else "",
         "anchor_root": anchor,
         "verify": (
             "leaf = sha256(json.dumps(record, sort_keys=True, ensure_ascii=False, separators=(',', ':'))); "
@@ -460,7 +484,7 @@ def public_institutions(state: dict) -> dict:
     seals = state.get("seals") or []
     return {
         "method": METHOD,
-        "edition": seals[-1]["edition"] if seals else "",
+        "edition": seals[-1].get("edition", "") if seals else "",
         "edition_count": len([v for v in state.get("voice") or [] if v.get("established")]),
         "note": (
             "Une institution « n'a pas parlé » quand aucun de ses flux suivis n'apparaît dans un dossier "
@@ -551,12 +575,12 @@ def render_registre_html(state: dict) -> str:
         v = voice_row(rec)
         led = rec.get("ledger") or {}
         return (
-            f'<li class="reg-seal"><a class="reg-seq" href="/memoire/{s["seq"]}.html">n° {s["seq"]}</a>'
-            f'<span class="reg-when">{_date(s["edition"])}</span>'
+            f'<li class="reg-seal"><a class="reg-seq" href="/memoire/{s.get("seq", "")}.html">n° {s.get("seq", "")}</a>'
+            f'<span class="reg-when">{_date(s.get("edition"))}</span>'
             f'<span class="reg-counts">{len(rec.get("dossiers") or [])} dossier{"s" if len(rec.get("dossiers") or []) != 1 else ""} · '
             f'{len(v["spoke"])} ont parlé · {len(v["silent"])} n’ont pas parlé'
             + (f' · +{len(led.get("new") or [])} / ~{len(led.get("developed") or [])} / −{len(led.get("quiet") or [])}' if led.get("has_previous") else "")
-            + f'</span><code class="reg-hash" title="{esc(s["root"])}">{_short(s["root"])}…</code></li>'
+            + f'</span><code class="reg-hash" title="{esc(s.get("root", ""))}">{_short(s.get("root", ""))}…</code></li>'
         )
 
     seals_html = (
@@ -565,7 +589,7 @@ def render_registre_html(state: dict) -> str:
     )
     trav_html = (
         f'<p>{len(trav)} état{"s" if len(trav) != 1 else ""} distinct{"s" if len(trav) != 1 else ""} des entraves actives scellé{"s" if len(trav) != 1 else ""} '
-        f'(dernier : {_date(trav[-1]["fetched_at"])}, {trav[-1]["active_count"]} entraves, racine <code>{_short(trav[-1]["root"])}…</code>).</p>'
+        f'(dernier : {_date(trav[-1].get("fetched_at"))}, {_int(trav[-1].get("active_count"))} entraves, racine <code>{_short(trav[-1].get("root", ""))}…</code>).</p>'
         if trav else '<p class="no-data">Aucun état des entraves scellé pour l’instant.</p>'
     )
 
@@ -622,8 +646,9 @@ def emit(payload: dict | None = None, roadworks: dict | None = None, *,
     out_html.parent.mkdir(parents=True, exist_ok=True)
     store_io.write_text_atomic(out_html, render_registre_html(state))
     seals = state["seals"]
+    root_short = str(seals[-1].get("root", ""))[:12] if seals else "-"
     print(f"registre: edition {action}, travaux {roads_action}; "
-          f"{len(seals)} seals, root {seals[-1]['root'][:12] if seals else '-'} -> {out_html}")
+          f"{len(seals)} seals, root {root_short} -> {out_html}")
     return state
 
 
@@ -633,8 +658,10 @@ def main() -> int:
     args = parser.parse_args()
     if args.verify:
         doc = load_json(Path(args.verify))
-        ok, msg = verify_chain(doc.get("seals") or [], str(doc.get("anchor_root") or ""))
-        tail = (doc.get("seals") or [{}])[-1].get("root") if doc.get("seals") else ""
+        raw_seals = doc.get("seals") if isinstance(doc.get("seals"), list) else []
+        ok, msg = verify_chain(raw_seals, str(doc.get("anchor_root") or ""))
+        last = raw_seals[-1] if raw_seals and isinstance(raw_seals[-1], dict) else {}
+        tail = last.get("root") if isinstance(last.get("root"), str) else ""
         if ok and doc.get("root") and doc.get("root") != tail:
             ok, msg = False, "declared root differs from the last seal"
         print(("OK " if ok else "FAIL ") + msg)

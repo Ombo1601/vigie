@@ -87,7 +87,9 @@ def load_history(path: Path) -> dict:
     """Missing, corrupt or foreign-method stores start fresh - never mixed."""
     try:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
+        # RecursionError: a deeply nested hostile document is corrupt input,
+        # not a reason to abort the chain.
         return empty_history()
     if not isinstance(raw, dict) or raw.get("method") != METHOD:
         return empty_history()

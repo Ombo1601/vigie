@@ -1,4 +1,4 @@
-﻿"""
+"""
 Vigie v0.7 - cluster StoryCandidates into Issues (contradictions held open).
 Rules only. No LLM. Never crowns a correct answer.
 
@@ -678,8 +678,13 @@ def main() -> None:
                             "enrich_status": it.get("enrich_status") or "proposed",
                             "claims": [
                                 {**deepcopy(cl), "status": "proposed"}
-                                for cl in ((it.get("enrich") or {}).get("claims") or [])[:3]
-                                if cl.get("quote")
+                                for cl in (
+                                    it["enrich"].get("claims")
+                                    if isinstance(it.get("enrich"), dict)
+                                    and isinstance(it["enrich"].get("claims"), list)
+                                    else []
+                                )[:3]
+                                if isinstance(cl, dict) and cl.get("quote")
                             ],
                         }
                         for it in src_items

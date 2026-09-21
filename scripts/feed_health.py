@@ -72,7 +72,7 @@ def load_source_timeline(src_dir: Path, limit: int = RUNS_EXAMINED) -> list[dict
             continue
         try:
             doc = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             timeline.append({"at": at, "ok": False, "items": None, "parse_error": None,
                              "error": "unreadable meta", "bytes": None, "not_modified": False})
             continue

@@ -41,83 +41,10 @@ _WORDMARK_SVG = (
     "</svg>"
 )
 
-# Mirrors brief.js fold(): ligatures and typographic apostrophes first, then
-# diacritics, then case — the same key the street island is built with.
-_CORRIDORS_JS = """
-  var KEY = 'vigie.corridors.v1';
-  var box = document.getElementById('depart-corridors');
-  if (!box) return;
-  var island = document.getElementById('vigie-streets');
-  var byKey = {};
-  try {
-    var doc = JSON.parse(island ? island.textContent : 'null');
-    var rows = doc && Array.isArray(doc.streets) ? doc.streets : [];
-    rows.forEach(function (r) {
-      if (r && typeof r.key === 'string') {
-        byKey[r.key] = { name: r.name, n: Number(r.n) || 0, severity: Number(r.severity), impact: String(r.impact_label || ''), until: String(r.until || '') };
-      }
-    });
-  } catch (e) { /* unreadable island: counts stay unknown, marks stay off */ }
-  var foldMap = { '\\u0153': 'oe', '\\u0152': 'oe', '\\u00e6': 'ae', '\\u00c6': 'ae', '\\u2019': "'", '\\u2018': "'", '`': "'", '\\u00b4': "'" };
-  var fold = function (text) {
-    return String(text || '').replace(/[\\u0153\\u0152\\u00e6\\u00c6\\u2019\\u2018`\\u00b4]/g, function (ch) { return foldMap[ch]; })
-      .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase();
-  };
-  var keyOf = function (name) { return fold(name).replace(/\\s+/g, ' ').trim(); };
-  var list = document.getElementById('depart-corridor-list');
-  var hint = document.getElementById('depart-hint');
-  var status = document.getElementById('depart-corridor-status');
-  var names = [];
-  try {
-    var raw = JSON.parse(localStorage.getItem(KEY) || '[]');
-    names = Array.isArray(raw) ? raw.filter(function (x) { return typeof x === 'string' && x.trim(); }) : [];
-  } catch (e) { names = []; }
-  if (!names.length) {
-    if (status) status.textContent = 'Aucune rue suivie pour l\\u2019instant — elles restent sur cet appareil.';
-    return;
-  }
-  if (hint) hint.hidden = true;
-  var keys = {};
-  names.forEach(function (name) {
-    var key = keyOf(name);
-    if (!key) return;
-    keys[key] = true;
-    var hit = byKey[key];
-    var n = hit ? hit.n : 0;
-    var li = document.createElement('li');
-    li.className = 'depart-corridor';
-    var label = document.createElement('span');
-    label.className = 'depart-corridor-name';
-    label.textContent = name;
-    var count = document.createElement('span');
-    count.className = 'depart-corridor-count';
-    count.textContent = n === 0 ? 'aucune entrave déclarée' : n + ' entrave' + (n !== 1 ? 's' : '') + ' déclarée' + (n !== 1 ? 's' : '');
-    li.append(label, count);
-    if (n > 0 && hit) {
-      var worst = document.createElement('span');
-      worst.className = 'depart-corridor-worst';
-      if (Number(hit.severity) >= 4) {
-        worst.textContent = 'aucune restriction de voie active — travaux déclarés';
-      } else {
-        worst.textContent = 'la plus restrictive : ' + hit.impact + (hit.until ? ' — jusqu\\u2019au ' + hit.until : '');
-      }
-      li.appendChild(worst);
-    }
-    if (list) list.appendChild(li);
-  });
-  if (list) list.hidden = false;
-  Array.prototype.forEach.call(document.querySelectorAll('.depart-item[data-roads]'), function (item) {
-    var roads = String(item.getAttribute('data-roads') || '').split(' ').filter(Boolean);
-    if (roads.some(function (r) { return keys[r]; })) {
-      item.classList.add('depart-hit');
-      var tag = document.createElement('span');
-      tag.className = 'depart-hit-tag';
-      tag.textContent = 'votre rue';
-      item.appendChild(tag);
-    }
-  });
-})();
-"""
+# The departure script is a self-hosted asset so every page can carry a
+# strict script-src 'self' CSP; the JSON street island stays inline (a data
+# block is never executed).
+CORRIDORS_JS_ASSET = "/assets/depart.js"
 
 
 def _event_when(event: dict) -> str:
@@ -165,6 +92,9 @@ def _street_index(events: list[dict]) -> list[dict]:
                 rows[key] = {
                     "key": key, "name": name, "n": 1,
                     "severity": brief.RW_SEVERITY.get(impact, 6),
+                    # Only the City's own open-road vocabulary is "open"; an
+                    # unmapped impact (severity 6) must never read as open.
+                    "open": impact in ("all-lanes-open", "no-lanes-closed"),
                     "impact": impact, "impact_label": label,
                     "until": f"{until:%Y-%m-%d}" if until else "",
                 }
@@ -296,10 +226,17 @@ def render_depart(roadworks: dict, issues: list[dict], ledger: dict, state: dict
     else:
         roads_html = f'<ul class="depart-list">{_rows_html(events)}</ul>'
         shown = min(DEPART_CAP, len(events))
-        roads_html += (
-            f'<p class="fine">Les {shown} plus restrictives affichées — {len(events)} entraves '
-            "actives au total dans le flux officiel.</p>"
+        total = len(events)
+        head = (
+            "La plus restrictive affichée" if shown == 1
+            else f"Les {shown} plus restrictives affichées"
         )
+        tail = (
+            f"{total} entrave active au total dans le flux officiel."
+            if total == 1 else
+            f"{total} entraves actives au total dans le flux officiel."
+        )
+        roads_html += f'<p class="fine">{head} — {tail}</p>'
     stale_html = (
         '<p class="rw-stale warning">Collecte à actualiser : ces déclarations ont plus de six '
         "heures. Vérifiez la carte officielle avant de partir.</p>" if stale else ""
@@ -356,9 +293,7 @@ def render_depart(roadworks: dict, issues: list[dict], ledger: dict, state: dict
 </main>
 <footer><a class="wordmark" href="/">vigie<span class="wordmark-dot">.</span></a><p>Un peu plus au courant.<br>Un peu plus libre de votre temps.</p><span>Fait pour Québec.<br>L’instrument du départ.</span><a class="legal-link" href="/methode/legal.html">Mentions légales, attribution et retrait</a></footer>
 <script type="application/json" id="vigie-streets">{island}</script>
-<script>
-(function () {{
-{_CORRIDORS_JS}</script>
+<script src="{CORRIDORS_JS_ASSET}" defer></script>
 </body></html>
 """
 

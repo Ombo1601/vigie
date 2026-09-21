@@ -1,4 +1,4 @@
-﻿# Vigie — Ranking method (v0)
+# Vigie — Ranking method (v0)
 
 Published method. No invisible editorial boost without a logged reason.
 
@@ -95,6 +95,7 @@ Silent boosts = propaganda with better geography.
 | Date | Change | Owner |
 |------|--------|--------|
 | 2026-09-15 | v0 weights: geo 0.60, recency 0.40; tension/impact off | Marcus (co-founder) |
+| 2026-09-20 | enrich: price context word-bounded (rent≠parent, utility≠futility, hydro≠hydrogène); housing-unit trailing boundary; `CAD_per_kWh` added and unit schema synced; w_impact still 0 | audit |
 | 2026-09-15 | enrich.py rules-v0 writes proposed geo/topic/impact; w_impact still 0 until we choose to score proposals | Niccolo (co-founder) |
 | 2026-09-15 | Display nest + geo_proximity use proposed enrich.geo; primary source without city token no longer auto Near me | Bucky (co-founder) |
 | 2026-09-15 | cluster v0.3: Issues require >=2 source voices; drop single-voice theater; FR/EN anchors | Nietzsche (co-founder) |
@@ -398,7 +399,9 @@ PDCA: falsifiable units on impacts. Citizen can check the raw span. **Not** a re
 
 Schema (all `status: proposed`):
 `impacts[].units[]` → `kind` (`price`|`bylaw_id`|`housing_count`), `value`, `unit`
-(`CAD`|`CAD_per_month`|`CAD_per_L`|`cents_per_kWh`|`percent`|`logements`|`id`), `raw`, `method`, `field`.
+(`CAD`|`CAD_per_month`|`CAD_per_L`|`CAD_per_kWh`|`cents_per_kWh`|`percent`|`logements`|`id`;
+`dollars`|`dollars_per_month`|`dollars_per_L` when no Québec/Canada/CAD token establishes the
+currency — the amount is never relabelled), `raw`, `method`, `field`.
 
 Precision guards:
 - Price needs life context (loyer/tarif/facture/essence…) — bond `émission d'obligations` denied.

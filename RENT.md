@@ -1,4 +1,4 @@
-﻿# Vigie — Rent (how the lookout stays alive)
+# Vigie — Rent (how the lookout stays alive)
 
 Honesty first: free to read does not mean free to run. Someone always pays.
 

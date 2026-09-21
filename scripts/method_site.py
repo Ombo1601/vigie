@@ -107,7 +107,10 @@ def _inline(text: str) -> str:
     text = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", text)
 
     def link_sub(m: re.Match) -> str:
-        label, url = m.group(1), m.group(2)
+        # The whole line was already escaped for text, so the URL arrives with
+        # entities (`?a=1&amp;b=2`): unescape before escaping it as an attribute
+        # or a query `&` becomes `&amp;amp;`.
+        label, url = m.group(1), html.unescape(m.group(2))
         if url.startswith(("http://", "https://")):
             return f'<a href="{html.escape(url, quote=True)}" rel="noopener noreferrer">{label}</a>'
         href = _map_link(url)
@@ -316,7 +319,7 @@ def _sources_html() -> str:
 # --------------------------------------------------------------------------- #
 # Pages
 # --------------------------------------------------------------------------- #
-def _chrome(title: str, desc: str, canonical: str, body: str, *, nav_active: str = "") -> str:
+def _chrome(title: str, desc: str, canonical: str, body: str) -> str:
     nav = (
         '<header class="masthead">'
         f'<a class="wordmark" href="/" aria-label="Vigie, accueil">{_WORDMARK_SVG}vigie'
@@ -363,7 +366,10 @@ def _body(eyebrow: str, title: str, intro: str, content: str, *, link_index: boo
 
 def render_page(slug: str, file: str, title: str, eyebrow: str, intro: str) -> str:
     path = ROOT / file
-    text = path.read_text(encoding="utf-8")
+    # utf-8-sig: a BOM must never turn the file's first `#` heading into a
+    # paragraph (ranking.md / RENT.md shipped with one; the BOM is stripped
+    # here even if it reappears).
+    text = path.read_text(encoding="utf-8-sig")
     if file == "sources.yaml":
         content = _sources_html()
     else:
@@ -374,9 +380,12 @@ def render_page(slug: str, file: str, title: str, eyebrow: str, intro: str) -> s
     )
 
 
-def render_index() -> str:
+def render_index(rendered: set[str] | None = None) -> str:
+    """The index lists only pages that were actually rendered (no dead cards)."""
     cards = []
     for slug, _file, title, eyebrow, intro in PAGES:
+        if rendered is not None and slug not in rendered:
+            continue
         cards.append(
             f'<a class="method-card" href="/methode/{slug}.html">'
             f'<span class="method-card-kicker">{brief.esc(eyebrow)}</span>'
@@ -406,12 +415,27 @@ def emit(out_dir: Path = OUT_DIR) -> dict:
     for slug, file, title, eyebrow, intro in PAGES:
         try:
             page = render_page(slug, file, title, eyebrow, intro)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, SystemExit) as exc:
+            # SystemExit included: a malformed sources.yaml must skip one page,
+            # never terminate the render (BaseException would escape every
+            # other fail-soft layer).
             print(f"methode: skip {slug} ({type(exc).__name__}: {exc})")
             continue
         store_io.write_text_atomic(out_dir / f"{slug}.html", page)
         rendered.append(slug)
-    store_io.write_text_atomic(out_dir / "index.html", render_index())
+    rendered_set = set(rendered)
+    store_io.write_text_atomic(out_dir / "index.html", render_index(rendered_set))
+    # A removed/renamed PAGES slug must not keep being served as a stale page.
+    for stale in sorted(out_dir.glob("*.html")):
+        stem = stale.stem
+        if stale.name == "index.html" or stem in rendered_set:
+            continue
+        if stem in {p[0] for p in PAGES}:
+            continue
+        try:
+            stale.unlink()
+        except OSError:
+            pass
     print(f"methode: {len(rendered)} pages -> {out_dir}")
     return {"method": METHOD, "pages": len(rendered), "slugs": sorted(rendered)}
 

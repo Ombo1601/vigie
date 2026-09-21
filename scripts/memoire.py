@@ -41,6 +41,7 @@ _WORDMARK_SVG = (
 )
 
 _ATTRIBUTED = "Dossier étiqueté par un titre d’éditeur — non repris dans le registre."
+_NOT_LABELLED = "Dossier sans libellé scellé."
 
 
 def _name(names: dict, iid: str) -> str:
@@ -52,7 +53,12 @@ def _name(names: dict, iid: str) -> str:
 
 def _question(entry: dict) -> str:
     question = str(entry.get("question") or "").strip()
-    return question if question else _ATTRIBUTED
+    if question:
+        return question
+    # An empty sealed question is only explained by label_kind. Never claim
+    # "titre d'éditeur" for a dossier the chain never labelled that way.
+    kind = str(entry.get("label_kind") or "")
+    return _ATTRIBUTED if kind == "attributed_headline" else _NOT_LABELLED
 
 
 def _safe_int(value: object, default: int = 0) -> int:
@@ -217,7 +223,7 @@ def render_edition(seal: dict, names: dict, *, prev_seq: int | None, next_seq: i
     )
 
 
-def render_index(seals: list[dict], names: dict) -> str:
+def render_index(seals: list[dict], names: dict, *, total: int | None = None) -> str:
     items = []
     for seal in sorted(seals, key=lambda s: _safe_int(s.get("seq")), reverse=True):
         record = seal.get("record") if isinstance(seal.get("record"), dict) else {}
@@ -240,10 +246,12 @@ def render_index(seals: list[dict], names: dict) -> str:
         )
     if items:
         listing = f'<ol class="memoire-list">{"".join(items)}</ol>'
-        count = len(seals)
+        # The real chain size, not the capped page count: reporting "200
+        # éditions" when 350 exist would be an absence reported as the whole.
+        chain_size = total if isinstance(total, int) and total >= len(seals) else len(seals)
         note = (
-            f"{count} édition{'s' if count != 1 else ''} scellée{'s' if count != 1 else ''}"
-            f"{' — les 200 dernières' if count > PUBLIC_CAP else ''}."
+            f"{chain_size} édition{'s' if chain_size != 1 else ''} scellée{'s' if chain_size != 1 else ''}"
+            + (f" — les {len(seals)} dernières." if chain_size > len(seals) else ".")
         )
     else:
         listing = (
@@ -301,7 +309,7 @@ def emit(state: dict, issues: list[dict] | None = None, *, out_index: Path = OUT
                 stale.unlink()
             except OSError:
                 pass
-    store_io.write_text_atomic(out_index, render_index(published, names))
+    store_io.write_text_atomic(out_index, render_index(published, names, total=len(seals)))
     print(f"memoire: {len(written)} edition(s) lisibles -> {out_index}")
     return {"method": METHOD, "editions": len(written)}
 

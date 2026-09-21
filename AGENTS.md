@@ -61,8 +61,10 @@ twin), from the same stores, with no second brain:
 - `scripts/depart.py` — **Avant de partir**: `public/partir.html`, the
   departure instrument — most-restrictive declared obstructions, the reader's
   corridors marked on-device (island + literal folding, no account, no
-  position), what changed since the last edition, the seal. One small inline
-  script is the only enhancement; the page is complete without it.
+  position), what changed since the last edition, the seal. One small
+  self-hosted script (`/assets/depart.js`) is the only enhancement, so every
+  page can carry a strict `script-src 'self'` CSP; the page is complete
+  without it.
 - `scripts/substrate.py` — the machine layer: `public/llms.txt` (llms.txt v2),
   `public/index.html.md` (Markdown twin, advertised with
   `rel="alternate" type="text/markdown"`; the brief also carries
@@ -78,8 +80,9 @@ twin), from the same stores, with no second brain:
   `public/methode/index.html` — every published method file as a first-class
   page (zero JS, print-first, cross-links remapped to pages; the sources page
   is data, never raw YAML). The `.md`/`.yaml` files stay staged as the machine
-  twins; human surfaces link only the pages (the sole `.md` link left anywhere
-  is the labelled `/index.html.md` twin). No served file names the founder.
+twins; human surfaces link only the pages (the sole `.md` link left on a human
+surface is the labelled `/index.html.md` twin; `llms.txt` is the machine
+index). No served file names the founder.
 - `scripts/affiche.py` — **L'affiche**: `public/affiche.html`, a print-first
   neighbourhood sheet (`public/assets/affiche.css`), no JavaScript.
 

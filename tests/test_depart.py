@@ -61,12 +61,16 @@ class Render(unittest.TestCase):
         self.assertIn("Voies partiellement fermées", page)
         self.assertIn("Vos corridors", page)
         self.assertIn('id="vigie-streets"', page)
-        self.assertIn("vigie.corridors.v1", page)
+        # The enhancement is a self-hosted asset (strict script-src 'self'),
+        # never an inline script.
+        self.assertIn('<script src="/assets/depart.js" defer></script>', page)
+        asset = (harness.ROOT / "public" / "assets" / "depart.js").read_text(encoding="utf-8")
+        self.assertIn("vigie.corridors.v1", asset)
+        self.assertIn("votre rue", asset)  # the JS tag text (progressive enhancement)
         self.assertIn("2 nouveau", page)
         self.assertIn("disparu", page)
         self.assertIn("n’est pas « réglé »", page)
         self.assertIn("Édition n° <strong>7</strong>", page)
-        self.assertIn("votre rue", page)  # the JS tag text (progressive enhancement)
         self.assertIn("aucune position demandée", page)
 
     def test_most_restrictive_first(self):
@@ -132,8 +136,8 @@ class Render(unittest.TestCase):
                 encoding="utf-8",
             )
             (root / "assets").mkdir()
-            for name in ("assets/brief.css", "assets/fonts.css", "favicon.svg", "llms.txt",
-                         "registre.html", "index.html"):
+            for name in ("assets/brief.css", "assets/fonts.css", "assets/depart.js",
+                         "favicon.svg", "llms.txt", "registre.html", "index.html"):
                 (root / name).write_text("placeholder", encoding="utf-8")
             (root / "index.html").write_text('<h1 id="travaux">T</h1>', encoding="utf-8")
             (root / "methode").mkdir()
@@ -161,9 +165,10 @@ class ClientContract(unittest.TestCase):
 
     def test_client_folds_like_the_server(self):
         from resident_brief import folded
-        # The JS document promises the same folding; lock the literal contract here.
-        self.assertIn("normalize('NFD')", depart._CORRIDORS_JS)
-        self.assertIn("replace(/\\s+/g, ' ').trim()", depart._CORRIDORS_JS)
+        # The JS asset promises the same folding; lock the literal contract here.
+        asset = (harness.ROOT / "public" / "assets" / "depart.js").read_text(encoding="utf-8")
+        self.assertIn("normalize('NFD')", asset)
+        self.assertIn("replace(/\\s+/g, ' ').trim()", asset)
         self.assertEqual(folded("Boulevard René-Lévesque O"), folded("Boulevard René-Lévesque O"))
 
     def test_no_scripts_other_than_the_corridor_enhancement(self):

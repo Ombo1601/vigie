@@ -46,7 +46,7 @@ TOP_N = 30          # the visible top of the brief
 def _load_json(path: Path) -> dict:
     try:
         doc = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return {}
     return doc if isinstance(doc, dict) else {}
 
@@ -171,8 +171,13 @@ def compile_metrics(ranked_path: Path | None = None, issues_path: Path | None = 
         previous_top=previous_top,
     )
 
-    # Idempotent: recompiling the same edition replaces its snapshot.
-    if same_edition_as_last:
+    # Idempotent: recompiling the same edition replaces its snapshot. With no
+    # edition clock (missing/corrupt ranked store) never mint a phantom
+    # `edition: None`: a capped history must not fill with duplicates that
+    # evict real editions.
+    if not current_edition:
+        pass
+    elif same_edition_as_last:
         history[-1] = entry
     else:
         history.append(entry)

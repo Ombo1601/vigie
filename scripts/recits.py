@@ -319,7 +319,7 @@ def render_index(dossiers: list[dict], slug_of: dict[str, str]) -> str:
             f'<a class="recit-more" href="/dossiers/{brief.esc(slug)}.html">Récit complet ↗</a>'
             "</article>"
         )
-    listing = items or (
+    listing = "".join(items) or (
         '<p class="no-data">Aucun dossier cette édition. Cela ne dit rien de la '
         "couverture ailleurs — et un rapprochement n’est jamais une contradiction.</p>"
     )

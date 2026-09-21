@@ -188,7 +188,7 @@ def render_morning_txt(digest: dict) -> str:
     for i, ap in enumerate(digest.get("approaches") or [], start=1):
         if not isinstance(ap, dict):
             continue
-        nest = rank_display.NEST_LABEL.get(str(ap.get("nest") or ""), ap.get("nest"))
+        nest = rank_display.NEST_LABEL.get(str(ap.get("nest") or ""), ap.get("nest") or "?")
         silent = ap.get("silent")
         silent_n = 0 if silent is None else rank_display.safe_int(silent)
         lines.append(

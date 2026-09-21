@@ -24,7 +24,7 @@ METHOD = "change-ledger-v1 edition-diff"
 
 # Minimal, honest projection of a dossier. Never adds resolution/impact/truth.
 _ENTRY_FIELDS = (
-    "issue_id", "scar", "question", "geo_focus",
+    "issue_id", "scar", "question", "geo_focus", "label_kind",
     "source_count", "item_count", "official_voice_count", "media_remix",
 )
 
@@ -43,6 +43,16 @@ def _entry(issue: dict, change: str) -> dict:
     row["status"] = "proposed"
     if not isinstance(row.get("geo_focus"), list):
         row["geo_focus"] = []
+    # Never carry a publisher's headline through the ledger unattributed: the
+    # question is Vigie's own label only. An attributed dossier keeps an empty
+    # question and carries the source name + URL so a surface can attribute it.
+    if str(row.get("label_kind") or "") == "attributed_headline":
+        source = issue.get("label_source")
+        if isinstance(source, dict):
+            row["label_source"] = {
+                k: source.get(k) for k in ("source_id", "source_name", "url") if source.get(k)
+            }
+        row["question"] = ""
     return row
 
 

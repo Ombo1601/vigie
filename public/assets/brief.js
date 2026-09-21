@@ -388,6 +388,13 @@
     const it = cmdkItems[i];
     if (!it) return;
     cmdkClose();
+    const target = String(it.target || '');
+    // A masthead link may point at another page (e.g. /registre.html): that is
+    // a navigation, not a fragment, and querySelector on a path throws.
+    if (!it.id && target && target.charAt(0) !== '#') {
+      location.href = target;
+      return;
+    }
     if (it.id) {
       // Reach the article whatever the current filters, mute or focus are.
       // pinId unhides that one card for this render; lenses stay as the
@@ -396,18 +403,19 @@
       view = 'brief'; topic = 'all'; scopeEl.value = 'all'; areaEl.value = 'all'; searchEl.value = ''; limit = cards.length;
       render();
     }
-    if (it.target && String(it.target).indexOf('#dossier') === 0) {
+    if (target.indexOf('#dossier') === 0) {
       const find = $('#dossier-find');
       if (find) find.value = '';
       all('.dossier').forEach(d => { d.hidden = false; });
     }
-    const node = document.querySelector(it.id ? '#article-' + it.id : it.target);
+    const selector = it.id ? '#article-' + it.id : (target.charAt(0) === '#' ? target : '');
+    const node = selector ? document.querySelector(selector) : null;
     if (node) {
       node.scrollIntoView({ behavior: 'smooth', block: 'start' });
       node.setAttribute('tabindex', '-1');
       node.focus();
-    } else if (it.target) {
-      location.hash = it.target;
+    } else if (target) {
+      location.hash = target;
     }
   };
   const cmdkOpen = opener => {
