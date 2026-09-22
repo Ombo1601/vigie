@@ -591,6 +591,19 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
     """
     issue = issue if isinstance(issue, dict) else {}
     question = esc(issue.get("question") or "Sujet suivi")
+    # Attribution law (R1): when the dossier question IS a publisher's
+    # headline, the card names its owner beside it — the same line the récit
+    # page and the change ledger carry. Publisher words never stand as
+    # Vigie's own heading.
+    attributed = str(issue.get("label_kind") or "") == "attributed_headline"
+    label_source = issue.get("label_source") if isinstance(issue.get("label_source"), dict) else {}
+    owner = plain(label_source.get("source_name") or label_source.get("source_id"))[:120]
+    attrib_html = (
+        '<p class="fine">Titre d’un éditeur, cité tel quel'
+        + (f" — {esc(owner)}" if owner else "")
+        + ".</p>"
+        if attributed else ""
+    )
     nest = dossier_nest(issue.get("geo_focus"))
     tensions = [t for t in (issue.get("tensions") or []) if isinstance(t, dict)]
     spoke_names = {
@@ -676,7 +689,7 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
         f'<span class="dossier-count">{spoke_count} ont parlé · '
         f'{silent_count} n\'ont pas parlé</span>'
         f'<a class="recit-more" href="{esc(dossier_page_path(issue))}">Récit complet ↗</a></div>'
-        f'<h3 class="dossier-q">{question}</h3>{why}{promesse.html_of(issue)}'
+        f'<h3 class="dossier-q">{question}</h3>{attrib_html}{why}{promesse.html_of(issue)}'
         f"{tracking_html(issue)}{dossier_timeline_html(issue)}"
         f"{headlines}{sources}{dossier_voices_html(issue)}"
         f"{silence_line}{remix_line}{units_line}{edge_line}"
@@ -1641,15 +1654,26 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
             text = "Aucun changement de dossier depuis la dernière édition."
         items.append(_glance_item("Dernière édition", text, "#changements"))
     names: set[str] = set()
+    spoke_names: set[str] = set()
     for iss in issues or []:
         if not isinstance(iss, dict):
             continue
+        for tension in iss.get("tensions") or []:
+            if not isinstance(tension, dict):
+                continue
+            # Same spoke-priority as silence_bar: an institution that spoke in
+            # any dossier of this edition must never be counted as silent
+            # because it stayed quiet in another one.
+            spoke = str(tension.get("institution_name") or tension.get("source_name") or "").strip()
+            if spoke:
+                spoke_names.add(spoke)
         silence = iss.get("silence") if isinstance(iss.get("silence"), dict) else {}
         for entry in silence.get("silent") or []:
             if isinstance(entry, dict):
                 name = str(entry.get("institution_name") or entry.get("source_name") or "").strip()
                 if name:
                     names.add(name)
+    names -= spoke_names
     if names:
         n = len(names)
         if n == 1:

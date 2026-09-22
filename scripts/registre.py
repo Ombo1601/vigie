@@ -35,7 +35,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
 
 import store_io  # noqa: E402
 
@@ -229,11 +230,21 @@ def institution_names(payload: dict) -> dict[str, dict]:
 
 
 def voice_row(record: dict) -> dict:
-    """Who spoke / who did not, across the whole edition (institution seats)."""
+    """Who spoke / who did not, across the whole edition (institution seats).
+
+    A hostile or hand-edited state can carry non-string ids; every id is
+    coerced to text so a corrupt record renders an odd name, never a TypeError
+    that kills the render after the brief was already written.
+    """
     spoke: set[str] = set()
     for d in record.get("dossiers") or []:
-        spoke.update(d.get("spoke") or [])
-    followed = set(record.get("followed") or [])
+        if not isinstance(d, dict):
+            continue
+        seats = d.get("spoke") or []
+        if isinstance(seats, list):
+            spoke.update(str(x) for x in seats if x is not None)
+    followed_raw = record.get("followed") or []
+    followed = {str(x) for x in followed_raw if x is not None} if isinstance(followed_raw, list) else set()
     established = bool(record.get("dossiers"))
     silent = sorted(followed - spoke) if established else []
     return {
@@ -398,24 +409,31 @@ def institution_register(state: dict) -> list[dict]:
     dossier) from the newest backwards in which the institution did not speak.
     Nothing here is an escalation or a verdict: it is arithmetic over absence.
     """
-    rows = sorted((v for v in state.get("voice") or [] if v.get("edition")), key=lambda v: v["edition"])
+    rows = sorted((v for v in state.get("voice") or [] if isinstance(v, dict) and v.get("edition")), key=lambda v: v["edition"])
     names = state.get("names") or {}
-    ids: set[str] = set(names)
+    ids: set[str] = {str(i) for i in names if i is not None}
+
+    def _seats(row: dict, key: str) -> set[str]:
+        seats = row.get(key) or []
+        if not isinstance(seats, list):
+            return set()
+        return {str(x) for x in seats if x is not None}
+
     for v in rows:
-        ids.update(v.get("spoke") or [])
-        ids.update(v.get("silent") or [])
+        ids.update(_seats(v, "spoke"))
+        ids.update(_seats(v, "silent"))
     out: list[dict] = []
     established = [v for v in rows if v.get("established")]
     for iid in sorted(ids):
-        spoke_eds = [v["edition"] for v in established if iid in (v.get("spoke") or [])]
-        silent_eds = [v["edition"] for v in established if iid in (v.get("silent") or [])]
+        spoke_eds = [v["edition"] for v in established if iid in _seats(v, "spoke")]
+        silent_eds = [v["edition"] for v in established if iid in _seats(v, "silent")]
         if not spoke_eds and not silent_eds:
             continue
         streak = 0
         for v in reversed(established):
-            if iid in (v.get("silent") or []):
+            if iid in _seats(v, "silent"):
                 streak += 1
-            elif iid in (v.get("spoke") or []):
+            elif iid in _seats(v, "spoke"):
                 break
             else:
                 break
@@ -430,8 +448,8 @@ def institution_register(state: dict) -> list[dict]:
             "last_spoke": spoke_eds[-1] if spoke_eds else None,
             "silent_streak": streak,
             "current": (
-                "spoke" if current and iid in (current.get("spoke") or [])
-                else "silent" if current and iid in (current.get("silent") or [])
+                "spoke" if current and iid in _seats(current, "spoke")
+                else "silent" if current and iid in _seats(current, "silent")
                 else "unknown"
             ),
         })

@@ -103,7 +103,9 @@ def _voice_block(tension: dict) -> str:
             continue
         title = brief.plain(entry.get("title"))
         if len(title) > brief.TITLE_CAP:
-            title = title[:brief.TITLE_CAP].rstrip() + "…"
+            # The ellipsis counts: the relayed title stays within the published
+            # ≤300-char cap, exactly like the brief's own cards.
+            title = title[:brief.TITLE_CAP - 1].rstrip() + "…"
         if not title:
             continue
         source = brief.esc(entry.get("source_name") or entry.get("source_id") or "")
@@ -296,6 +298,12 @@ def render_index(dossiers: list[dict], slug_of: dict[str, str]) -> str:
         iid = str(iss.get("issue_id") or "")
         slug = slug_of.get(iid) or brief.dossier_slug(iss)
         question = brief.plain(iss.get("question"))[:220] or "Sujet suivi"
+        # The index lists Vigie's questions; when the label is a publisher's
+        # headline, say so here too — the same attribution the card and the
+        # récit page carry.
+        attributed = str(iss.get("label_kind") or "") == "attributed_headline"
+        if attributed:
+            question += " — titre d’un éditeur, cité tel quel"
         spoke = brief.safe_int(iss.get("source_count"))
         silence = iss.get("silence") if isinstance(iss.get("silence"), dict) else {}
         silent = brief.safe_int(silence.get("silent_count"), len(silence.get("silent") or []))

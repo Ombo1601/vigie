@@ -173,7 +173,8 @@ def roads_signal(store_path: Path = ROADWORKS_STORE) -> str:
     """Content signal of the declared obstructions, ignoring collection clocks.
 
     `fetched_at` and the per-event presence counters move on every collection, so
-    they are not a change; the active event set and its relayed fields are. An
+    they are not a change; the active event set and its relayed fields are. Key
+    order inside a relayed field is not a change either (sorted keys). An
     empty or unreadable store yields "" and the caller then refreshes.
     """
     try:
@@ -190,7 +191,7 @@ def roads_signal(store_path: Path = ROADWORKS_STORE) -> str:
             key=lambda e: str(e.get("event_id") or ""),
         )
     ]
-    payload = json.dumps(rows, ensure_ascii=False, default=str)
+    payload = json.dumps(rows, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -304,6 +305,10 @@ def main(argv: list[str] | None = None) -> int:
             timeout=1800,
         )
         if args.no_deploy:
+            # The edition was rendered from this collection: record the signal
+            # so the next hourly roads run compares against it instead of
+            # re-rendering identical declarations.
+            write_roads_signal(roads_signal())
             log("OK refresh complete (deploy skipped by --no-deploy)")
             return 0
         vercel = shutil.which("vercel")
