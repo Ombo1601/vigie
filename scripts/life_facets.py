@@ -71,12 +71,14 @@ FACET_BY_ID = {str(f["id"]): f for f in FACET_CATALOG}
 
 def normalize_facet_ids(raw: list[str] | None) -> list[str]:
     """Keep declared ids only, stable unique order as in FACET_CATALOG."""
-    wanted = {str(x).strip() for x in (raw or []) if str(x).strip()}
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return []
+    wanted = {str(x).strip() for x in raw if str(x).strip()}
     return [f["id"] for f in FACET_CATALOG if f["id"] in wanted]
 
 
 def issue_topic(iss: dict | None) -> str:
-    if not iss:
+    if not isinstance(iss, dict):
         return "other"
     topic_obj = iss.get("topic") or {}
     if isinstance(topic_obj, dict):
@@ -102,14 +104,16 @@ def unit_kinds_of(approach: dict) -> list[str]:
 def annotate_approaches(approaches: list[dict], issues: list[dict] | None = None) -> list[dict]:
     """Attach topic + unit_kinds for facet scoring. Does not reorder."""
     by_id: dict[str, dict] = {}
-    for iss in issues or []:
+    if not isinstance(approaches, (list, tuple)):
+        return []
+    for iss in (issues if isinstance(issues, (list, tuple)) else []):
         if not isinstance(iss, dict):
             continue
         iid = str(iss.get("issue_id") or iss.get("scar") or "")
         if iid:
             by_id[iid] = iss
     out: list[dict] = []
-    for ap in approaches or []:
+    for ap in approaches:
         if not isinstance(ap, dict):
             continue
         row = dict(ap)
@@ -162,7 +166,7 @@ def reorder_approaches(
     its original relative order at the end. Never mutates input list objects.
     """
     annotated = annotate_approaches(approaches, issues)
-    others = [ap for ap in (approaches or []) if not isinstance(ap, dict)]
+    others = [ap for ap in approaches if not isinstance(ap, dict)] if isinstance(approaches, (list, tuple)) else []
     ids = normalize_facet_ids(active_facets)
     if not ids:
         return annotated + others
@@ -181,7 +185,9 @@ def reorder_approaches(
 def same_approach_set(before: list[dict], after: list[dict]) -> bool:
     """Identity: same issue_ids as a multiset — reorder only."""
     def ids(rows: list[dict] | None) -> list[str]:
-        return sorted(str(x.get("issue_id") or "") for x in (rows or []) if isinstance(x, dict))
+        if not isinstance(rows, (list, tuple)):
+            return []
+        return sorted(str(x.get("issue_id") or "") for x in rows if isinstance(x, dict))
 
     return ids(before) == ids(after)
 
@@ -223,9 +229,11 @@ def signals_payload(approaches: list[dict], issues: list[dict] | None = None) ->
 
 def parse_facets_md_rows(md_text: str) -> list[dict]:
     """Parse published catalog table from FACETS.md — lockstep guard."""
+    if not isinstance(md_text, str):
+        return []
     rows: list[dict] = []
     in_catalog = False
-    for line in (md_text or "").splitlines():
+    for line in md_text.splitlines():
         if line.strip().startswith("## Catalog"):
             in_catalog = True
             continue

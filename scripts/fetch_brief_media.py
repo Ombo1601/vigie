@@ -429,7 +429,7 @@ def write_health_ledger(doc: dict, path: Path = HEALTH) -> None:
             "missing": sum(reasons.values()),
             "reasons": dict(sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))),
             "by_domain": {
-                host: {"missing": d["missing"], "top_reason": max(d["reasons"], key=d["reasons"].get)}
+                host: {"missing": d["missing"], "top_reason": max(d["reasons"], key=d["reasons"].get) if d["reasons"] else "unknown"}
                 for host, d in sorted(by_domain.items(), key=lambda kv: -kv[1]["missing"])
             },
             "permanent": sum(1 for e in entries.values() if isinstance(e, dict) and e.get("permanent")),
@@ -669,12 +669,12 @@ def update_media(scope: list[dict], *, offline: bool = False,
         "fetched_at": now.isoformat(timespec="seconds"),
         "scope_count": len(scoped),
         "entry_count": len(entries),
-        "with_image": sum(1 for e in entries.values() if e.get("file")),
+        "with_image": sum(1 for e in entries.values() if isinstance(e, dict) and e.get("file")),
         "fetched_this_run": fetched,
         "reused": reused,
         "feed_resolved": feed_resolved,
-        "permanent_count": sum(1 for e in entries.values() if e.get("permanent")),
-        "backed_off_count": sum(1 for e in entries.values() if e.get("retry_after")),
+        "permanent_count": sum(1 for e in entries.values() if isinstance(e, dict) and e.get("permanent")),
+        "backed_off_count": sum(1 for e in entries.values() if isinstance(e, dict) and e.get("retry_after")),
         "reasons": dict(sorted(reason_counts.items(), key=lambda kv: (-kv[1], kv[0]))),
         "media": entries,
     }

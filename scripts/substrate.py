@@ -69,6 +69,8 @@ def _day(value: object) -> str:
 # Shared facts
 # --------------------------------------------------------------------------- #
 def voices_of(issue: dict, names: dict) -> tuple[list[dict], list[dict]]:
+    issue = issue if isinstance(issue, dict) else {}
+    names = names if isinstance(names, dict) else {}
     spoke: list[dict] = []
     for voice in issue.get("tensions") or []:
         if not isinstance(voice, dict) or not voice.get("institution_id"):
@@ -99,6 +101,7 @@ def voices_of(issue: dict, names: dict) -> tuple[list[dict], list[dict]]:
 
 
 def items_of(issue: dict, cap: int) -> list[dict]:
+    issue = issue if isinstance(issue, dict) else {}
     rows: list[dict] = []
     seen: set[str] = set()
     for voice in issue.get("tensions") or []:
@@ -124,6 +127,8 @@ def items_of(issue: dict, cap: int) -> list[dict]:
 
 
 def dossier_view(issue: dict, names: dict, cap: int) -> dict:
+    issue = issue if isinstance(issue, dict) else {}
+    names = names if isinstance(names, dict) else {}
     spoke, silent = voices_of(issue, names)
     tracking = issue.get("tracking") if isinstance(issue.get("tracking"), dict) else {}
     view = {
@@ -200,11 +205,14 @@ def story_rows(ranked: list[dict], now: datetime) -> list[dict]:
 # --------------------------------------------------------------------------- #
 def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
                 state: dict, status: dict) -> dict:
+    state = state if isinstance(state, dict) else {}
+    status = status if isinstance(status, dict) else {}
     seals = state.get("seals") or []
     last = seals[-1] if seals else {}
     prev = seals[-2] if len(seals) > 1 else {}
     names = state.get("names") or {}
-    by_id = {str(i.get("issue_id")): i for i in issues if isinstance(i, dict) and i.get("issue_id")}
+    issues_list = issues if isinstance(issues, (list, tuple)) else []
+    by_id = {str(i.get("issue_id")): i for i in issues_list if isinstance(i, dict) and i.get("issue_id")}
     ledger = ledger if isinstance(ledger, dict) else {}
     has_previous = bool(ledger.get("has_previous"))
 
@@ -290,6 +298,10 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
 # --------------------------------------------------------------------------- #
 def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, roadworks: dict | None,
                     state: dict, status: dict) -> str:
+    state = state if isinstance(state, dict) else {}
+    status = status if isinstance(status, dict) else {}
+    valid_rows = [r for r in (rows or []) if isinstance(r, dict)]
+    valid_issues = [i for i in (issues or []) if isinstance(i, dict)]
     seals = state.get("seals") or []
     last = seals[-1] if seals else {}
     names = state.get("names") or {}
@@ -308,10 +320,11 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
 
     lines.append("## Le point")
     lines.append("")
-    if rows:
-        for r in rows[:MD_STORIES_CAP]:
+    if valid_rows:
+        for r in valid_rows[:MD_STORIES_CAP]:
             src = _md(r.get("source_name") or r.get("source_id") or "source")
-            lines.append(f"- **{_md(r.get('title'))}** — {src}, {_day(r.get('published'))}. <{r['url']}>")
+            url = r.get("url") or ""
+            lines.append(f"- **{_md(r.get('title'))}** — {src}, {_day(r.get('published'))}. <{url}>")
             summary = _plain(r.get("summary"), SUMMARY_CAP)
             if summary:
                 lines.append(f"  {_md(summary)}")
@@ -321,7 +334,7 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
 
     lines.append("## Ce que les sources racontent ensemble")
     lines.append("")
-    dossiers = [i for i in issues if isinstance(i, dict) and i.get("issue_id")]
+    dossiers = [i for i in valid_issues if i.get("issue_id")]
     if dossiers:
         for iss in dossiers:
             view = dossier_view(iss, names, MD_DOSSIER_ITEMS_CAP)
@@ -338,7 +351,7 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
             if view.get("media_remix"):
                 lines.append("- Aucun texte officiel dans ce dossier : reprise médiatique seulement.")
             for it in view["items"]:
-                lines.append(f"- {_md(it['title'])} — {_md(it['source_name'])}, {_day(it['published_at'])}. <{it['url']}>")
+                lines.append(f"- {_md(it['title'])} — {_md(it['source_name'])}, {_day(it['published_at'])}. <{it.get('url') or ''}>")
             lines.append("")
     else:
         lines.append("Aucun dossier à plusieurs voix dans cette édition.")

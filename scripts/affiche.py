@@ -42,6 +42,7 @@ def _day(value: object) -> str:
 
 
 def _story(r: dict) -> str:
+    r = r if isinstance(r, dict) else {}
     src = esc(r.get("source_name") or r.get("source_id") or "")
     url = brief.safe_url(r.get("url"))
     title = esc(r.get("title"))
@@ -59,8 +60,10 @@ def _story(r: dict) -> str:
 def area_blocks(rows: list[dict]) -> list[tuple[str, list[dict]]]:
     """Quartiers ordered by the number of local stories that mention them."""
     per: dict[str, list[dict]] = {k: [] for k in brief.AREAS}
-    for r in rows:
-        for key in r.get("areas") or []:
+    for r in (rows if isinstance(rows, (list, tuple)) else []):
+        if not isinstance(r, dict):
+            continue
+        for key in (r.get("areas") if isinstance(r.get("areas"), (list, tuple)) else []):
             if key in per:
                 per[key].append(r)
     ranked = sorted((k for k in per if per[k]), key=lambda k: (-len(per[k]), k))
@@ -81,8 +84,12 @@ def roads_rows(roadworks: dict | None) -> list[dict]:
 
 def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | None,
                    state: dict, generated_at: str, run: dict | None = None) -> str:
+    ranked = [r for r in ranked if isinstance(r, dict)] if isinstance(ranked, (list, tuple)) else []
+    issues = [i for i in issues if isinstance(i, dict)] if isinstance(issues, (list, tuple)) else []
+    roadworks = roadworks if isinstance(roadworks, dict) else {}
+    state = state if isinstance(state, dict) else {}
     now = brief.parse_date(generated_at) or datetime.now(timezone.utc)
-    rows, _ = brief.prepare_items(ranked or [], now)
+    rows, _ = brief.prepare_items(ranked, now)
     run = brief.latest_run() if run is None else run
     status = brief.collection_status(run, now)
     edition_at = status.get("at") or generated_at

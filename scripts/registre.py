@@ -230,14 +230,16 @@ def institution_names(payload: dict) -> dict[str, dict]:
 
 def voice_row(record: dict) -> dict:
     """Who spoke / who did not, across the whole edition (institution seats)."""
+    record = record if isinstance(record, dict) else {}
     spoke: set[str] = set()
     for d in record.get("dossiers") or []:
-        spoke.update(d.get("spoke") or [])
-    followed = set(record.get("followed") or [])
+        if isinstance(d, dict):
+            spoke.update(s for s in (d.get("spoke") or []) if isinstance(s, str))
+    followed = {str(f) for f in (record.get("followed") or []) if isinstance(f, str)}
     established = bool(record.get("dossiers"))
     silent = sorted(followed - spoke) if established else []
     return {
-        "edition": record["edition"],
+        "edition": str(record.get("edition") or ""),
         "spoke": sorted(spoke & followed) if followed else sorted(spoke),
         "silent": silent,
         "established": established,
@@ -398,8 +400,9 @@ def institution_register(state: dict) -> list[dict]:
     dossier) from the newest backwards in which the institution did not speak.
     Nothing here is an escalation or a verdict: it is arithmetic over absence.
     """
-    rows = sorted((v for v in state.get("voice") or [] if v.get("edition")), key=lambda v: v["edition"])
-    names = state.get("names") or {}
+    state = state if isinstance(state, dict) else {}
+    rows = sorted((v for v in state.get("voice") or [] if isinstance(v, dict) and v.get("edition")), key=lambda v: str(v.get("edition") or ""))
+    names = state.get("names") if isinstance(state.get("names"), dict) else {}
     ids: set[str] = set(names)
     for v in rows:
         ids.update(v.get("spoke") or [])
@@ -435,27 +438,29 @@ def institution_register(state: dict) -> list[dict]:
                 else "unknown"
             ),
         })
-    out.sort(key=lambda r: (0 if r["source_kind"] == "official" else 1, -r["silent_streak"], r["institution_id"]))
+    out.sort(key=lambda r: (0 if r.get("source_kind") == "official" else 1, -int(r.get("silent_streak", 0)), str(r.get("institution_id", ""))))
     return out
 
 
 def checkpoint_text(state: dict) -> str:
+    state = state if isinstance(state, dict) else {}
     seals = state.get("seals") or []
     trav = (state.get("travaux") or {}).get("seals") or []
     if not seals:
         return f"{ORIGIN}\n0\n\n"
-    last = seals[-1]
+    last = seals[-1] if isinstance(seals[-1], dict) else {}
     lines = [ORIGIN, str(last.get("seq", "")), str(last.get("root", "")), "",
              f"edition {last.get('edition', '')}"]
     if trav:
-        t = trav[-1]
+        t = trav[-1] if isinstance(trav[-1], dict) else {}
         lines.append(f"travaux {t.get('seq', '')} {t.get('root', '')} {t.get('fetched_at', '')}")
     lines.append(f"method {METHOD}")
     return "\n".join(lines) + "\n"
 
 
 def public_chain(state: dict) -> dict:
-    seals = state.get("seals") or []
+    state = state if isinstance(state, dict) else {}
+    seals = [s for s in (state.get("seals") or []) if isinstance(s, dict)]
     shown = seals[-PUBLIC_SEAL_CAP:]
     anchor = ""
     if len(seals) > len(shown):
@@ -481,11 +486,12 @@ def public_chain(state: dict) -> dict:
 
 
 def public_institutions(state: dict) -> dict:
-    seals = state.get("seals") or []
+    state = state if isinstance(state, dict) else {}
+    seals = [s for s in (state.get("seals") or []) if isinstance(s, dict)]
     return {
         "method": METHOD,
         "edition": seals[-1].get("edition", "") if seals else "",
-        "edition_count": len([v for v in state.get("voice") or [] if v.get("established")]),
+        "edition_count": len([v for v in state.get("voice") or [] if isinstance(v, dict) and v.get("established")]),
         "note": (
             "Une institution « n'a pas parlé » quand aucun de ses flux suivis n'apparaît dans un dossier "
             "de l'édition. Compteur d'absence, jamais un verdict."
@@ -495,12 +501,13 @@ def public_institutions(state: dict) -> dict:
 
 
 def public_travaux(state: dict) -> dict:
-    trav = state.get("travaux") or {}
-    seals = trav.get("seals") or []
+    state = state if isinstance(state, dict) else {}
+    trav = state.get("travaux") if isinstance(state.get("travaux"), dict) else {}
+    seals = [s for s in (trav.get("seals") or []) if isinstance(s, dict)]
     return {
         "method": ROADS_METHOD,
         "size": len(seals),
-        "root": seals[-1]["root"] if seals else "",
+        "root": seals[-1].get("root", "") if seals else "",
         "latest_record": trav.get("latest_record"),
         "seals": [{k: s.get(k) for k in ("seq", "fetched_at", "prev", "leaf", "root", "active_count")} for s in seals[-PUBLIC_SEAL_CAP:]],
         "note": "Un sceau par changement du jeu d'entraves actives déclaré par la Ville (flux WZDX officiel).",
@@ -518,14 +525,15 @@ def _date(value: object) -> str:
 
 
 def _short(root: str) -> str:
-    return esc(root[:12]) if isinstance(root, str) else "—"
+    return esc(str(root)[:12]) if root is not None else "—"
 
 
 def render_registre_html(state: dict) -> str:
-    seals = state.get("seals") or []
+    state = state if isinstance(state, dict) else {}
+    seals = [s for s in (state.get("seals") or []) if isinstance(s, dict)]
     last = seals[-1] if seals else None
     register = institution_register(state)
-    established_count = len([v for v in state.get("voice") or [] if v.get("established")])
+    established_count = len([v for v in state.get("voice") or [] if isinstance(v, dict) and v.get("established")])
     trav = (state.get("travaux") or {}).get("seals") or []
 
     if last:
@@ -573,7 +581,7 @@ def render_registre_html(state: dict) -> str:
     def _seal_row(s: dict) -> str:
         rec = s.get("record") or {}
         v = voice_row(rec)
-        led = rec.get("ledger") or {}
+        led = rec.get("ledger") if isinstance(rec.get("ledger"), dict) else {}
         return (
             f'<li class="reg-seal"><a class="reg-seq" href="/memoire/{s.get("seq", "")}.html">n° {s.get("seq", "")}</a>'
             f'<span class="reg-when">{_date(s.get("edition"))}</span>'

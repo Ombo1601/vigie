@@ -301,6 +301,8 @@ SPEAKER_TRAIL = re.compile(
 
 def blob(c: dict) -> str:
     # The publisher's domain, route and tracking query are not article evidence.
+    if not isinstance(c, dict):
+        return ""
     return " ".join(x for x in (c.get("title"), c.get("summary")) if isinstance(x, str) and x)
 
 
@@ -347,6 +349,7 @@ def _claim(
 
 def propose_claims(c: dict) -> list[dict]:
     """Rules-only speech objects. Proposed never truth. No title-colon priest."""
+    c = c if isinstance(c, dict) else {}
     title = c.get("title") if isinstance(c.get("title"), str) else ""
     summary = c.get("summary") if isinstance(c.get("summary"), str) else ""
     out: list[dict] = []
@@ -420,6 +423,8 @@ def propose_claims(c: dict) -> list[dict]:
 
 
 def propose_geo(c: dict, text: str) -> dict:
+    c = c if isinstance(c, dict) else {}
+    text = text if isinstance(text, str) else ""
     source_geo = c.get("geo") or "unknown"
     source_nest = c.get("nest_role") or "unknown"
     source_kind = (c.get("source_kind") or "media").lower()
@@ -509,6 +514,7 @@ def propose_geo(c: dict, text: str) -> dict:
 
 def propose_topics(text: str) -> list[dict]:
     found = []
+    text = text if isinstance(text, str) else ""
     for label, pat in TOPIC_RULES:
         if pat.search(text):
             found.append({"status": "proposed", "topic": label})
@@ -528,7 +534,9 @@ def propose_impacts(topics: list[dict], title: str = "", summary: str = "") -> l
 
     out: list[dict] = []
     seen: set[str] = set()
-    for t in topics:
+    for t in (topics if isinstance(topics, (list, tuple)) else []):
+        if not isinstance(t, dict):
+            continue
         lab = t.get("topic")
         if lab == "other":
             continue
@@ -707,6 +715,8 @@ def propose_impact_units(title: str, summary: str) -> list[dict]:
 
 
 def enrich_one(c: dict, *, enriched_at: str | None = None) -> dict:
+    if not isinstance(c, dict):
+        return {}
     item = dict(c)
     text = blob(c)
     geo = propose_geo(c, text)

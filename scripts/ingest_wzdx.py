@@ -209,7 +209,9 @@ def diff_events(current: list[dict], previous: list[dict] | None, *, now: dateti
         return empty
 
     def keyed(rows: object) -> dict[str, dict]:
-        return {str(e["event_id"]): e for e in (rows or []) if isinstance(e, dict) and e.get("event_id")}
+        if not isinstance(rows, (list, tuple)):
+            return {}
+        return {str(e["event_id"]): e for e in rows if isinstance(e, dict) and e.get("event_id")}
 
     cur, prev = keyed(current), keyed(previous)
     new = [
@@ -303,6 +305,7 @@ def update_event_history(history: dict, present_events: list[dict], collection_t
     an absence from the feed, never a claim that the works ended (removed ≠
     ended), and never a "miss" for a work the publisher still lists as finished.
     """
+    history = history if isinstance(history, dict) else empty_event_history()
     collection_ts = str(collection_ts or "").strip()
     if not collection_ts:
         return history
@@ -316,8 +319,8 @@ def update_event_history(history: dict, present_events: list[dict], collection_t
         if isinstance(v, dict)
     }
     present: set[str] = set()
-    for event in present_events or []:
-        eid = str((event or {}).get("event_id") or "").strip()
+    for event in present_events if isinstance(present_events, (list, tuple)) else []:
+        eid = str(event.get("event_id") or "").strip() if isinstance(event, dict) else ""
         if not eid:
             continue
         present.add(eid)

@@ -44,14 +44,21 @@ _ATTRIBUTED = "Dossier étiqueté par un titre d’éditeur — non repris dans 
 _NOT_LABELLED = "Dossier sans libellé scellé."
 
 
-def _name(names: dict, iid: str) -> str:
-    meta = names.get(iid) if isinstance(names, dict) else None
+def _name(names: dict, iid: object) -> str:
+    if not isinstance(names, dict):
+        return str(iid or "")
+    try:
+        meta = names.get(iid)
+    except TypeError:
+        return str(iid or "")
     if isinstance(meta, dict) and meta.get("name"):
         return str(meta["name"])
-    return iid
+    return str(iid or "")
 
 
 def _question(entry: dict) -> str:
+    if not isinstance(entry, dict):
+        return _NOT_LABELLED
     question = str(entry.get("question") or "").strip()
     if question:
         return question
@@ -91,6 +98,8 @@ def _chrome(title: str, desc: str, canonical: str, body: str) -> str:
 
 
 def _voices_html(record: dict, names: dict) -> str:
+    record = record if isinstance(record, dict) else {}
+    names = names if isinstance(names, dict) else {}
     row = registre.voice_row(record)
     spoke = [row_i for row_i in (row.get("spoke") or [])]
     silent = [row_i for row_i in (row.get("silent") or [])]
@@ -116,6 +125,8 @@ def _voices_html(record: dict, names: dict) -> str:
 
 
 def _ledger_html(record: dict, dossier_questions: dict[str, str]) -> str:
+    record = record if isinstance(record, dict) else {}
+    dossier_questions = dossier_questions if isinstance(dossier_questions, dict) else {}
     ledger = record.get("ledger") if isinstance(record.get("ledger"), dict) else {}
     if not ledger.get("has_previous"):
         return (
@@ -150,6 +161,9 @@ def _ledger_html(record: dict, dossier_questions: dict[str, str]) -> str:
 
 
 def _dossiers_html(record: dict, names: dict, current_routes: dict[str, str]) -> str:
+    record = record if isinstance(record, dict) else {}
+    names = names if isinstance(names, dict) else {}
+    current_routes = current_routes if isinstance(current_routes, dict) else {}
     dossiers = [d for d in (record.get("dossiers") or []) if isinstance(d, dict) and d.get("issue_id")]
     if not dossiers:
         return (
@@ -194,6 +208,9 @@ def _nav_html(seq: int, prev_seq: int | None, next_seq: int | None) -> str:
 
 def render_edition(seal: dict, names: dict, *, prev_seq: int | None, next_seq: int | None,
                    current_routes: dict[str, str] | None = None) -> str:
+    seal = seal if isinstance(seal, dict) else {}
+    names = names if isinstance(names, dict) else {}
+    current_routes = current_routes if isinstance(current_routes, dict) else {}
     record = seal.get("record") if isinstance(seal.get("record"), dict) else {}
     seq = _safe_int(seal.get("seq"))
     root = str(seal.get("root") or "")
@@ -210,7 +227,7 @@ def render_edition(seal: dict, names: dict, *, prev_seq: int | None, next_seq: i
         f'<a href="/registre/chain.json">vérifier la chaîne</a>. Identifiants et comptes seulement — '
         "aucun texte d’éditeur dans le registre.</p></header>"
         f"{_nav_html(seq, prev_seq, next_seq)}"
-        f"{_dossiers_html(record, names, current_routes or {})}"
+        f"{_dossiers_html(record, names, current_routes)}"
         f"{_voices_html(record, names)}"
         f"{_ledger_html(record, questions)}"
         '<p class="fine">Scellé le ' + brief.date_html(edition) + " — rien de ce qui précède n’a été réécrit.</p>"
@@ -224,17 +241,21 @@ def render_edition(seal: dict, names: dict, *, prev_seq: int | None, next_seq: i
 
 
 def render_index(seals: list[dict], names: dict, *, total: int | None = None) -> str:
+    names = names if isinstance(names, dict) else {}
+    valid_seals = [s for s in seals if isinstance(s, dict)] if isinstance(seals, (list, tuple)) else []
     items = []
-    for seal in sorted(seals, key=lambda s: _safe_int(s.get("seq")), reverse=True):
+    for seal in sorted(valid_seals, key=lambda s: _safe_int(s.get("seq")), reverse=True):
         record = seal.get("record") if isinstance(seal.get("record"), dict) else {}
         seq = _safe_int(seal.get("seq"))
         row = registre.voice_row(record)
         ledger = record.get("ledger") if isinstance(record.get("ledger"), dict) else {}
         changes = ""
         if ledger.get("has_previous"):
+            new_l = len(ledger.get("new")) if isinstance(ledger.get("new"), (list, tuple)) else 0
+            dev_l = len(ledger.get("developed")) if isinstance(ledger.get("developed"), (list, tuple)) else 0
+            quiet_l = len(ledger.get("quiet")) if isinstance(ledger.get("quiet"), (list, tuple)) else 0
             changes = (
-                f" · +{len(ledger.get('new') or [])} / ~{len(ledger.get('developed') or [])} "
-                f"/ −{len(ledger.get('quiet') or [])}"
+                f" · +{new_l} / ~{dev_l} / −{quiet_l}"
             )
         items.append(
             '<li class="memoire-item">'

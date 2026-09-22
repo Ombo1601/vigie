@@ -94,7 +94,8 @@ def build_digest(
 
 def digest_identity_tuple(digest: dict) -> tuple:
     """Stable identity for tests — order + fingerprints, nothing else."""
-    ident = digest.get("identity") or {}
+    digest = digest if isinstance(digest, dict) else {}
+    ident = digest.get("identity") if isinstance(digest.get("identity"), dict) else {}
     return (
         tuple(ident.get("issue_ids") or []),
         tuple(ident.get("fingerprints") or []),
@@ -177,6 +178,7 @@ def digest_approach_link_html(ap: dict, details: dict | None = None) -> str:
 
 def render_morning_txt(digest: dict) -> str:
     """Plain glance for future alert channel — store questions only, no LLM."""
+    digest = digest if isinstance(digest, dict) else {}
     lines = [
         "Vigie — morning pulse",
         NOTE,
@@ -218,6 +220,7 @@ def render_morning_txt(digest: dict) -> str:
 
 def render_morning_widget(digest: dict) -> str:
     """Optional widget / alert paste — same store twin, no LLM, no second ranking."""
+    digest = digest if isinstance(digest, dict) else {}
     clock = rank_display.format_store_clock(str(digest.get("clustered_at") or ""))
     lines = [
         "Vigie morning",
@@ -254,6 +257,7 @@ def render_morning_widget(digest: dict) -> str:
 
 def render_morning_html(digest: dict) -> str:
     """Thin ambient surface — one composition, same Approaches, deep-link to Arrival."""
+    digest = digest if isinstance(digest, dict) else {}
     approaches = [a for a in (digest.get("approaches") or []) if isinstance(a, dict)]
     source_details = digest.get("source_details") or {}
     rows = "".join(digest_approach_link_html(a, source_details.get(str(a.get("issue_id") or ""))) for a in approaches)

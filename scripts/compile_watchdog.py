@@ -280,18 +280,35 @@ def compile_watchdog(ops_dir: Path | None = None, data_dir: Path | None = None,
     return out_doc
 
 
-def _render_markdown(snap: dict, feed_sources: dict, media_latest: dict, weeks: list[dict]) -> str:
+def _render_markdown(snap: dict, feed_sources: dict | None = None, media_latest: dict | None = None, weeks: list[dict] | None = None) -> str:
+    snap = snap if isinstance(snap, dict) else {}
+    feed_sources = feed_sources if isinstance(feed_sources, dict) else {}
+    media_latest = media_latest if isinstance(media_latest, dict) else {}
+    weeks = weeks if isinstance(weeks, list) else []
+    week = snap.get("week") or "unknown"
+    reference = snap.get("reference") or "unknown time"
+    attention = snap.get("attention") if isinstance(snap.get("attention"), list) else []
+    watch = snap.get("watch") if isinstance(snap.get("watch"), list) else []
+    media = snap.get("media") if isinstance(snap.get("media"), dict) else {}
+    edition = snap.get("edition") if isinstance(snap.get("edition"), dict) else {}
+    refresh = snap.get("refresh") if isinstance(snap.get("refresh"), dict) else {}
+    disk_bytes = snap.get("disk_bytes") or 0
+    try:
+        disk_mib = f"{disk_bytes / 1024 ** 2:.1f}"
+    except (TypeError, ValueError, ZeroDivisionError):
+        disk_mib = "0.0"
+
     lines = [
-        f"# Vigie watchdog - {snap['week']}",
+        f"# Vigie watchdog - {week}",
         "",
-        f"Compiled from the ledgers at {snap['reference'] or 'unknown time'}.",
+        f"Compiled from the ledgers at {reference}.",
         "Internal machine room; not published. Regenerated every run by `scripts/compile_watchdog.py`.",
         "",
         "## Needs attention",
         "",
     ]
-    if snap["attention"]:
-        lines += [f"- {line}" for line in snap["attention"]]
+    if attention:
+        lines += [f"- {line}" for line in attention]
     elif snap.get("blind_channels"):
         lines.append("Nothing needs a human, but some channels are blind: "
                      + ", ".join(snap["blind_channels"]) + ". Health is not claimed.")
@@ -299,8 +316,8 @@ def _render_markdown(snap: dict, feed_sources: dict, media_latest: dict, weeks: 
         lines.append("Nothing. The machine is healthy.")
     else:
         lines.append("No facts. The machine room is blind; health is unknown.")
-    if snap["watch"]:
-        lines += ["", "## Watch", ""] + [f"- {line}" for line in snap["watch"]]
+    if watch:
+        lines += ["", "## Watch", ""] + [f"- {line}" for line in watch]
     lines += ["", "## Sources (feed-health-v1)", "",
               "| source | status | fails | last ok (h ago) | yield avg | trend | 304s |",
               "|--------|--------|-------|-----------------|-----------|-------|------|"]
@@ -315,23 +332,25 @@ def _render_markdown(snap: dict, feed_sources: dict, media_latest: dict, weeks: 
         lines.append("| (no feed facts yet) | - | - | - | - | - | - |")
     reasons = media_latest.get("reasons") or {}
     lines += ["", "## Images (media-health-v1)", "",
-              f"- with image: {snap['media']['with_image']} (scope missing: {snap['media']['missing']})",
-              f"- resolved via publisher feed media: {snap['media']['feed_resolved']}",
+              f"- with image: {media.get('with_image')} (scope missing: {media.get('missing')})",
+              f"- resolved via publisher feed media: {media.get('feed_resolved')}",
               f"- reasons: {', '.join(f'{k}={v}' for k, v in reasons.items()) or 'none'}",
               "", "## Edition (edition-metrics-v1)", "",
-              f"- items ranked: {snap['edition']['items']} | dossiers: {snap['edition']['dossiers']} "
-              f"| roadworks active: {snap['edition']['roadworks_active']}",
-              f"- top-of-brief churn: avg {snap['edition']['churn_in_avg']} in/edition "
-              f"over {snap['edition']['edition_count']} recorded editions",
+              f"- items ranked: {edition.get('items')} | dossiers: {edition.get('dossiers')} "
+              f"| roadworks active: {edition.get('roadworks_active')}",
+              f"- top-of-brief churn: avg {edition.get('churn_in_avg')} in/edition "
+              f"over {edition.get('edition_count')} recorded editions",
               "", "## Machine", "",
-              f"- refresh log: {snap['refresh']['fails_since_ok']} FAIL since last deploy "
-              f"({snap['refresh']['fails']} in the 7-day window); "
-              f"last production deploy: {snap['refresh']['last_deploy'] or 'unknown'}",
-              f"- data/ on disk: {snap['disk_bytes'] / 1024 ** 2:.1f} MiB",
+              f"- refresh log: {refresh.get('fails_since_ok')} FAIL since last deploy "
+              f"({refresh.get('fails')} in the 7-day window); "
+              f"last production deploy: {refresh.get('last_deploy') or 'unknown'}",
+              f"- data/ on disk: {disk_mib} MiB",
               "", "## Weekly history", "",
               "| week | attention | missing img | churn avg | fails | disk MiB |",
               "|------|-----------|-------------|-----------|-------|----------|"]
     for w in weeks:
+        if not isinstance(w, dict):
+            continue
         lines.append(
             f"| {w.get('week')} | {w.get('attention_count')} | {w.get('missing_images')} "
             f"| {w.get('churn_in_avg')} | {w.get('fails')} "

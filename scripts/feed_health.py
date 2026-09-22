@@ -112,6 +112,8 @@ def _disk_bytes(src_dir: Path) -> int:
 
 def _streak(timeline: list[dict], predicate) -> int:
     count = 0
+    if not isinstance(timeline, (list, tuple)):
+        return 0
     for run in reversed(timeline):
         if predicate(run):
             count += 1
@@ -122,7 +124,7 @@ def _streak(timeline: list[dict], predicate) -> int:
 
 def _yield_trend(yields: list[int]) -> str | None:
     """"rising"/"falling"/"flat" from the two halves of the yield window."""
-    if len(yields) < 4:
+    if not isinstance(yields, (list, tuple)) or len(yields) < 4:
         return None
     half = len(yields) // 2
     older = sum(yields[:half]) / half

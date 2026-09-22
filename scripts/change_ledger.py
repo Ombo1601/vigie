@@ -38,6 +38,7 @@ _NOTE = (
 
 
 def _entry(issue: dict, change: str) -> dict:
+    issue = issue if isinstance(issue, dict) else {}
     row = {k: issue.get(k) for k in _ENTRY_FIELDS}
     row["change"] = change
     row["status"] = "proposed"
@@ -57,6 +58,7 @@ def _entry(issue: dict, change: str) -> dict:
 
 
 def _latest_pub(issue: dict) -> str:
+    issue = issue if isinstance(issue, dict) else {}
     evidence = issue.get("evidence")
     value = evidence.get("publication_latest") if isinstance(evidence, dict) else None
     return str(value) if isinstance(value, str) else ""
@@ -84,6 +86,8 @@ def _development(current: dict, previous: dict) -> dict:
     counts and publication recency already in the issue store are used -
     nothing is inferred or fetched.
     """
+    current = current if isinstance(current, dict) else {}
+    previous = previous if isinstance(previous, dict) else {}
     delta: dict = {}
     cur_items, prev_items = _count(current.get("item_count")), _count(previous.get("item_count"))
     if cur_items is not None and prev_items is not None and cur_items > prev_items:
@@ -104,7 +108,9 @@ def _development(current: dict, previous: dict) -> dict:
 
 def _index(issues: list[dict]) -> dict[str, dict]:
     out: dict[str, dict] = {}
-    for issue in issues or []:
+    if not isinstance(issues, (list, tuple)):
+        return out
+    for issue in issues:
         if isinstance(issue, dict) and issue.get("issue_id"):
             out[str(issue["issue_id"])] = issue
     return out

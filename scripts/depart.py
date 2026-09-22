@@ -63,7 +63,9 @@ def _event_when(event: dict) -> str:
 
 
 def _ordered_events(events: list[dict]) -> list[dict]:
-    ordered = sorted(events, key=lambda e: str(e.get("event_id") or ""))
+    events = events if isinstance(events, (list, tuple)) else []
+    valid = [e for e in events if isinstance(e, dict)]
+    ordered = sorted(valid, key=lambda e: str(e.get("event_id") or ""))
     ordered.sort(key=lambda e: str(e.get("update_date") or ""), reverse=True)
     ordered.sort(key=lambda e: brief.RW_SEVERITY.get(str(e.get("vehicle_impact") or ""), 6))
     return ordered
@@ -82,8 +84,10 @@ def _street_index(events: list[dict]) -> list[dict]:
         impact = str(event.get("vehicle_impact") or "")
         label = brief.RW_IMPACT_LABELS.get(impact, brief.RW_IMPACT_LABELS["unknown"])
         until = brief.parse_date(event.get("end_date"))
-        for raw in event.get("road_names") or []:
-            name = brief.plain(str(raw or ""))
+        for raw in (event.get("road_names") if isinstance(event.get("road_names"), (list, tuple)) else []):
+            if raw is None:
+                continue
+            name = brief.plain(str(raw))
             key = brief._street_key(raw)
             if not name or not key:
                 continue
@@ -117,7 +121,7 @@ def _rows_html(events: list[dict]) -> str:
             ) if label
         ]
         road_keys = " ".join(
-            key for key in (brief._street_key(raw) for raw in (event.get("road_names") or [])[:6]) if key
+            key for key in (brief._street_key(raw) for raw in ((event.get("road_names") or []) if isinstance(event.get("road_names"), list) else [])[:6]) if key
         )
         dates = _event_when(event)
         dates_html = f'<p class="depart-dates">{dates}</p>' if dates else ""
@@ -135,7 +139,7 @@ def _question_pick(issues: list[dict]) -> dict | None:
     best = None
     best_editions = -1
     candidates = sorted(
-        (i for i in (issues or []) if isinstance(i, dict) and i.get("question")),
+        (i for i in (issues if isinstance(issues, (list, tuple)) else []) if isinstance(i, dict) and i.get("question")),
         key=lambda i: str(i.get("issue_id") or ""),
     )
     for issue in candidates:
@@ -210,6 +214,9 @@ def render_depart(roadworks: dict, issues: list[dict], ledger: dict, state: dict
                   generated_at: str) -> str:
     now = brief.parse_date(generated_at)
     rw = roadworks if isinstance(roadworks, dict) else {}
+    issues = issues if isinstance(issues, (list, tuple)) else []
+    ledger = ledger if isinstance(ledger, dict) else {}
+    state = state if isinstance(state, dict) else {}
     events = [e for e in (rw.get("events") or []) if isinstance(e, dict) and e.get("event_id")]
     fetched = brief.parse_date(rw.get("fetched_at"))
     stale = False

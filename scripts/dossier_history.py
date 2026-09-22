@@ -42,6 +42,8 @@ def _safe_int(value: object, default: int = 0) -> int:
 
 
 def _parse_ts(value: str) -> datetime | None:
+    if not isinstance(value, str):
+        return None
     try:
         return datetime.fromisoformat(value)
     except (TypeError, ValueError):
@@ -114,6 +116,7 @@ def update_history(history: dict, issues: list[dict], edition_ts: str) -> dict:
     Dossiers absent from this edition gain editions_missed - an absence from
     the collection, never a resolution.
     """
+    history = history if isinstance(history, dict) else empty_history()
     edition_ts = str(edition_ts or "").strip()
     if not edition_ts:
         return history
@@ -208,6 +211,8 @@ def update_history(history: dict, issues: list[dict], edition_ts: str) -> dict:
 
 def tracking_of(history: dict, issue_id: str) -> dict | None:
     """The per-dossier summary embedded in latest_issues.json (facts only)."""
+    if not isinstance(history, dict):
+        return None
     rec = (history.get("dossiers") or {}).get(str(issue_id))
     if not isinstance(rec, dict):
         return None

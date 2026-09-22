@@ -1,4 +1,4 @@
-﻿"""Vigie faces v0.2 - map-scoped publisher faces. Never invent.
+"""Vigie faces v0.2 - map-scoped publisher faces. Never invent.
 
 Fetches og:image / twitter:image only for what the lookout shows:
 Near me, Province/Linked life-hit crown, fight Stage voices.
@@ -182,8 +182,14 @@ def load_issues() -> list[dict]:
 
 def issue_candidate_ids(iss: dict) -> list[str]:
     ids: list[str] = []
+    if not isinstance(iss, dict):
+        return ids
     for tension in iss.get("tensions") or []:
+        if not isinstance(tension, dict):
+            continue
         for it in tension.get("items") or []:
+            if not isinstance(it, dict):
+                continue
             cid = it.get("candidate_id") or it.get("id")
             if cid:
                 ids.append(str(cid))
@@ -192,9 +198,13 @@ def issue_candidate_ids(iss: dict) -> list[str]:
 
 def map_scope(cands: list[dict], issues: list[dict]) -> list[dict]:
     """IDs the citizen can see: Near me, life-hit Province/Linked crowns, fight voices."""
-    by_id = {str(c.get("id")): c for c in cands if c.get("id")}
+    cands = cands if isinstance(cands, (list, tuple)) else []
+    issues = issues if isinstance(issues, (list, tuple)) else []
+    by_id = {str(c.get("id")): c for c in cands if isinstance(c, dict) and c.get("id")}
     buckets: dict[str, list] = {"near": [], "province": [], "linked": []}
     for c in cands:
+        if not isinstance(c, dict):
+            continue
         nest = rd.section_for(c)
         if nest == "near" and rd.is_booth_or_brief(c):
             nest = "province"
@@ -204,6 +214,8 @@ def map_scope(cands: list[dict], issues: list[dict]) -> list[dict]:
     scoped: dict[str, dict] = {}
 
     def add(c: dict) -> None:
+        if not isinstance(c, dict):
+            return
         cid = str(c.get("id") or "")
         if cid and cid not in scoped:
             scoped[cid] = c

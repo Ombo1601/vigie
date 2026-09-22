@@ -144,12 +144,18 @@ def date_html(value: object, *, fallback: str = "Date non précisée") -> str:
 
 
 def collection_status(run: dict, now: datetime) -> dict:
+    run = run if isinstance(run, dict) else {}
     results = run.get("results") or []
     by_id = {r.get("source_id"): r for r in results if isinstance(r, dict)}
     enabled = run.get("enabled_rss") or list(by_id)
     ok = sum(bool(by_id.get(s, {}).get("ok")) and not by_id.get(s, {}).get("parse_error") for s in enabled)
     stamp = parse_date(run.get("fetched_at"))
-    age = (now - stamp).total_seconds() if stamp else None
+    if stamp and now:
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        age = (now - stamp).total_seconds()
+    else:
+        age = None
     stale = not enabled or age is None or age > 6 * 3600 or age < -300
     return {"ok": ok, "total": len(enabled), "stale": stale,
             "partial": not enabled or ok < len(enabled), "at": stamp.isoformat() if stamp else "",
@@ -212,8 +218,12 @@ def load_brief_media() -> dict:
 
 def prepare_items(ranked: list[dict], now: datetime) -> tuple[list[dict], int]:
     """Preserve rank order; age gate by publication, never fetch time."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     rows, excluded, seen = [], 0, set()
-    for item in ranked or []:
+    for item in (ranked if isinstance(ranked, (list, tuple)) else []):
         if not isinstance(item, dict):
             excluded += 1
             continue
@@ -266,6 +276,9 @@ def prepare_items(ranked: list[dict], now: datetime) -> tuple[list[dict], int]:
 
 
 def related_sources(item: dict, issues: list[dict], eligible: dict[str, dict]) -> list[dict]:
+    if not isinstance(item, dict) or not item.get("url"):
+        return []
+    eligible = eligible if isinstance(eligible, dict) else {}
     rows, seen = [], {item["url"]}
     for issue in issues or []:
         if not isinstance(issue, dict):
@@ -281,7 +294,7 @@ def related_sources(item: dict, issues: list[dict], eligible: dict[str, dict]) -
             continue
         for entry in entries:
             other = eligible.get(entry.get("candidate_id"))
-            if other and other["url"] not in seen:
+            if isinstance(other, dict) and other.get("url") and other["url"] not in seen:
                 seen.add(other["url"])
                 rows.append(other)
     return rows[:5]
@@ -303,6 +316,7 @@ def dossier_member_ids(issues: list[dict]) -> set:
 
 def why_here_line(item: dict) -> str:
     """Visible because-clause. Geography is proposed, never a proof of effect."""
+    item = item if isinstance(item, dict) else {}
     geo = item.get("geo")
     if item.get("source_kind") == "official" and geo == "quebec-city":
         return "Pourquoi ici : document d’une source officielle locale."
@@ -320,6 +334,7 @@ HEADLINE_NEST = {"quebec-city": 0, "quebec": 1, "linked": 2}
 
 
 def _issue_dom_id(issue: dict) -> str:
+    issue = issue if isinstance(issue, dict) else {}
     raw = re.sub(r"[^a-zA-Z0-9_-]+", "", str(issue.get("issue_id") or ""))[:64]
     return raw or "x"
 
@@ -347,6 +362,7 @@ def dossier_page_path(issue: dict) -> str:
 
 
 def _headline_rows(issue: dict) -> list[dict]:
+    issue = issue if isinstance(issue, dict) else {}
     rows: list[dict] = []
     for tension in issue.get("tensions") or []:
         if not isinstance(tension, dict):
@@ -384,14 +400,21 @@ def _headline_rows(issue: dict) -> list[dict]:
 
 
 def _headline_li(row: dict) -> str:
-    date_attr = row["when"].isoformat() if row["when"] else ""
-    time_html = date_html(row["published"]) if row["when"] else ""
+    row = row if isinstance(row, dict) else {}
+    when = row.get("when")
+    date_attr = when.isoformat() if when else ""
+    time_html = date_html(row.get("published")) if when else ""
+    inst = str(row.get("inst") or "")
+    url = str(row.get("url") or "")
+    title = str(row.get("title") or "")
+    official = safe_int(row.get("official"))
+    nest_rank = safe_int(row.get("nest_rank"))
     return (
-        f'<li data-url="{esc(row["url"])}" data-official="{row["official"]}" '
-        f'data-date="{esc(date_attr)}" data-nest-rank="{row["nest_rank"]}" '
-        f'data-inst="{esc(folded(row["inst"]))}">'
-        f'<span class="dossier-inst">{esc(row["inst"])}</span>'
-        f'<a href="{esc(row["url"])}" rel="noopener noreferrer">{esc(row["title"])}'
+        f'<li data-url="{esc(url)}" data-official="{official}" '
+        f'data-date="{esc(date_attr)}" data-nest-rank="{nest_rank}" '
+        f'data-inst="{esc(folded(inst))}">'
+        f'<span class="dossier-inst">{esc(inst)}</span>'
+        f'<a href="{esc(url)}" rel="noopener noreferrer">{esc(title)}'
         f'<span class="arrow" aria-hidden="true"> ↗</span></a>{time_html}</li>'
     )
 
@@ -413,6 +436,7 @@ def dossier_units(issue: dict, eligible: dict) -> list[str]:
     raws: list[str] = []
     if not isinstance(issue, dict):
         return raws
+    eligible = eligible if isinstance(eligible, dict) else {}
     seen: set[str] = set()
     for tension in issue.get("tensions") or []:
         if not isinstance(tension, dict):
@@ -443,6 +467,7 @@ def tracking_html(issue: dict) -> str:
 
     Absence is never a resolution; editions_seen is never importance.
     """
+    issue = issue if isinstance(issue, dict) else {}
     tracking = issue.get("tracking")
     tracking = tracking if isinstance(tracking, dict) else {}
     seen = safe_int(tracking.get("editions_seen"))
@@ -470,6 +495,7 @@ def dossier_timeline_html(issue: dict) -> str:
     dossier missed is an absence, not a resolution. Renders only with two or more
     recorded editions, so a first edition stays quiet.
     """
+    issue = issue if isinstance(issue, dict) else {}
     tracking = issue.get("tracking") if isinstance(issue.get("tracking"), dict) else {}
     timeline = tracking.get("timeline") if isinstance(tracking.get("timeline"), list) else []
     rows = [t for t in timeline if isinstance(t, dict) and t.get("ts")]
@@ -752,6 +778,7 @@ def _ledger_label(entry: dict) -> str:
     """Reader label for a change-ledger row: Vigie's own question, or — for a
     dossier labelled by an attributed publisher headline — a neutral label
     naming the source instead of reproducing (and re-attributing) the title."""
+    entry = entry if isinstance(entry, dict) else {}
     if str(entry.get("label_kind") or "") == "attributed_headline":
         source = entry.get("label_source") if isinstance(entry.get("label_source"), dict) else {}
         name = plain(source.get("source_name") or source.get("source_id") or "un éditeur")
@@ -896,10 +923,11 @@ def valid_anomalies(doc: object) -> list[dict]:
 
 def anomaly_total(doc: object, rows: list[dict]) -> int:
     """Exact measured count when the verdict carries one, never below what we render."""
+    rows_len = len(rows) if isinstance(rows, (list, tuple)) else 0
     count = doc.get("anomaly_count") if isinstance(doc, dict) else None
     if isinstance(count, int) and not isinstance(count, bool):
-        return max(count, len(rows))
-    return len(rows)
+        return max(count, rows_len)
+    return rows_len
 
 
 def valid_edges(doc: object) -> tuple[dict, dict]:
@@ -1016,11 +1044,13 @@ def dossier_edge_line(issue_id: object, edge_streets: dict, edge_issues: dict) -
 
 
 def _rw_places(event: dict) -> str:
+    event = event if isinstance(event, dict) else {}
     roads = [str(r).strip() for r in (event.get("road_names") or []) if str(r or "").strip()]
     return " · ".join(roads[:3])
 
 
 def _rw_dates(event: dict) -> str:
+    event = event if isinstance(event, dict) else {}
     start, end = event.get("start_date"), event.get("end_date")
     estimated = "estimated" in (
         str(event.get("start_date_accuracy") or ""), str(event.get("end_date_accuracy") or "")
@@ -1037,6 +1067,8 @@ def _rw_dates(event: dict) -> str:
 
 def _rw_history_line(event: dict, history: dict) -> str:
     """Durable per-event collection facts. An absence is never an end of works."""
+    event = event if isinstance(event, dict) else {}
+    history = history if isinstance(history, dict) else {}
     rec = history.get(str(event.get("event_id")))
     if not isinstance(rec, dict):
         return ""
@@ -1066,6 +1098,11 @@ def _street_key(raw: object) -> str:
 
 def _rw_card(event: dict, new_ids: set, changed_by_id: dict, has_previous: bool,
              history: dict | None = None, edge_streets: dict | None = None) -> str:
+    event = event if isinstance(event, dict) else {}
+    new_ids = new_ids if isinstance(new_ids, (set, frozenset)) else set()
+    changed_by_id = changed_by_id if isinstance(changed_by_id, dict) else {}
+    history = history if isinstance(history, dict) else {}
+    edge_streets = edge_streets if isinstance(edge_streets, dict) else {}
     eid = str(event.get("event_id"))
     impact = str(event.get("vehicle_impact") or "")
     severity = RW_SEVERITY.get(impact, 6)
@@ -1120,10 +1157,10 @@ def _rw_street_rows(events: list[dict]) -> list[dict]:
     Deterministic order: count desc, then name, then key.
     """
     counts: dict[str, list] = {}
-    for event in events:
+    for event in (events if isinstance(events, (list, tuple)) else []):
         if not isinstance(event, dict):
             continue
-        for raw in event.get("road_names") or []:
+        for raw in (event.get("road_names") if isinstance(event.get("road_names"), (list, tuple)) else []):
             display = plain(str(raw or ""))
             key = _street_key(raw)
             if not display or not key:
@@ -1172,7 +1209,7 @@ def _rw_corridors_html(rows: list[dict]) -> str:
     )
 
 
-def _rw_sketch(rw: dict, events: list[dict]) -> str:
+def _rw_sketch(rw: dict, events: list[dict] | None = None) -> str:
     """Static spatial scheme of the declared obstructions — no basemap.
 
     Dot density over the official collection's own coordinates: where the
@@ -1181,6 +1218,10 @@ def _rw_sketch(rw: dict, events: list[dict]) -> str:
     reference. Deterministic: events sorted by id, and the whole block collapses
     to zero HTML without usable coordinates.
     """
+    rw = rw if isinstance(rw, dict) else {}
+    if events is None:
+        events = rw.get("events")
+    events = [e for e in events if isinstance(e, dict)] if isinstance(events, (list, tuple)) else []
     bbox = rw.get("bbox")
     if (not isinstance(bbox, list) or len(bbox) != 4
             or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in bbox)):
@@ -1772,7 +1813,10 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
         media = load_brief_media()
     elif not isinstance(media, dict):
         media = {}
-    status = collection_status(run, now)
+    raw_status = collection_status(run, now)
+    status = raw_status if isinstance(raw_status, dict) else {
+        "ok": 0, "total": 0, "at": None, "stale": False, "partial": False
+    }
     eligible = {r.get("id"): r for r in rows}
 
     def _media_file(uid: str) -> str | None:

@@ -140,8 +140,10 @@ def _scalar(val: str):
         return val[1:-1]
     # YAML comments start at a '#' that begins the value or follows whitespace;
     # a '#' inside a URL is data, never a comment.
-    if val.startswith("#") or " #" in val:
-        val = val.split("#", 1)[0].strip()
+    if val.startswith("#"):
+        return None
+    if " #" in val:
+        val = val.split(" #", 1)[0].strip()
     if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
         return val[1:-1]
     if val in ("", "|", ">", "null", "~"):
@@ -448,7 +450,9 @@ def fetch_bytes(url: str) -> tuple[bytes, str | None]:
     raise last_err
 
 
-def _local(tag: str) -> str:
+def _local(tag: object) -> str:
+    if not isinstance(tag, str):
+        return ""
     if "}" in tag:
         return tag.rsplit("}", 1)[-1]
     return tag

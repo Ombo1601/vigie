@@ -219,7 +219,7 @@ def render_recit(iss: dict, eligible: dict, ledger: dict, *, slug: str,
     voice_blocks = "".join(block for t in tensions if (block := _voice_block(t)))
     attrib_html = ""
     if attributed:
-        owner = brief.plain(label_source.get("source_name"))[:120]
+        owner = brief.plain(label_source.get("source_name"))[:120] if isinstance(label_source, dict) else ""
         attrib_html = (
             '<p class="recit-attrib">Titre d’un éditeur, cité tel quel'
             + (f" — {brief.esc(owner)}" if owner else "")
@@ -289,10 +289,12 @@ def render_recit(iss: dict, eligible: dict, ledger: dict, *, slug: str,
 """
 
 
-def render_index(dossiers: list[dict], slug_of: dict[str, str]) -> str:
+def render_index(dossiers: list[dict], slug_of: dict[str, str] | None = None) -> str:
     """The complete list of this edition's dossiers, each linked to its record page."""
     items: list[str] = []
-    for iss in dossiers:
+    slug_of = slug_of if isinstance(slug_of, dict) else {}
+    valid_dossiers = [iss for iss in dossiers if isinstance(iss, dict)] if isinstance(dossiers, (list, tuple)) else []
+    for iss in valid_dossiers:
         iid = str(iss.get("issue_id") or "")
         slug = slug_of.get(iid) or brief.dossier_slug(iss)
         question = brief.plain(iss.get("question"))[:220] or "Sujet suivi"
@@ -323,7 +325,7 @@ def render_index(dossiers: list[dict], slug_of: dict[str, str]) -> str:
         '<p class="no-data">Aucun dossier cette édition. Cela ne dit rien de la '
         "couverture ailleurs — et un rapprochement n’est jamais une contradiction.</p>"
     )
-    count = len(dossiers)
+    count = len(valid_dossiers)
     count_note = (
         f"{count} dossier{'s' if count != 1 else ''} proposé{'s' if count != 1 else ''}"
         "<br>cette édition."

@@ -53,7 +53,10 @@ RULES = {
 
 def _num_fr(value: float) -> str:
     """French number wording: integer when whole, one decimal with a comma."""
-    number = float(value)
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return "0"
     if number.is_integer():
         return str(int(number))
     return f"{number:.1f}".replace(".", ",")
@@ -79,7 +82,9 @@ class _StreetGroup:
 
 def _group_by_street(entries: list, predicate=None) -> dict[str, _StreetGroup]:
     groups: dict[str, _StreetGroup] = {}
-    for entry in entries or []:
+    if not isinstance(entries, (list, tuple)):
+        return groups
+    for entry in entries:
         if not isinstance(entry, dict):
             continue
         if predicate is not None and not predicate(entry):
@@ -111,7 +116,7 @@ def _anomaly(rule_id: str, key: str, group: _StreetGroup, claim: str, **extra) -
 
 def rule_poussee(diff: dict) -> list[dict]:
     """Many new declarations on one street inside a single collection."""
-    if not diff.get("has_previous"):
+    if not isinstance(diff, dict) or not diff.get("has_previous"):
         return []
     threshold = RULES["poussee-declarations"]["min_count"]
     out = []
@@ -130,7 +135,7 @@ def rule_poussee(diff: dict) -> list[dict]:
 
 def rule_fin_reportee(diff: dict) -> list[dict]:
     """The City's own end-date revisions toward later, relayed literally."""
-    if not diff.get("has_previous"):
+    if not isinstance(diff, dict) or not diff.get("has_previous"):
         return []
     threshold = RULES["fin-reportee"]["min_count"]
     entries = [
@@ -152,6 +157,8 @@ def rule_fin_reportee(diff: dict) -> list[dict]:
 
 def rule_concentration(events: list[dict]) -> list[dict]:
     """One street carries far more active declarations than the network median."""
+    if not isinstance(events, (list, tuple)):
+        return []
     groups = _group_by_street(events)
     if not groups:
         return []
@@ -181,6 +188,8 @@ def rule_fenetre_depassee(events: list[dict], fetched_at) -> list[dict]:
     A measurement of the feed against itself — Vigie never concludes the works
     ended or that the City is wrong; the official map stays the authority.
     """
+    if not isinstance(events, (list, tuple)) or fetched_at is None:
+        return []
     threshold = RULES["fenetre-depassee"]["min_count"]
     overdue = []
     for event in events:
@@ -204,6 +213,7 @@ def rule_fenetre_depassee(events: list[dict], fetched_at) -> list[dict]:
 
 def compile_verdict(rw: dict) -> dict:
     """Pure: roadworks store in, verdict out. No clock, no I/O."""
+    rw = rw if isinstance(rw, dict) else {}
     raw_events = rw.get("events")
     events = (
         [e for e in raw_events if isinstance(e, dict) and e.get("event_id")]
@@ -217,7 +227,7 @@ def compile_verdict(rw: dict) -> dict:
     anomalies += rule_concentration(events)
     if fetched is not None:
         anomalies += rule_fenetre_depassee(events, fetched)
-    anomalies.sort(key=lambda a: (RULES[a["rule_id"]]["rank"], -a["count"], a["street_key"]))
+    anomalies.sort(key=lambda a: (RULES.get(a.get("rule_id", ""), {}).get("rank", 99), -a.get("count", 0), a.get("street_key", "")))
     return {
         "method": METHOD,
         "status": "proposed",

@@ -51,16 +51,22 @@ NEST_ORDER = {"primary": 0, "province": 1, "linked": 2}
 
 def institution_of(src: dict) -> str:
     """Voice identity. Missing institution falls back to feed id (1:1)."""
+    if not isinstance(src, dict):
+        return ""
     return str(src.get("institution") or src.get("id") or "").strip()
 
 
 def institution_name_of(src: dict) -> str:
+    if not isinstance(src, dict):
+        return ""
     iid = institution_of(src)
     return str(src.get("institution_name") or src.get("name") or iid)
 
 
 def feed_to_institution(chancellery: list[dict]) -> dict[str, str]:
-    return {str(s["id"]): institution_of(s) for s in chancellery if s.get("id")}
+    if not isinstance(chancellery, (list, tuple)):
+        return {}
+    return {str(s["id"]): institution_of(s) for s in chancellery if isinstance(s, dict) and s.get("id")}
 
 
 def collapse_institutions(chancellery: list[dict]) -> list[dict]:
@@ -70,7 +76,11 @@ def collapse_institutions(chancellery: list[dict]) -> list[dict]:
     source_kind = official if any feed under the institution is official.
     """
     by_iid: dict[str, dict] = {}
+    if not isinstance(chancellery, (list, tuple)):
+        return []
     for src in chancellery:
+        if not isinstance(src, dict):
+            continue
         iid = institution_of(src)
         if not iid:
             continue
@@ -152,11 +162,13 @@ def silence_map(spoke_institutions: set[str], chancellery: list[dict]) -> dict:
     Voice = institution (sister RSS feeds share one seat).
     Proposed observation — not a trust score, not left/right.
     """
-    institutions = collapse_institutions(chancellery)
+    spoke_set = set(spoke_institutions) if isinstance(spoke_institutions, (set, list, tuple)) else set()
+    chancellery_list = list(chancellery) if isinstance(chancellery, (list, tuple)) else []
+    institutions = collapse_institutions(chancellery_list)
     silent: list[dict] = []
     for inst in institutions:
         iid = inst["institution_id"]
-        if iid in spoke_institutions:
+        if iid in spoke_set:
             continue
         silent.append(
             {
@@ -182,10 +194,10 @@ def silence_map(spoke_institutions: set[str], chancellery: list[dict]) -> dict:
         "status": "proposed",
         "scope": "enabled_institutions",
         "method": "rules-silence-v0.2-institution",
-        "spoke_count": len(spoke_institutions),
+        "spoke_count": len(spoke_set),
         "silent_count": len(silent),
         "enabled_count": len(institutions),
-        "enabled_feed_count": len(chancellery),
+        "enabled_feed_count": len(chancellery_list),
         "note": (
             "Absent from the collected snapshot, not proven editorial silence. "
             "Fetch failures, RSS limits, paywalls and unmatched wording may explain absence. "
@@ -651,7 +663,7 @@ def main() -> None:
         for iid, src_items in by_inst.items():
             src_items.sort(key=lambda x: (published_when(x) or datetime.min.replace(tzinfo=timezone.utc), str(x.get("id") or "")), reverse=True)
             kind = "official" if any(
-                (sources[str(x.get("source_id"))].get("source_kind") or "media") == "official" for x in src_items
+                (sources.get(str(x.get("source_id")), {}).get("source_kind") or "media") == "official" for x in src_items
             ) else "media"
             display = inst_name.get(iid) or iid
             tensions.append(
@@ -672,7 +684,7 @@ def main() -> None:
                             "source_name": it.get("source_name") or it.get("source_id") or iid,
                             "source_id": it.get("source_id"),
                             "institution_id": iid,
-                            "source_kind": sources[str(it.get("source_id"))].get("source_kind") or "media",
+                            "source_kind": sources.get(str(it.get("source_id")), {}).get("source_kind") or "media",
                             "language": it.get("language"),
                             "geo": geo_of(it),
                             "enrich_status": it.get("enrich_status") or "proposed",
@@ -703,10 +715,10 @@ def main() -> None:
         if scar.startswith("event-"):
             member_ids = {str(it.get("id")) for it in items if it.get("id")}
             matches = []
-            for old in previous:
-                if not str(old.get("scar") or "").startswith("event-") or old.get("issue_id") in used_previous:
+            for old in (previous if isinstance(previous, list) else []):
+                if not isinstance(old, dict) or not str(old.get("scar") or "").startswith("event-") or old.get("issue_id") in used_previous:
                     continue
-                old_ids = {str(it.get("candidate_id")) for t in old.get("tensions") or [] for it in t.get("items") or [] if it.get("candidate_id")}
+                old_ids = {str(it.get("candidate_id")) for t in (old.get("tensions") or []) if isinstance(t, dict) for it in (t.get("items") or []) if isinstance(it, dict) and it.get("candidate_id")}
                 overlap = len(member_ids & old_ids)
                 if overlap >= 2:
                     matches.append((overlap, str(old.get("issue_id"))))

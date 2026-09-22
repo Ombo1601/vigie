@@ -21,6 +21,8 @@ def _entries(doc: object, key: str) -> list:
 
 
 def _claims_of(candidate: dict) -> list[dict]:
+    if not isinstance(candidate, dict):
+        return []
     enrich = candidate.get("enrich") if isinstance(candidate.get("enrich"), dict) else {}
     claims = enrich.get("claims") if isinstance(enrich.get("claims"), list) else []
     return [c for c in claims if isinstance(c, dict)]

@@ -148,10 +148,11 @@ def members() -> list[Path]:
 def pack(out_path: Path) -> int:
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
+    paths = members()
     with tarfile.open(out, "w:gz") as tar:
-        for path in members():
+        for path in paths:
             tar.add(path, arcname=path.relative_to(ROOT).as_posix(), recursive=False)
-    return len(members())
+    return len(paths)
 
 
 def unpack(in_path: Path) -> int:

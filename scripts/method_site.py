@@ -92,6 +92,8 @@ def _slugify(text: str) -> str:
 
 
 def _map_link(url: str) -> str:
+    if not isinstance(url, str):
+        return ""
     base = url.split("#", 1)[0]
     name = base.rstrip("/").rsplit("/", 1)[-1]
     if name in _LINK_MAP:
@@ -101,6 +103,8 @@ def _map_link(url: str) -> str:
 
 
 def _inline(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
     text = html.escape(text, quote=False)
     text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
     text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
@@ -121,7 +125,8 @@ def _inline(text: str) -> str:
 
 
 def _table(lines: list[str]) -> str:
-    rows = [[cell.strip() for cell in line.strip().strip("|").split("|")] for line in lines]
+    lines = lines if isinstance(lines, list) else []
+    rows = [[cell.strip() for cell in str(line).strip().strip("|").split("|")] for line in lines if str(line).strip()]
     if not rows:
         return ""
     head, *body = rows
@@ -134,6 +139,8 @@ def _table(lines: list[str]) -> str:
 
 def md_to_html(text: str) -> str:
     """The subset of Markdown the house method files actually use."""
+    if not isinstance(text, str):
+        return ""
     lines = text.splitlines()
     out: list[str] = []
     seen_ids: dict[str, int] = {}

@@ -38,8 +38,10 @@ def status_of(issue: dict) -> dict | None:
     if not isinstance(issue, dict):
         return None
     tracking = issue.get("tracking") if isinstance(issue.get("tracking"), dict) else {}
+    timeline = tracking.get("timeline")
+    timeline = timeline if isinstance(timeline, (list, tuple)) else []
     measured = [
-        e for e in (tracking.get("timeline") or [])
+        e for e in timeline
         if isinstance(e, dict) and e.get("ts") and "official" in e
     ]
     editions = len(measured)

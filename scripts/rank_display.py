@@ -83,6 +83,7 @@ def load_clock(ranked_at: str) -> dict:
 
 
 def clock_line(clock: dict) -> str:
+    clock = clock if isinstance(clock, dict) else {}
     parts = [f"Ranked: {fmt_stamp(clock.get('ranked_at'))}"]
     if clock.get("enriched_at"):
         parts.append(f"Enriched: {fmt_stamp(clock['enriched_at'])}")
@@ -150,6 +151,7 @@ def impact_units(c: dict) -> list[dict]:
 
 def impact_first(items: list[dict]) -> list[dict]:
     """Prefer impact topics by score, then soft topics by score. Display only."""
+    items = [c for c in (items or []) if isinstance(c, dict)]
     impact = [c for c in items if is_impact(c)]
     soft = [c for c in items if not is_impact(c)]
     # items already score-sorted globally; preserve relative order within each bucket
@@ -288,6 +290,7 @@ def item_topics(c: dict) -> list[str]:
 def issue_candidate_ids(iss: dict) -> list[str]:
     """Sorted candidate ids: callers slice this list for display, so a set's
     per-process hash order would make byte-identical rebuilds impossible."""
+    iss = iss if isinstance(iss, dict) else {}
     ids: set[str] = set()
     for t in iss.get("tensions") or []:
         if not isinstance(t, dict):
@@ -303,6 +306,8 @@ def issue_candidate_ids(iss: dict) -> list[str]:
 
 def build_continuity(issues: list[dict], ranked: list[dict]) -> dict:
     """Same fight maps from scars already on disk — never a painted for-you feed."""
+    ranked = ranked if isinstance(ranked, (list, tuple)) else []
+    issues = issues if isinstance(issues, (list, tuple)) else []
     by_id = {str(c.get("id")): c for c in ranked if isinstance(c, dict) and c.get("id")}
     id_to_issues: dict[str, list[dict]] = {}
     for iss in issues:
@@ -318,10 +323,12 @@ def same_fight_links(c: dict, continuity: dict, *, limit: int = 3) -> list[tuple
     if not isinstance(c, dict):
         return []
     cid = str(c.get("id") or "")
-    by_id = continuity["by_id"]
+    continuity = continuity if isinstance(continuity, dict) else {}
+    by_id = continuity.get("by_id") or {}
+    id_to_issues = continuity.get("id_to_issues") or {}
     seen = {cid}
     out: list[tuple[str, str]] = []
-    for iss in continuity["id_to_issues"].get(cid, []):
+    for iss in id_to_issues.get(cid, []):
         for other in issue_candidate_ids(iss):
             if other in seen:
                 continue
@@ -359,7 +366,10 @@ NEST_LABEL = {"near": "Near me", "province": "Province", "linked": "Linked"}
 
 
 def approach_nest(iss: dict) -> str:
-    geos = iss.get("geo_focus") or []
+    if not isinstance(iss, dict):
+        return "linked"
+    geos = iss.get("geo_focus")
+    geos = geos if isinstance(geos, (list, tuple, set)) else []
     if "quebec-city" in geos:
         return "near"
     if "quebec" in geos:
@@ -465,14 +475,16 @@ def format_store_clock(iso: str) -> str:
 
 def since_left_delta(prev: list[dict], curr: list[dict]) -> dict:
     """Compare two pulse approach lists by issue_id. Never reorders."""
+    prev = prev if isinstance(prev, (list, tuple)) else []
+    curr = curr if isinstance(curr, (list, tuple)) else []
     prev_map = {
         str(a.get("issue_id") or ""): a
-        for a in (prev or []) if isinstance(a, dict) and a.get("issue_id")
+        for a in prev if isinstance(a, dict) and a.get("issue_id")
     }
     new_ids: list[str] = []
     changed_ids: list[str] = []
     cur_ids: set[str] = set()
-    for a in curr or []:
+    for a in curr:
         if not isinstance(a, dict):
             continue
         iid = str(a.get("issue_id") or "")
@@ -498,8 +510,9 @@ def since_left_visit(prev: dict | None, pulse: dict) -> dict:
     Returning visit uses store ``clustered_at`` — same timestamp ⇒ same Approaches
     (no fingerprint theater). Delta badges never reorder.
     """
-    pulse = pulse or {}
-    curr = list(pulse.get("approaches") or [])
+    pulse = pulse if isinstance(pulse, dict) else {}
+    prev = prev if isinstance(prev, dict) else None
+    curr = list(pulse.get("approaches") or []) if isinstance(pulse.get("approaches"), (list, tuple)) else []
     clustered_at = str(pulse.get("clustered_at") or "")
     clock = format_store_clock(clustered_at)
     if not prev or not (prev.get("approaches") or []):
@@ -511,7 +524,8 @@ def since_left_visit(prev: dict | None, pulse: dict) -> dict:
             "clustered_at": clustered_at,
         }
     prev_at = str(prev.get("clustered_at") or "")
-    if prev_at and clustered_at and prev_at == clustered_at and since_left_delta(list(prev.get("approaches") or []), curr)["same"]:
+    prev_approaches = list(prev.get("approaches") or []) if isinstance(prev.get("approaches"), (list, tuple)) else []
+    if prev_at and clustered_at and prev_at == clustered_at and since_left_delta(prev_approaches, curr)["same"]:
         return {
             "kind": "same",
             "message": f"Since you left — same Approaches on this pulse ({clock}).",
@@ -519,7 +533,7 @@ def since_left_visit(prev: dict | None, pulse: dict) -> dict:
             "delta": {"new": [], "changed": [], "gone": [], "same": True},
             "clustered_at": clustered_at,
         }
-    delta = since_left_delta(list(prev.get("approaches") or []), curr)
+    delta = since_left_delta(prev_approaches, curr)
     badges: dict[str, str] = {}
     for iid in delta["new"]:
         badges[iid] = "new"

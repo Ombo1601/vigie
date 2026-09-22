@@ -283,11 +283,16 @@ def diff_events(current: list[dict], previous: list[dict] | None) -> dict:
             "new_count": 0, "removed_count": 0, "changed_count": 0,
             "new": [], "removed": [], "changed": [],
         }
+    prev_list = previous if isinstance(previous, (list, tuple)) else []
+    cur_list = current if isinstance(current, (list, tuple)) else []
     prev_map = {
         str(e.get("event_id")): e
-        for e in previous if isinstance(e, dict) and e.get("event_id")
+        for e in prev_list if isinstance(e, dict) and e.get("event_id")
     }
-    cur_map = {str(e["event_id"]): e for e in current}
+    cur_map = {
+        str(e.get("event_id")): e
+        for e in cur_list if isinstance(e, dict) and e.get("event_id")
+    }
     new_ids = sorted(set(cur_map) - set(prev_map), key=lambda x: (0, int(x)) if x.isdigit() else (1, x))
     removed_ids = sorted(set(prev_map) - set(cur_map), key=lambda x: (0, int(x)) if x.isdigit() else (1, x))
     changed = []

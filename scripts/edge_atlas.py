@@ -256,14 +256,20 @@ def load_geometry(raw_dir: Path, source_id: object) -> dict[str, list[tuple[floa
 
 def _display_name(variant_counts: dict[str, int]) -> str:
     """Most frequent declared spelling; ties break lexicographically."""
-    return sorted(variant_counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+    if not isinstance(variant_counts, dict) or not variant_counts:
+        return ""
+    valid = [(k, v) for k, v in variant_counts.items() if isinstance(v, (int, float))]
+    if not valid:
+        keys = sorted(str(k) for k in variant_counts)
+        return keys[0] if keys else ""
+    return sorted(valid, key=lambda kv: (-kv[1], str(kv[0])))[0][0]
 
 
 def build_streets(events: list[dict], geometry: dict | None = None) -> dict[str, dict]:
     """Canonical street key -> declared facts from this collection only."""
     geometry = geometry if isinstance(geometry, dict) else {}
     per_key: dict[str, dict] = {}
-    for event in events:
+    for event in (events if isinstance(events, (list, tuple)) else []):
         if not isinstance(event, dict):
             continue
         event_id = str(event.get("event_id") or "").strip()
@@ -308,6 +314,7 @@ def build_streets(events: list[dict], geometry: dict | None = None) -> dict[str,
 def issue_blob(issue: dict) -> str:
     """All declared dossier text Vigie may match against: the question, the
     label headline, and member titles/summaries. Never invented text."""
+    issue = issue if isinstance(issue, dict) else {}
     parts = [str(issue.get("question") or "")]
     label_source = issue.get("label_source")
     if isinstance(label_source, dict):
@@ -325,11 +332,13 @@ def issue_blob(issue: dict) -> str:
 
 def compile_atlas(rw: dict, issues_doc: dict | None = None, geometry: dict | None = None) -> dict:
     """Pure: stores in, atlas out. No clock, no I/O, no randomness."""
+    rw = rw if isinstance(rw, dict) else {}
+    issues_doc = issues_doc if isinstance(issues_doc, dict) else {}
     events = [e for e in (rw.get("events") or []) if isinstance(e, dict) and e.get("event_id")]
     streets = build_streets(events, geometry)
     pattern, phrase_to_keys = build_matcher({k: sorted(v["phrases"]) for k, v in streets.items()})
     issues = [
-        i for i in ((issues_doc or {}).get("issues") or [])
+        i for i in (issues_doc.get("issues") or [])
         if isinstance(i, dict) and i.get("issue_id")
     ]
     issue_index: dict[str, dict] = {}

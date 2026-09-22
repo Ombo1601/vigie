@@ -1,4 +1,4 @@
-﻿"""Vigie v0 — normalize latest raw ingest JSON into StoryCandidates.
+"""Vigie v0 — normalize latest raw ingest JSON into StoryCandidates.
 
 Reads newest ingest outcome for enabled sources; failed/stale feeds stay unavailable.
 Writes append-only snapshot to data/normalized/.
@@ -59,7 +59,7 @@ def canonical_url(url: str | None) -> str | None:
 
 
 def stable_id(url: str | None, source_id: str, title: str | None, guid: str | None) -> str:
-    basis = canonical_url(url) or f"{source_id}|{guid or title or ''}"
+    basis = canonical_url(url) or f"{source_id or ''}|{guid or title or ''}"
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
 
 
@@ -202,6 +202,9 @@ def plain_text(raw: str | None, limit: int) -> str | None:
 
 
 def normalize_item(raw_item: dict, source_meta: dict) -> dict | None:
+    if not isinstance(raw_item, dict):
+        return None
+    source_meta = source_meta if isinstance(source_meta, dict) else {}
     title = plain_text(raw_item.get("title"), 500)
     url = canonical_url(raw_item.get("url"))
     if (raw_item.get("url") and not url) or (not title and not url):

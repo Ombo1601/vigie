@@ -94,5 +94,5 @@ appartiennent à leurs auteurs. Les rapprochements d'articles en « dossiers »
 sont des **propositions automatiques à vérifier**, affichées comme telles :
 plusieurs médias ne constituent pas plusieurs confirmations indépendantes, et
 Vigie ne couronne jamais une réponse. La liste complète des sources est
-publique : [sources.yaml](/sources.yaml). La méthode de classement est
-publique : [ranking.md](/ranking.md).
+publique : [sources.yaml](sources.yaml). La méthode de classement est
+publique : [ranking.md](ranking.md).

@@ -57,6 +57,7 @@ def _as_int(value: object, default: int = 0) -> int:
 
 def ranked_snapshot(ranked_doc: dict) -> tuple[str | None, list[dict]]:
     """(ranked_at, candidates) from either ranked store shape."""
+    ranked_doc = ranked_doc if isinstance(ranked_doc, dict) else {}
     stamp = ranked_doc.get("ranked_at")
     candidates = ranked_doc.get("candidates") or ranked_doc.get("ranked") or []
     if not isinstance(candidates, list):
@@ -69,6 +70,12 @@ def edition_entry(ranked_doc: dict, issues_doc: dict, history_doc: dict,
                   roadworks_doc: dict, media_doc: dict, feed_doc: dict,
                   previous_top: list[str] | None = None) -> dict:
     """One compact, honest snapshot of the edition that was just built."""
+    ranked_doc = ranked_doc if isinstance(ranked_doc, dict) else {}
+    issues_doc = issues_doc if isinstance(issues_doc, dict) else {}
+    history_doc = history_doc if isinstance(history_doc, dict) else {}
+    roadworks_doc = roadworks_doc if isinstance(roadworks_doc, dict) else {}
+    media_doc = media_doc if isinstance(media_doc, dict) else {}
+    feed_doc = feed_doc if isinstance(feed_doc, dict) else {}
     stamp, candidates = ranked_snapshot(ranked_doc)
     top = [str(c.get("id")) for c in candidates[:TOP_N] if c.get("id")]
     per_source: dict[str, int] = {}
