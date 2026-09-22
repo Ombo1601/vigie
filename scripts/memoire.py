@@ -92,8 +92,8 @@ def _chrome(title: str, desc: str, canonical: str, body: str) -> str:
 
 def _voices_html(record: dict, names: dict) -> str:
     row = registre.voice_row(record)
-    spoke = [row_i for row_i in (row.get("spoke") or [])]
-    silent = [row_i for row_i in (row.get("silent") or [])]
+    spoke = list(row.get("spoke") or [])
+    silent = list(row.get("silent") or [])
     if not spoke and not silent:
         return ""
     def chips(ids: list[str]) -> str:

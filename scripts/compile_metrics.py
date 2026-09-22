@@ -202,7 +202,7 @@ def compile_metrics(ranked_path: Path | None = None, issues_path: Path | None = 
 def main(argv: list[str] | None = None) -> int:
     try:
         doc = compile_metrics()
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
         print(f"edition metrics: FAIL {exc} - keeping previous ledger")
         return 0
     latest = doc["latest"]

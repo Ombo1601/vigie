@@ -1707,7 +1707,6 @@ def silence_bar(issues: list[dict]) -> str:
         out = []
         for name in sorted(names, key=lambda n: n.casefold()):
             official = names[name]["kind"] == "official"
-            mark = "●" if spoken else "·"
             cls = "sb-name sb-official" if official else "sb-name"
             title = " institution officielle" if official else ""
             out.append(f'<li class="{cls}" title="{esc(name)}{title}">{esc(name)}</li>')

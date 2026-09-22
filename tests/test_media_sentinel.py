@@ -69,7 +69,6 @@ def failing_html(reason: str, detail: str = "diagnosed"):
     def _fail(url, *, retries=2, diag=None):
         if isinstance(diag, dict):
             diag.update(reason=reason, detail=detail)
-        return None
     return _fail
 
 
@@ -77,7 +76,6 @@ def failing_image(reason: str, detail: str = "diagnosed"):
     def _fail(url, referer="", *, retries=2, diag=None):
         if isinstance(diag, dict):
             diag.update(reason=reason, detail=detail)
-        return None
     return _fail
 
 

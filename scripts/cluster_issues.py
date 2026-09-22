@@ -325,7 +325,17 @@ def folded(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
 
 
-_STOP = frozenset("les des une dans pour avec sans sur sous apres avant cette leurs plus moins veut vont faire fait selon encore entre comme sont sera etre avoir vers tout tous ville quebec canada canadian canadian says dit bruno marchand maire nouvelles nouveau nouvelle voici report reports news minister ministre premier gouvernement police jour jours annee annees pourrait contre doit the and that from this with about into over will have were been".split())
+_STOP = frozenset([
+    "les", "des", "une", "dans", "pour", "avec", "sans", "sur", "sous", "apres",
+    "avant", "cette", "leurs", "plus", "moins", "veut", "vont", "faire", "fait",
+    "selon", "encore", "entre", "comme", "sont", "sera", "etre", "avoir", "vers",
+    "tout", "tous", "ville", "quebec", "canada", "canadian", "says", "dit",
+    "bruno", "marchand", "maire", "nouvelles", "nouveau", "nouvelle", "voici",
+    "report", "reports", "news", "minister", "ministre", "premier", "gouvernement",
+    "police", "jour", "jours", "annee", "annees", "pourrait", "contre", "doit",
+    "the", "and", "that", "from", "this", "with", "about", "into", "over",
+    "will", "have", "were", "been",
+])
 
 
 def _stem(word: str) -> str:
@@ -561,7 +571,7 @@ def main() -> None:
     try:
         payload = json.loads(IN_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise SystemExit(f"Unreadable or corrupt {IN_PATH}: {exc}. Run enrich again.")
+        raise SystemExit(f"Unreadable or corrupt {IN_PATH}: {exc}. Run enrich again.") from exc
     if not isinstance(payload, dict):
         raise SystemExit(
             f"Corrupt {IN_PATH}: expected a JSON object, got {type(payload).__name__}."

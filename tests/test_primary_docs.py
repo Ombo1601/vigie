@@ -78,7 +78,6 @@ class OfficialGeo(unittest.TestCase):
 
 class MaxItemsCap(unittest.TestCase):
     def test_ingest_respects_max_items(self) -> None:
-        items = [{"title": f"t{i}", "url": f"https://ex.test/{i}", "body": None, "published_at": None, "guid": None} for i in range(100)]
         xml = (
             "<?xml version='1.0'?><rss version='2.0'><channel><title>x</title>"
             + "".join(f"<item><title>t{i}</title><link>https://ex.test/{i}</link></item>" for i in range(100))

@@ -250,7 +250,7 @@ def compile_health(raw_dir: Path | None = None, out_path: Path | None = None) ->
 def main(argv: list[str] | None = None) -> int:
     try:
         doc = compile_health()
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
         print(f"feed health: FAIL {exc} - keeping previous ledger")
         return 0
     counts = doc["status_counts"]

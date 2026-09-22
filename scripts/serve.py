@@ -42,7 +42,6 @@ class VigieHandler(SimpleHTTPRequestHandler):
 
     def list_directory(self, path):
         self.send_error(404, "Not found")
-        return None
 
     def _open_sized(self, target: Path, content_type: str):
         """Open a file and announce its size; a race or permission error is a

@@ -2655,7 +2655,7 @@ def main() -> None:
     def _emit(name, fn):
         try:
             return fn()
-        except Exception as exc:  # noqa: BLE001 - diagnosed, never silent
+        except Exception as exc:  # diagnosed, never silent
             print(f"{name}: FAILED ({type(exc).__name__}: {exc}); brief still rendered")
             return None
 

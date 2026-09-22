@@ -235,7 +235,7 @@ def looks_like_calendar(html: str) -> bool:
 
 def parse_activities(html: str, base_url: str) -> tuple[list[dict], dict]:
     """HTML calendar → (events, counts). Never invents identifiers or dates."""
-    counts = {reason: 0 for reason in SKIP_REASONS}
+    counts = dict.fromkeys(SKIP_REASONS, 0)
     counts["rows"] = 0
     if not looks_like_calendar(html):
         return [], {**counts, "parse_error": "no_activity_table"}
@@ -354,7 +354,7 @@ def collect(sources: list[dict], now: datetime, *, offline: bool = False,
     previous = load_previous(store_path)
     all_events: list[dict] = []
     fetched_ats: list[datetime] = []
-    merged_counts = {reason: 0 for reason in SKIP_REASONS}
+    merged_counts = dict.fromkeys(SKIP_REASONS, 0)
     merged_counts.update({"rows": 0, "parsed": 0})
     for src in sources:
         source_id = str(src.get("id") or "")

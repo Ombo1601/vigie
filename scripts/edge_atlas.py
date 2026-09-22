@@ -178,7 +178,7 @@ def phrase_variants(raw: object) -> list[str]:
     if direction:
         canon_aligned = canon_aligned[:-1]
         raw_aligned = raw_aligned[:-1]
-    per_token = [_token_variants(rt, ct) for rt, ct in zip(raw_aligned, canon_aligned)]
+    per_token = [_token_variants(rt, ct) for rt, ct in zip(raw_aligned, canon_aligned, strict=False)]
     # Bound the cartesian product before materializing it: a hostile or absurd
     # multi-token road name would otherwise form 4^N phrases (16 tokens ~ hours
     # and gigabytes). The base canonical phrase is always kept.
@@ -256,6 +256,8 @@ def load_geometry(raw_dir: Path, source_id: object) -> dict[str, list[tuple[floa
 
 def _display_name(variant_counts: dict[str, int]) -> str:
     """Most frequent declared spelling; ties break lexicographically."""
+    if not variant_counts:
+        return ""
     return sorted(variant_counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
 
 
@@ -407,7 +409,7 @@ def main(argv: list[str] | None = None) -> int:
             shown = OUT_PATH
         print(f"edge atlas: {atlas['street_count']} street(s), "
               f"{atlas['matched_issue_count']} matched dossier(s) -> {shown}")
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
         # Always 0: the atlas is a reading aid; its absence never blocks an
         # edition, and an unwritable store must not kill the refresh chain.
         print(f"edge atlas: FAIL {type(exc).__name__}: {exc} - keeping previous store")

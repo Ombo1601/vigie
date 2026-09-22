@@ -272,7 +272,7 @@ class EmitFailSoft(unittest.TestCase):
             import sys
             proc = subprocess.run([sys.executable, "-X", "utf8", str(harness.ROOT / "scripts" / "registre.py"),
                                    "--verify", str(root / "registre" / "chain.json")],
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, check=False)
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertIn("OK", proc.stdout)
 

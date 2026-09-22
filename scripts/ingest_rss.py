@@ -162,14 +162,13 @@ def load_enabled_by_type(path: Path, source_type: str) -> list[dict]:
     body = m.group(1)
     chunks = re.split(r"\n  - id:", "\n" + body)
     out: list[dict] = []
-    for chunk in chunks:
-        chunk = chunk.strip("\n")
+    for raw_chunk in chunks:
+        chunk = raw_chunk.strip("\n")
         if not chunk.strip() or chunk.strip().startswith("#"):
             continue
-        if not chunk.lstrip().startswith("id:"):
-            chunk = "id:" + chunk
+        body = chunk if chunk.lstrip().startswith("id:") else "id:" + chunk
         rec: dict = {}
-        for raw_line in chunk.splitlines():
+        for raw_line in body.splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#") or ":" not in line:
                 continue
@@ -366,7 +365,7 @@ def fetch_bytes(url: str) -> tuple[bytes, str | None]:
             validators["If-Modified-Since"] = entry["last_modified"]
         refused = False
         for conditional in ((True, False) if validators else (False,)):
-            for attempt in range(1, RETRIES + 1):
+            for _attempt in range(1, RETRIES + 1):
                 try:
                     public_http_url(candidate, resolve=True)
                     headers = {
@@ -540,7 +539,7 @@ def parse_feed(xml_bytes: bytes, base_url: str | None = None,
     root = ET.fromstring(xml_bytes)
     tag = _local(root.tag).lower()
     items: list[dict] = []
-    if tag == "rss" or tag == "rdf":
+    if tag in ("rss", "rdf"):
         nodes = [n for n in root.iter() if _local(n.tag).lower() == "item"]
         for item in nodes:
             title = _text(_child(item, "title"))

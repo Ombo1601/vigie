@@ -84,6 +84,7 @@ def run_step(name: str, command: list[str], timeout: int, cwd: Path = ROOT) -> N
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"{name} timed out after {timeout}s") from None
@@ -230,7 +231,7 @@ def ping_indexnow() -> None:
         )
         with urllib.request.urlopen(request, timeout=20) as response:
             log(f"indexnow: HTTP {response.status}")
-    except Exception as exc:  # noqa: BLE001 - discovery is best-effort
+    except Exception as exc:  # discovery is best-effort
         log(f"WARN indexnow ping failed ({type(exc).__name__})")
 
 

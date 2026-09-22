@@ -579,6 +579,51 @@ class BriefJsShape(unittest.TestCase):
             with self.subTest(needle=needle):
                 self.assertIn(needle, self.js)
 
+    def test_record_emitters_stress_and_edge_cases(self) -> None:
+        import depart
+        import recits
+        import memoire
+        import affiche
+        import substrate
+        import registre
+        import compile_anomalies
+        import edge_atlas
+
+        # Test empty/malformed inputs to depart
+        d_res = depart.emit({}, [], {}, {}, "2026-09-20T12:00:00+00:00", out=Path(tempfile.mkdtemp()) / "partir.html")
+        self.assertTrue(d_res.get("written") or "written" in d_res)
+
+        # Test empty/malformed inputs to recits
+        r_out = Path(tempfile.mkdtemp())
+        r_res = recits.emit([], [], {}, {}, {}, out_dir=r_out / "dossiers", out_index=r_out / "dossiers.html")
+        self.assertIsInstance(r_res, dict)
+
+        # Test empty/malformed inputs to memoire
+        m_out = Path(tempfile.mkdtemp())
+        m_res = memoire.emit({}, [], out_dir=m_out / "memoire", out_index=m_out / "memoire.html")
+        self.assertIsInstance(m_res, dict)
+
+        # Test empty/malformed inputs to affiche
+        a_out = Path(tempfile.mkdtemp()) / "affiche.html"
+        affiche.emit([], [], None, {}, "2026-09-20T12:00:00+00:00", out_html=a_out)
+        self.assertTrue(a_out.exists())
+
+        # Test empty/malformed inputs to substrate
+        s_out = Path(tempfile.mkdtemp())
+        substrate.emit([], [], {}, None, {}, "2026-09-20T12:00:00+00:00",
+                       out_llms=s_out / "llms.txt", out_md=s_out / "index.html.md",
+                       out_delta=s_out / "delta" / "latest.json")
+        self.assertTrue((s_out / "llms.txt").exists())
+        self.assertTrue((s_out / "index.html.md").exists())
+        self.assertTrue((s_out / "delta" / "latest.json").exists())
+
+        # Test compile_anomalies with empty street group
+        sg = compile_anomalies._StreetGroup()
+        self.assertEqual(sg.display(), "")
+
+        # Test edge_atlas with empty variant_counts
+        self.assertEqual(edge_atlas._display_name({}), "")
+
 
 if __name__ == "__main__":
     unittest.main()

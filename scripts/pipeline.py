@@ -48,7 +48,7 @@ def run(script: str, *extra: str) -> None:
     path = ROOT / "scripts" / script
     print(f"\n=== {' '.join((script, *extra))} ===", flush=True)
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
-    proc = subprocess.run([sys.executable, str(path), *extra], cwd=str(ROOT), env=env)
+    proc = subprocess.run([sys.executable, str(path), *extra], cwd=str(ROOT), env=env, check=False)
     if proc.returncode != 0:
         raise SystemExit(f"{script} failed with code {proc.returncode}")
 

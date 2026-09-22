@@ -116,8 +116,7 @@ def _inline(text: str) -> str:
         href = _map_link(url)
         return f'<a href="{html.escape(href, quote=True)}">{label}</a>'
 
-    text = re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", link_sub, text)
-    return text
+    return re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", link_sub, text)
 
 
 def _table(lines: list[str]) -> str:
@@ -218,14 +217,13 @@ def _deferred_sources() -> list[dict]:
         return []
     chunks = re.split(r"\n  - id:", "\n" + m.group(1))
     out: list[dict] = []
-    for chunk in chunks:
-        chunk = chunk.strip("\n")
+    for raw_chunk in chunks:
+        chunk = raw_chunk.strip("\n")
         if not chunk.strip() or chunk.strip().startswith("#"):
             continue
-        if not chunk.lstrip().startswith("id:"):
-            chunk = "id:" + chunk
+        body = chunk if chunk.lstrip().startswith("id:") else "id:" + chunk
         rec: dict = {}
-        for raw_line in chunk.splitlines():
+        for raw_line in body.splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#") or ":" not in line:
                 continue
@@ -273,7 +271,7 @@ def _sources_html() -> str:
             if homepage else name
         )
         chips = (
-            f'<span class="methode-chip official">officiel</span>' if kind == "officiel"
+            '<span class="methode-chip official">officiel</span>' if kind == "officiel"
             else '<span class="methode-chip">média</span>'
         )
         rows.append(

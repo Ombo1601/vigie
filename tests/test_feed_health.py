@@ -120,7 +120,7 @@ class CompileHealth(unittest.TestCase):
     def test_falling_yield_is_degraded(self) -> None:
         stamps = [f"2026091{i}T000000Z" for i in range(8)]
         yields = [20, 20, 20, 20, 2, 2, 2, 2]
-        for stamp, items in zip(stamps, yields):
+        for stamp, items in zip(stamps, yields, strict=True):
             write_meta(self.raw, "fading", stamp, items=items, digest=stamp[-8:-1] + "00000")
         doc = self.compile()
         src = doc["sources"]["fading"]

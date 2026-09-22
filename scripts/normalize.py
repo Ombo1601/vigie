@@ -136,10 +136,7 @@ def latest_meta_files(sources: list[dict] | None = None) -> list[Path]:
         src_dir = RAW_DIR / source["id"]
         if not src_dir.is_dir():
             continue
-        metas = [
-            p
-            for p in src_dir.glob("*.json")
-        ]
+        metas = list(src_dir.glob("*.json"))
         if not metas:
             continue
         # Newest collection stamp first; when one stamp carries both an outcome

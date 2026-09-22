@@ -40,9 +40,9 @@ class Emit(unittest.TestCase):
             method_site.emit(out)
             pages = _rendered_pages(root)
             self.assertEqual(len(pages), len(method_site.PAGES) + 1)  # + index
-            first = {k: v for k, v in pages.items()}
+            first = dict(pages)
             method_site.emit(out)
-            self.assertEqual({k: v for k, v in _rendered_pages(root).items()}, first)
+            self.assertEqual(dict(_rendered_pages(root)), first)
             for name, html in pages.items():
                 self.assertIn("class=\"masthead\"", html)
                 self.assertIn("canonical", html)

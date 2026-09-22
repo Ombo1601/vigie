@@ -200,7 +200,7 @@ class FacetEdges(unittest.TestCase):
             # scramble renter only
             if f["id"] == "renter":
                 fake += (
-                    f"| renter | NotRenter | transport | bylaw_id | 0.5 | 0.1 |\n"
+                    "| renter | NotRenter | transport | bylaw_id | 0.5 | 0.1 |\n"
                 )
             else:
                 fake += (

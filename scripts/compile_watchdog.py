@@ -343,7 +343,7 @@ def _render_markdown(snap: dict, feed_sources: dict, media_latest: dict, weeks: 
 def main(argv: list[str] | None = None) -> int:
     try:
         doc = compile_watchdog()
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
         print(f"watchdog: FAIL {exc} - keeping previous digest")
         return 0
     snap = doc["latest"]

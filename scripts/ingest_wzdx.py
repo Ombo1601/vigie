@@ -413,7 +413,7 @@ def collect(sources: list[dict], now: datetime, *, offline: bool = False,
         print("  no enabled wzdx sources; keeping previous store")
         return {"ok": False, "reason": "no_sources"}
     previous = load_previous(store_path)
-    counts = {"features": 0, "parsed": 0, **{reason: 0 for reason in SKIP_REASONS}}
+    counts = {"features": 0, "parsed": 0, **dict.fromkeys(SKIP_REASONS, 0)}
     all_events: list[dict] = []
     seen_ids: set[str] = set()
     fetched_ats: list[datetime] = []

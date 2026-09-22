@@ -53,6 +53,7 @@ def write_bytes_dedup(path: Path, data: bytes, previous: Path | None = None) -> 
     are written normally, never an error.
     """
     path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     if previous is not None:
         previous = Path(previous)
         if previous.exists():

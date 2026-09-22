@@ -224,7 +224,7 @@ def _stage_lock(parent: Path):
                 continue
             if waited >= STAGE_LOCK_WAIT_SECONDS:
                 raise RuntimeError(
-                    "Another staging run is active; refusing to race the release swap")
+                    "Another staging run is active; refusing to race the release swap") from None
             time.sleep(delay)
             waited += delay
             delay = min(delay * 2, 1.0)

@@ -74,6 +74,8 @@ class _StreetGroup:
             self.event_ids.append(event_id)
 
     def display(self) -> str:
+        if not self.variants:
+            return ""
         return sorted(self.variants.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
 
 
