@@ -868,6 +868,36 @@ RW_SEVERITY = {
     "some-lanes-closed-intermittent-or-short-duration": 3,
     "all-lanes-open": 4, "no-lanes-closed": 5,
 }
+# Declared-open vocabulary. An impact the City did not name is not one of these.
+_RW_OPEN_IMPACTS = frozenset({"all-lanes-open", "no-lanes-closed"})
+
+
+def rw_sort_rank(impact: object) -> int:
+    """Most-restrictive-first order for a declared obstruction.
+
+    Mapped closures keep ranks 0–3. An unmapped impact sorts immediately after
+    them and before any declared-open road: unknown is not an open road, so a
+    display cap must not fill with « toutes les voies ouvertes » and drop it.
+    Open-road ranks keep their relative order, shifted past that slot. The
+    stored severity number (CSS class, departure island) stays RW_SEVERITY.
+    """
+    key = str(impact or "")
+    mapped = RW_SEVERITY.get(key)
+    if mapped is None:
+        return 4
+    if key in _RW_OPEN_IMPACTS:
+        return mapped + 1
+    return mapped
+
+
+def _truncate_words(text: str, cap: int) -> str:
+    """Word-boundary truncation. The ellipsis counts toward the cap."""
+    if len(text) <= cap or cap < 1:
+        return text
+    cut = text[: cap - 1].rsplit(" ", 1)[0].rstrip()
+    if not cut:
+        cut = text[: cap - 1].rstrip()
+    return (cut or text[: cap - 1]) + "…"
 RW_DISPLAY_CAP = 8
 RW_STREET_INDEX_CAP = 400
 RW_MAP_URL = "https://carte.ville.quebec.qc.ca/"
@@ -1093,9 +1123,7 @@ def _rw_card(event: dict, new_ids: set, changed_by_id: dict, has_previous: bool,
             else:
                 tags += '<span class="rw-tag rw-t-chg">Modifiée</span>'
     kicker_html = f'<p class="rw-kicker">{" · ".join(esc(k) for k in kicker)}</p>' if kicker else ""
-    desc = plain(event.get("description"))
-    if len(desc) > 200:
-        desc = desc[:200].rsplit(" ", 1)[0] + "…"
+    desc = _truncate_words(plain(event.get("description")), 200)
     desc_html = f'<p class="rw-desc">{esc(desc)}</p>' if desc else ""
     road_keys = " ".join(
         key for key in (_street_key(raw) for raw in (event.get("road_names") or [])[:6]) if key
@@ -1283,7 +1311,7 @@ def roadworks_section(rw: dict | None, now: datetime, anomalies: dict | None = N
     # Stable three-pass sort: severity first, then most recently updated, then id.
     ordered = sorted(events, key=lambda e: str(e.get("event_id")))
     ordered.sort(key=lambda e: str(e.get("update_date") or ""), reverse=True)
-    ordered.sort(key=lambda e: RW_SEVERITY.get(str(e.get("vehicle_impact") or ""), 6))
+    ordered.sort(key=lambda e: rw_sort_rank(e.get("vehicle_impact")))
     new_ids = {e.get("event_id") for e in (diff.get("new") or []) if isinstance(e, dict)}
     changed_by_id = {
         e.get("event_id"): e for e in (diff.get("changed") or []) if isinstance(e, dict)
@@ -1640,16 +1668,29 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
         else:
             text = "Aucun changement de dossier depuis la dernière édition."
         items.append(_glance_item("Dernière édition", text, "#changements"))
-    names: set[str] = set()
+    # An institution that spoke in any dossier of this edition is not silent.
+    # Unioning every per-dossier silence list would count a speaker as absent.
+    spoke_names: set[str] = set()
+    quiet_names: set[str] = set()
+
+    def _institution(entry: dict) -> str:
+        return str(entry.get("institution_name") or entry.get("source_name") or "").strip()
+
     for iss in issues or []:
         if not isinstance(iss, dict):
             continue
+        for tension in iss.get("tensions") or []:
+            if isinstance(tension, dict):
+                name = _institution(tension)
+                if name:
+                    spoke_names.add(name)
         silence = iss.get("silence") if isinstance(iss.get("silence"), dict) else {}
         for entry in silence.get("silent") or []:
             if isinstance(entry, dict):
-                name = str(entry.get("institution_name") or entry.get("source_name") or "").strip()
+                name = _institution(entry)
                 if name:
-                    names.add(name)
+                    quiet_names.add(name)
+    names = quiet_names - spoke_names
     if names:
         n = len(names)
         if n == 1:
@@ -1680,17 +1721,20 @@ def silence_bar(issues: list[dict]) -> str:
         for tension in iss.get("tensions") or []:
             if not isinstance(tension, dict):
                 continue
-            name = str(tension.get("institution_name") or "").strip()
+            name = str(tension.get("institution_name") or tension.get("source_name") or "").strip()
             kind = str(tension.get("source_kind") or "").lower()
             if name and name not in spoke:
-                spoke[name] = {"kind": kind, "count": spoke.get(name, {}).get("count", 0) + 1}
+                spoke[name] = {"kind": kind, "count": 1}
             elif name:
                 spoke[name]["count"] += 1
+                # Official if any dossier carried an official voice for this seat.
+                if kind == "official":
+                    spoke[name]["kind"] = "official"
         silence = iss.get("silence") if isinstance(iss.get("silence"), dict) else {}
         for entry in silence.get("silent") or []:
             if not isinstance(entry, dict):
                 continue
-            name = str(entry.get("institution_name") or "").strip()
+            name = str(entry.get("institution_name") or entry.get("source_name") or "").strip()
             kind = str(entry.get("source_kind") or "").lower()
             if name and name not in spoke and name not in silent:
                 silent[name] = {"kind": kind, "count": 1}
@@ -1701,20 +1745,20 @@ def silence_bar(issues: list[dict]) -> str:
     if n_spoke + n_silent < 2:
         return ""
     # One measured instrument strip: a ruled ledger line, not a chip cloud.
-    # Spoke names carry a present tick; quiet names sit muted. The count line
-    # is the fact; the names are its evidence; absence is named, never hidden.
-    def _name_list(names: dict, spoken: bool) -> str:
+    # The count line is the fact; the names are its evidence; absence is named.
+    def _name_list(names: dict) -> str:
         out = []
         for name in sorted(names, key=lambda n: n.casefold()):
             official = names[name]["kind"] == "official"
-            mark = "●" if spoken else "·"
             cls = "sb-name sb-official" if official else "sb-name"
             title = " institution officielle" if official else ""
             out.append(f'<li class="{cls}" title="{esc(name)}{title}">{esc(name)}</li>')
         return "".join(out)
 
-    spoke_names = _name_list(spoke, True)
-    quiet_names = _name_list(silent, False)
+    spoke_label = "A parlé" if n_spoke == 1 else "Ont parlé"
+    quiet_label = "N’a pas parlé" if n_silent == 1 else "N’ont pas parlé"
+    spoke_html = _name_list(spoke)
+    quiet_html = _name_list(silent)
     return (
         '<section class="silence-bar" id="silence" aria-label="Qui a parlé, qui n\'a pas parlé" data-cmdk="Qui a parlé">'
         '<div class="bar-header"><p class="eyebrow">QUI A PARLÉ · QUI N\'A PAS PARLÉ</p>'
@@ -1723,8 +1767,8 @@ def silence_bar(issues: list[dict]) -> str:
         f'<strong>{n_silent}</strong> n\'{"ont" if n_silent != 1 else "a"} pas parlé '
         'dans cette édition.</p></div>'
         '<div class="sb-ledger">'
-        f'<div class="sb-row sb-spoke"><span class="sb-row-label">Ont parlé</span><ul class="sb-names">{spoke_names}</ul></div>'
-        f'<div class="sb-row sb-quiet"><span class="sb-row-label">N\'ont pas parlé</span><ul class="sb-names">{quiet_names}</ul></div>'
+        f'<div class="sb-row sb-spoke"><span class="sb-row-label">{spoke_label}</span><ul class="sb-names">{spoke_html}</ul></div>'
+        f'<div class="sb-row sb-quiet"><span class="sb-row-label">{quiet_label}</span><ul class="sb-names">{quiet_html}</ul></div>'
         '</div>'
         '<p class="bar-note fine">Absence dans nos flux, pas un silence éditorial prouvé. '
         '<a href="/registre.html">Le registre garde la trace scellée ↗</a></p>'

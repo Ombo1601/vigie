@@ -43,7 +43,9 @@ SUMMARY_CAP = 280
 def _plain(value: object, cap: int | None = None) -> str:
     text = brief.plain(value)
     if cap is not None and len(text) > cap:
-        text = text[:cap].rstrip() + "…"
+        # The ellipsis counts: a cap of 120 must not emit 121 characters.
+        keep = max(cap - 1, 0)
+        text = text[:keep].rstrip() + "…"
     return text
 
 
@@ -160,7 +162,7 @@ def roadworks_view(roadworks: dict | None, cap: int) -> dict | None:
     events = [e for e in events if isinstance(e, dict) and e.get("event_id")]
     ordered = sorted(events, key=lambda e: str(e.get("event_id")))
     ordered.sort(key=lambda e: str(e.get("update_date") or ""), reverse=True)
-    ordered.sort(key=lambda e: brief.RW_SEVERITY.get(str(e.get("vehicle_impact") or ""), 6))
+    ordered.sort(key=lambda e: brief.rw_sort_rank(e.get("vehicle_impact")))
     diff = rw.get("diff") if isinstance(rw.get("diff"), dict) else {}
     return {
         "fetched_at": fetched,

@@ -63,6 +63,11 @@ def sitemap_xml(directory: Path) -> str:
     except OSError:
         lastmod = None
     optional = tuple(f"/{name}" for name in OPTIONAL_PAGES if (directory / name).is_file())
+    # Sealed edition pages are addressable records, same as dossier pages.
+    memoire_pages = (
+        tuple(f"/memoire/{p.name}" for p in sorted((directory / "memoire").glob("*.html")))
+        if (directory / "memoire").is_dir() else ()
+    )
     dossier_pages = (
         tuple(f"/dossiers/{p.name}" for p in sorted((directory / "dossiers").glob("*.html")))
         if (directory / "dossiers").is_dir() else ()
@@ -71,7 +76,11 @@ def sitemap_xml(directory: Path) -> str:
         tuple(f"/methode/{slug}.html" for slug in METHOD_PAGES
               if (directory / "methode" / f"{slug}.html").is_file())
     )
-    paths = (*SITEMAP_PATHS, *optional, *dossier_pages, *methode_pages)
+    methode_index = (
+        ("/methode/index.html",)
+        if (directory / "methode" / "index.html").is_file() else ()
+    )
+    paths = (*SITEMAP_PATHS, *optional, *memoire_pages, *dossier_pages, *methode_index, *methode_pages)
     parts = []
     for path in paths:
         loc = f"{SITE_URL}/" if path == "/" else f"{SITE_URL}{path}"

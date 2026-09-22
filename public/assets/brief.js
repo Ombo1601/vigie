@@ -301,6 +301,7 @@
   };
   let cmdkItems = [], cmdkActive = 0, cmdkOpener = null;
   const cmdkDraw = () => {
+    if (!cmdkList) return;
     const query = cmdkInput ? cmdkInput.value.trim() : '';
     const hits = [];
     if (looksLikeUrl(query)) {
@@ -325,7 +326,7 @@
         }
       }
       cmdkItems = hits.slice(0, 9);
-      if (cmdkActive >= cmdkItems.length) cmdkActive = 0;
+      if (cmdkActive < 0 || cmdkActive >= cmdkItems.length) cmdkActive = 0;
       cmdkList.textContent = '';
       if (!cmdkItems.length) {
         const empty = document.createElement('li');
@@ -353,7 +354,7 @@
         }
       }
       cmdkItems = hits.slice(0, 9);
-      if (cmdkActive >= cmdkItems.length) cmdkActive = 0;
+      if (cmdkActive < 0 || cmdkActive >= cmdkItems.length) cmdkActive = 0;
       cmdkList.textContent = '';
       if (!cmdkItems.length) {
         const empty = document.createElement('li');
@@ -437,7 +438,7 @@
       }
       if (cmdk.hidden) return;
       if (e.key === 'Escape') { e.preventDefault(); cmdkClose(); }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); cmdkActive = Math.min(cmdkActive + 1, cmdkItems.length - 1); cmdkDraw(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); cmdkActive = cmdkItems.length ? Math.min(cmdkActive + 1, cmdkItems.length - 1) : 0; cmdkDraw(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); cmdkActive = Math.max(cmdkActive - 1, 0); cmdkDraw(); }
       else if (e.key === 'Enter') { e.preventDefault(); cmdkChoose(cmdkActive); }
     });

@@ -180,9 +180,10 @@ class ActivityTable(HTMLParser):
 
 def _cap(text: str, limit: int) -> str:
     text = " ".join(str(text or "").split())
-    if len(text) <= limit:
+    if len(text) <= limit or limit < 1:
         return text
-    return text[:limit].rstrip() + "…"
+    # The ellipsis counts toward the published cap.
+    return text[: limit - 1].rstrip() + "…"
 
 
 def parse_row(row: dict, base_url: str) -> tuple[dict | None, str | None]:

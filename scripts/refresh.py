@@ -174,7 +174,9 @@ def roads_signal(store_path: Path = ROADWORKS_STORE) -> str:
 
     `fetched_at` and the per-event presence counters move on every collection, so
     they are not a change; the active event set and its relayed fields are. An
-    empty or unreadable store yields "" and the caller then refreshes.
+    empty or unreadable store yields "". That is not "unchanged": the caller
+    skips the render rather than publishing a brief with the roadworks section
+    omitted, and says so.
     """
     try:
         doc = json.loads(Path(store_path).read_text(encoding="utf-8"))
@@ -244,7 +246,10 @@ def _roads_only(python: str, *, deploy: bool) -> int:
     before = read_roads_signal()
     run_step("wzdx", [python, "-X", "utf8", str(ROOT / "scripts" / "ingest_wzdx.py")], timeout=600)
     after = roads_signal()
-    if not after or after == before:
+    if not after:
+        log("SKIP unreadable roadworks store; render and deploy skipped")
+        return 0
+    if after == before:
         log("NOCHANGE declared obstructions unchanged; render and deploy skipped")
         return 0
     run_step("anomalies", [python, "-X", "utf8", str(ROOT / "scripts" / "compile_anomalies.py")], timeout=300)

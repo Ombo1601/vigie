@@ -424,7 +424,7 @@ footer .surfaces a small{display:block;font-family:var(--sans);font-size:var(--s
 .cmdk-open{margin-left:16px;border:1px solid var(--line);background:transparent;border-radius:4px;padding:6px 10px;font-size:var(--step--2);color:var(--muted);white-space:nowrap}
 .cmdk-open kbd{font:inherit;font-weight:700;color:var(--ink)}
 .cmdk-open:hover{border-color:var(--accent);color:var(--ink)}
-#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:30;background:var(--ink);color:#fff;padding:10px 20px;border-radius:6px;font-size:12px;white-space:nowrap;max-width:calc(100vw - 40px)}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:30;background:var(--ink);color:#fff;padding:10px 20px;border-radius:6px;font-size:12px;white-space:normal;text-align:center;max-width:calc(100vw - 40px)}
 #toast:empty{display:none}
 
 /* ===== Spatial sketch ===== */
@@ -712,7 +712,6 @@ html{scroll-padding-top:168px}
 .masthead nav{gap:13px;font-size:10px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .masthead nav::-webkit-scrollbar{display:none}
 .masthead nav a{white-space:nowrap}
-.masthead nav a:last-child{display:none}
 .cmdk-open{display:none!important}
 .intro{display:block;padding:26px 0}
 .intro h1{font-size:46px;letter-spacing:-2.5px}

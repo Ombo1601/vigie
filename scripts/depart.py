@@ -65,7 +65,7 @@ def _event_when(event: dict) -> str:
 def _ordered_events(events: list[dict]) -> list[dict]:
     ordered = sorted(events, key=lambda e: str(e.get("event_id") or ""))
     ordered.sort(key=lambda e: str(e.get("update_date") or ""), reverse=True)
-    ordered.sort(key=lambda e: brief.RW_SEVERITY.get(str(e.get("vehicle_impact") or ""), 6))
+    ordered.sort(key=lambda e: brief.rw_sort_rank(e.get("vehicle_impact")))
     return ordered
 
 

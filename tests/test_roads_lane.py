@@ -111,6 +111,15 @@ class RoadsOnlyLane(unittest.TestCase):
         self.assertNotIn("feed_health", calls)
         self.assertNotIn("cluster_issues", calls)
 
+    def test_unreadable_store_is_not_reported_as_unchanged(self) -> None:
+        code, calls, written = self._run("previous", "")
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, ["wzdx"])
+        written.assert_not_called()
+        log = refresh.LOG_PATH.read_text(encoding="utf-8")
+        self.assertIn("unreadable roadworks store", log)
+        self.assertNotIn("unchanged", log)
+
     def test_missing_vercel_fails_without_publishing(self) -> None:
         code, calls, written = self._run("old", "new", vercel=None)
         self.assertEqual(code, 1)

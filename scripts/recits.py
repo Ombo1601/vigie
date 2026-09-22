@@ -103,7 +103,8 @@ def _voice_block(tension: dict) -> str:
             continue
         title = brief.plain(entry.get("title"))
         if len(title) > brief.TITLE_CAP:
-            title = title[:brief.TITLE_CAP].rstrip() + "…"
+            # The ellipsis counts: a récit title stays within the published cap.
+            title = title[: brief.TITLE_CAP - 1].rstrip() + "…"
         if not title:
             continue
         source = brief.esc(entry.get("source_name") or entry.get("source_id") or "")

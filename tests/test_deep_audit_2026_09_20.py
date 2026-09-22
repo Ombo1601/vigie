@@ -326,7 +326,7 @@ class StrictCsp(unittest.TestCase):
             self.assertNotIn("unsafe-inline", csp)
         # Scriptless record surfaces: default-src 'none' is the script block.
         for source in ("/registre.html", "/affiche.html", "/memoire.html",
-                       "/dossiers.html", "/dossiers/(.*)", "/methode/(.*)"):
+                       "/memoire/(.*)", "/dossiers.html", "/dossiers/(.*)", "/methode/(.*)"):
             csp = rules[source]["content-security-policy"]
             self.assertIn("default-src 'none'", csp)
             self.assertNotIn("unsafe-inline", csp)
