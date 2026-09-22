@@ -1,8 +1,16 @@
-﻿"""Vigie faces v0.2 - map-scoped publisher faces. Never invent.
+"""Vigie faces v0.2 - map-scoped publisher faces. Never invent.
 
 Fetches og:image / twitter:image only for what the lookout shows:
 Near me, Province/Linked life-hit crown, fight Stage voices.
 Not all 244. Empty strip when the publisher is silent.
+
+Status: the faces store itself is unwired — no pipeline or refresh step runs
+main(), and rank_display.load_faces() deliberately returns {} (remote hotlinks
+contradict the re-hosted-locally attribution posture). This module stays for
+its shared, tested network helpers (fetch_html, extract_og, safe_image_url,
+TIMEOUT, _classify_http_error, _is_timeout), which fetch_brief_media.py — the
+live image collector — imports. Do not rewire main() without a deliberate
+same-origin /media design decision.
 """
 from __future__ import annotations
 
@@ -145,6 +153,8 @@ def fetch_html(url: str, *, retries: int = 2, diag: dict | None = None) -> str |
         except urllib.error.HTTPError as exc:
             last = (_classify_http_error(exc.code, "article"), f"HTTP {exc.code}")
             # An HTTP refusal is respected - never retried under another identity.
+            if exc.code in (404, 410):
+                break  # dead article: no retry will resurrect it; save the wallet
         except (OSError, urllib.error.URLError, http.client.HTTPException) as exc:
             reason = "article_timeout" if _is_timeout(exc) else "article_network_error"
             last = (reason, f"{type(exc).__name__}: {exc}")

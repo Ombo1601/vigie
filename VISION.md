@@ -35,5 +35,6 @@ For Quebec City first:
 
 ## Repo
 
-Local house: `C:\Users\ADMIN\vigie`  
-GitHub: later, after the thin loop scars us.
+Public : [github.com/Ombo1601/vigie](https://github.com/Ombo1601/vigie) —
+la méthode est publiée, les secrets et les données restent hors version.
+Production : [vigieqc.com](https://vigieqc.com).

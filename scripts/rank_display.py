@@ -2602,7 +2602,7 @@ def main() -> None:
     clock = load_clock(now.isoformat())
     # Keep the experimental evidence workbench accessible without making
     # residents learn its vocabulary before reading their local news.
-    import resident_brief
+    # (resident_brief is imported at module top; no local import needed.)
 
     store_io.write_text_atomic(
         OUT_HTML.parent / "explorer.html",

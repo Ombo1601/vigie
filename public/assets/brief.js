@@ -6,11 +6,12 @@
   const on = (el, event, fn) => { if (el && el.addEventListener) el.addEventListener(event, fn); };
   const KEY = 'vigie.resident.v1';
   const LKEY = 'vigie.lenses.v1';
-  // Folding must match resident_brief.folded(): ligatures and typographic
-  // apostrophes are mapped before diacritics are stripped, or searching
-  // "oeuvre" would never match a stored "œuvre".
-  const LIGATURES = { 'œ': 'oe', 'Œ': 'oe', 'æ': 'ae', 'Æ': 'ae', '’': "'", '‘': "'", '`': "'", '´': "'" };
-  const fold = (text) => String(text || '').replace(/[œŒæÆ’‘`´]/g, ch => LIGATURES[ch])
+  // Folding must match resident_brief.folded(): ligatures, eszett (Python
+  // casefold maps ß to ss; toLowerCase does not) and typographic apostrophes
+  // are mapped before diacritics are stripped, or searching "oeuvre" would
+  // never match a stored "œuvre".
+  const LIGATURES = { 'ß': 'ss', 'ẞ': 'ss', 'œ': 'oe', 'Œ': 'oe', 'æ': 'ae', 'Æ': 'ae', '’': "'", '‘': "'", '`': "'", '´': "'" };
+  const fold = (text) => String(text || '').replace(/[ßẞœŒæÆ’‘`´]/g, ch => LIGATURES[ch])
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const rows = all('.story');
   // Per-row refs and parsed facets are cached once: render() runs on every

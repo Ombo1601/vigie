@@ -88,9 +88,27 @@ def line_of(issue: dict) -> str | None:
 
 def html_of(issue: dict) -> str:
     """A small bordered line for dossier cards and récit pages, or ""."""
+    inner = line_html(issue)
+    if not inner:
+        return ""
+    return f'<p class="dossier-promesse">{inner}</p>'
+
+
+def line_html(issue: dict) -> str:
+    """The sentence as escaped HTML, with the entry date as a <time> element.
+
+    line_of() keeps the raw ISO stamp (plain-text contract, test-locked);
+    human surfaces render the same fact as a localized date instead of a
+    machine stamp in the middle of a French sentence.
+    """
     import resident_brief as brief
 
     line = line_of(issue)
     if not line:
         return ""
-    return f'<p class="dossier-promesse">{brief.esc(line)}</p>'
+    status = status_of(issue)
+    stamp = (status or {}).get("answered_at") if isinstance(status, dict) else None
+    if isinstance(stamp, str) and stamp and stamp in line:
+        before, _, after = line.partition(stamp)
+        return f"{brief.esc(before)}{brief.date_html(stamp)}{brief.esc(after)}"
+    return brief.esc(line)

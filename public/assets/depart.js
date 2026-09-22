@@ -1,14 +1,15 @@
 /* Avant de partir — on-device corridors. Progressive enhancement only: the
    departure screen is complete and readable without JavaScript. No account, no
    position, no server round-trip; corridors stay in this browser's storage.
-   Mirrors brief.js fold(): ligatures and typographic apostrophes first, then
-   diacritics, then case — the same key the street island is built with. */
+   Mirrors brief.js fold(): ligatures, eszett (ß to ss, like Python casefold)
+   and typographic apostrophes first, then diacritics, then case — the same
+   key the street island is built with. */
 (function () {
   var KEY = 'vigie.corridors.v1';
   var box = document.getElementById('depart-corridors');
   if (!box) return;
   var island = document.getElementById('vigie-streets');
-  var byKey = {};
+  var byKey = Object.create(null);
   try {
     var doc = JSON.parse(island ? island.textContent : 'null');
     var rows = doc && Array.isArray(doc.streets) ? doc.streets : [];
@@ -18,9 +19,9 @@
       }
     });
   } catch (e) { /* unreadable island: counts stay unknown, marks stay off */ }
-  var foldMap = { '\u0153': 'oe', '\u0152': 'oe', '\u00e6': 'ae', '\u00c6': 'ae', '\u2019': "'", '\u2018': "'", '`': "'", '\u00b4': "'" };
+  var foldMap = { '\u00df': 'ss', '\u1e9e': 'ss', '\u0153': 'oe', '\u0152': 'oe', '\u00e6': 'ae', '\u00c6': 'ae', '\u2019': "'", '\u2018': "'", '`': "'", '\u00b4': "'" };
   var fold = function (text) {
-    return String(text || '').replace(/[\u0153\u0152\u00e6\u00c6\u2019\u2018`\u00b4]/g, function (ch) { return foldMap[ch]; })
+    return String(text || '').replace(/[\u00df\u1e9e\u0153\u0152\u00e6\u00c6\u2019\u2018`\u00b4]/g, function (ch) { return foldMap[ch]; })
       .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   };
   var keyOf = function (name) { return fold(name).replace(/\s+/g, ' ').trim(); };
@@ -37,7 +38,9 @@
     return;
   }
   if (hint) hint.hidden = true;
-  var keys = {};
+  // Null-prototype map: a corridor literally named "__proto__" must be an
+  // inert miss, never an inherited hit that mislabels every card.
+  var keys = Object.create(null);
   names.forEach(function (name) {
     var key = keyOf(name);
     if (!key) return;

@@ -65,7 +65,8 @@ form of the edition itself).
 ## Enrich rules (proposed only)
 
 - Strict city tokens → `quebec-city` (Near me)
-- Primary feed without city token → park `quebec`, not Near me
+- Primary feed without city token → `quebec` only with an explicit QC/CA token,
+  else `linked` (no auto-cloak: source geography is never article geography)
 - Province feed without QC/CA token → park `linked` (no world-fog cloak)
 - World-fog titles (Iran, Danemark/Russie, celebrity wire…) without QC scar → `linked`
 - Topics/impacts are heuristics — never truth; claims and falsifiable units are proposed objects

@@ -118,7 +118,7 @@ def rule_poussee(diff: dict) -> list[dict]:
     for key, group in _group_by_street(diff.get("new") or []).items():
         n = len(group.event_ids)
         if n >= threshold:
-            # The threshold guarantees n >= 2: the claim is always plural.
+            # The threshold (min_count 3) guarantees a plural claim.
             out.append(_anomaly(
                 "poussee-declarations", key, group,
                 f"{n} nouvelles entraves déclarées sur {group.display()} "

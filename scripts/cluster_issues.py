@@ -237,11 +237,11 @@ def issue_id(scar: str, source_count: int = 0) -> str:
 # Scar-locked lookout questions (UI v2.6). Never crown one outlet's lede.
 # Voice count lives in fight-meta / Stage chrome — not inside the question.
 SCAR_QUESTIONS = {
-    "maelyne-levis": "Maëlyne Lugez : les sources sur l'enquête et ses suites",
+    "maelyne-levis": "Maëlyne Lugez : les sources sur l’enquête et ses suites",
     "tramway": "Tramway de Québec : les positions rapportées",
     "marchand": "Les priorités présentées par le maire de Québec",
-    "marchand-immigration": "Marchand et les cibles d'immigration à Québec",
-    "airport": "Aéroports : le projet d'investissement privé",
+    "marchand-immigration": "Marchand et les cibles d’immigration à Québec",
+    "airport": "Aéroports : le projet d’investissement privé",
 }
 
 

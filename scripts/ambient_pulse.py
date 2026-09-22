@@ -34,7 +34,7 @@ NOTE = (
 )
 TRUST_NOTE = (
     "Des sources réunies ne sont pas des confirmations indépendantes. "
-    "Un désaccord entre elles n'est pas établi. Une absence dans les flux collectés "
+    "Un désaccord entre elles n’est pas établi. Une absence dans les flux collectés "
     "ne prouve pas un silence éditorial."
 )
 
@@ -275,7 +275,7 @@ def render_morning_html(digest: dict) -> str:
     note = rank_display.esc(NOTE)
     trust_note = rank_display.esc(TRUST_NOTE)
     return f"""<!DOCTYPE html>
-<html lang="fr">
+<html lang="fr-CA">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -392,7 +392,7 @@ def render_morning_html(digest: dict) -> str:
     </div>
     <script type="application/json" id="vigie-pulse">{pulse_json}</script>
     <div class="cta">
-      <a class="cta-primary" href="/index.html">L'essentiel à Québec</a>
+      <a class="cta-primary" href="/index.html">L’essentiel à Québec</a>
       <a href="/explorer.html">Comparer les sources</a>
       <a href="/methode/frictions.html">FRICTION</a>
       <a href="/methode/classement.html">ranking</a>

@@ -153,8 +153,8 @@ def _question_html(issues: list[dict]) -> str:
     if issue is None:
         return ""
     question = brief.plain(issue.get("question"))[:160]
-    line = promesse.line_of(issue)
-    status_html = f'<p class="depart-question-status">{brief.esc(line)}</p>' if line else ""
+    inner = promesse.line_html(issue)
+    status_html = f'<p class="depart-question-status">{inner}</p>' if inner else ""
     attributed = str(issue.get("label_kind") or "") == "attributed_headline"
     attrib_html = (
         '<p class="fine">Titre d’un éditeur, cité tel quel.</p>' if attributed else ""

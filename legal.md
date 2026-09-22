@@ -80,9 +80,9 @@ Les journaux internes ne contiennent aucune donnée de lecteur.
 ## Retrait et contact
 
 Un éditeur qui souhaite que Vigie cesse de relayer son flux, un article ou une
-image est retiré **dans l'heure qui suit la demande** (une édition), et la
-source est désactivée publiquement dans `sources.yaml` avec la raison de la
-coupure — jamais silencieusement.
+image est retiré **le jour même** (sous une édition : la collecte tourne toutes
+les six heures), et la source est désactivée publiquement dans `sources.yaml`
+avec la raison de la coupure — jamais silencieusement.
 
 Contact : dépôt public [github.com/Ombo1601/vigie](https://github.com/Ombo1601/vigie)
 (section Issues), ou l'adresse qui y figure.

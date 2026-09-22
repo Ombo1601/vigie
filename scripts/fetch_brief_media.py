@@ -239,6 +239,8 @@ def fetch_image(url: str, referer: str = "", *, retries: int = 2,
             return None  # a guarded redirect failure is never retried
         except urllib.error.HTTPError as exc:
             last = (fetch_media._classify_http_error(exc.code, "image"), f"HTTP {exc.code}")
+            if exc.code in (404, 410):
+                break  # dead image: no retry will resurrect it; save the wallet
             if attempt + 1 < attempts:
                 time.sleep(0.35 * (attempt + 1))
             continue  # an HTTP refusal is respected - never identity-switched

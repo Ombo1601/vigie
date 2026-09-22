@@ -18,7 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
 
 import registre  # noqa: E402
 import resident_brief as brief  # noqa: E402
@@ -95,6 +96,9 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
 
     local = [r for r in rows if r.get("geo") == "quebec-city"]
     lead = local[:LEAD_CAP] if local else rows[:LEAD_CAP]
+    # When no local story qualified, the fallback is honest about it: the
+    # sheet never presents province/linked stories as "À Québec" silently.
+    lead_title = "À Québec" if local else "Le point (aucun article local daté)"
     lead_html = "".join(_story(r) for r in lead) or '<li><span class="af-title">Aucun article local daté dans cette collecte.</span></li>'
 
     areas = area_blocks(local)
@@ -147,7 +151,7 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
 <p class="af-screen-only"><a href="/">← Le point</a> · Cette page est faite pour le papier : imprimez-la (Ctrl + P), affichez-la, photographiez-la. Une feuille par édition.</p>
 <main class="af-sheet">
 <header class="af-head"><div class="af-brand"><svg width="34" height="38" viewBox="0 0 28 32" aria-hidden="true"><path d="M2 5 14 28 26 5M8 5l6 12 6-12" fill="none" stroke="currentColor" stroke-width="2.5"/></svg><span>vigie.</span></div><div class="af-ed"><p class="af-eyebrow">L’AFFICHE DE QUARTIER · QUÉBEC</p><h1>Ce qui touche votre semaine.</h1><p class="af-date">Édition du {brief.date_html(edition_at, fallback="collecte non horodatée")} · {status.get("ok", 0)} flux sur {status.get("total", 0)}</p></div></header>
-<section class="af-lead"><h2>À Québec</h2><ol>{lead_html}</ol></section>
+<section class="af-lead"><h2>{esc(lead_title)}</h2><ol>{lead_html}</ol></section>
 <div class="af-areas">{areas_html}</div>
 <section class="af-roads"><h2>Entraves déclarées par la Ville</h2>{f'<ul>{roads_html}</ul><p class="af-fine">Collecte officielle du {brief.date_html(rw_fetched.isoformat())}. Retiré du flux ≠ terminé. Carte : carte.ville.quebec.qc.ca</p>' if roads else '<p class="af-fine">Aucune entrave déclarée dans la collecte, ou flux officiel indisponible.</p>'}</section>
 <section class="af-voices"><h2>Qui a parlé, qui n’a pas parlé</h2>{voices_html}<p class="af-fine">« N’a pas parlé » = absent des flux que Vigie suit dans cette édition. Ce n’est pas la preuve d’un silence ailleurs.</p></section>

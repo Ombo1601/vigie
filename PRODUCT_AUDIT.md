@@ -107,6 +107,27 @@ Reliable local event identity, revision history, corrections, tested geography a
 - **Technical debt:** the legacy workbench remains a large generated HTML module with some brittle historical tests. It is isolated, not fully rearchitected.
 - **Business:** founder-backed funding, retention, pricing and willingness to pay remain unvalidated. Do not purchase growth before earning repeat use.
 
+## Addendum (2026-09-22) — what changed since the audit
+
+Dated corrections to the shipped-state claims above; the 2026-09-17/19
+record stands as written.
+
+- **Runner:** the collector now runs on GitHub Actions (`.github/workflows/vigie-refresh.yml`,
+  every 6 h; `.github/workflows/vigie-roads.yml` hourly for the official roadworks lane),
+  with cross-edition state in the private `Ombo1601/vigie-state` store. The Windows
+  scheduled task is an optional fallback. Vercel git auto-deploy is disabled, so this
+  verified chain is the only production writer.
+- **Alerting/observability:** a failed refresh opens (or comments on) a GitHub issue the
+  next success closes (`.github/actions/ops-alert`); machine-room ledgers
+  (`feed_health`, `media_health`, `edition_metrics`, `watchdog`) are compiled every run.
+- **Consultations ingested:** the Ville participation calendar is now a structured
+  `civic-html` source (`scripts/ingest_civic.py`), rendered verbatim in its own section —
+  no longer "useful navigation" only.
+- **Brief paging:** twelve articles per step (lean-scan 6 → 12, DESIGN.md v0.6.1), not six.
+- **Record layer:** the brief is one view over a sealed record — Le Registre (sha256
+  edition chain, `REGISTRE.md`), La Mémoire, Les Récits, La Méthode, Avant de partir,
+  L'affiche, and the machine substrate (`llms.txt`, Markdown twin, delta). See AGENTS.md.
+
 ## Acceptance
 
 Run `python -X utf8 scripts/verify.py --rebuild` for current tests, syntax and staged HTTP delivery, and `python -X utf8 scripts/check_claims.py` for extraction integrity. The final execution report records exact counts; an old document count must not masquerade as current verification.
