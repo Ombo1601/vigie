@@ -154,6 +154,13 @@ def guard_offline_rebuild() -> None:
             f"--rebuild refused: newest raw snapshot is {age_h:.1f}h old; offline "
             f"normalize marks sources stale after {MAX_FETCH_AGE_HOURS}h and would "
             "stage an empty edition")
+
+
+def guard_rebuilt_edition() -> None:
+    """After the offline rebuild ran: refuse to stage what it produced when it
+    produced nothing. Split from guard_offline_rebuild so the pre-run check
+    never blames the current store for an edition the rebuild has not run yet.
+    """
     if _candidate_count() == 0:
         raise RuntimeError("--rebuild produced an empty edition; refusing to stage")
 
@@ -203,7 +210,7 @@ def main() -> int:
         if args.rebuild:
             guard_offline_rebuild()
             run([sys.executable, str(ROOT / "scripts" / "pipeline.py"), "--offline"])
-            guard_offline_rebuild()
+            guard_rebuilt_edition()
         claims_gate()
         syntax_checks(include_pages=not args.code_only)
         if not args.code_only:

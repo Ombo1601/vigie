@@ -98,11 +98,17 @@ def load_source_timeline(src_dir: Path, limit: int = RUNS_EXAMINED) -> list[dict
 
 def _disk_bytes(src_dir: Path) -> int:
     total = 0
+    seen: set[tuple[int, int]] = set()
     try:
         for path in Path(src_dir).rglob("*"):
             try:
                 if path.is_file() and not path.is_symlink():
-                    total += path.stat().st_size
+                    # Unchanged snapshots are hard links: count each inode once
+                    # or the ledger reports phantom disk growth every 304.
+                    stat = path.stat()
+                    if (stat.st_dev, stat.st_ino) not in seen:
+                        seen.add((stat.st_dev, stat.st_ino))
+                        total += stat.st_size
             except OSError:
                 continue
     except OSError:
@@ -121,7 +127,7 @@ def _streak(timeline: list[dict], predicate) -> int:
 
 
 def _yield_trend(yields: list[int]) -> str | None:
-    """"rising"/"falling"/"flat" from the two halves of the yield window."""
+    """'rising' / 'falling' / 'flat' from the two halves of the yield window."""
     if len(yields) < 4:
         return None
     half = len(yields) // 2

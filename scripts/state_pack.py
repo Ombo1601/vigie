@@ -26,6 +26,7 @@ Usage:
 """
 from __future__ import annotations
 
+import gzip
 import sys
 import tarfile
 from pathlib import Path
@@ -145,12 +146,32 @@ def members() -> list[Path]:
     return [unique[key] for key in sorted(unique)]
 
 
+def _deterministic_info(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    """Strip build-environment facts from an archive member.
+
+    File mtimes, uids and user names differ between runs and machines; a state
+    snapshot must be a pure function of the packed bytes, so every member is
+    normalized. The snapshot's own data carries the collection clocks.
+    """
+    info.mtime = 0
+    info.uid = 0
+    info.gid = 0
+    info.uname = ""
+    info.gname = ""
+    info.pax_headers = {}
+    return info
+
+
 def pack(out_path: Path) -> int:
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(out, "w:gz") as tar:
-        for path in members():
-            tar.add(path, arcname=path.relative_to(ROOT).as_posix(), recursive=False)
+    # gzip mtime=0: the compression header otherwise embeds the build second.
+    with open(out, "wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", mtime=0, fileobj=raw) as gz:
+            with tarfile.open(fileobj=gz, mode="w") as tar:
+                for path in members():
+                    tar.add(path, arcname=path.relative_to(ROOT).as_posix(),
+                            recursive=False, filter=_deterministic_info)
     return len(members())
 
 

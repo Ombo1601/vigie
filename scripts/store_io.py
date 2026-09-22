@@ -50,15 +50,18 @@ def write_bytes_dedup(path: Path, data: bytes, previous: Path | None = None) -> 
     would otherwise copy the same body every run. A hard link keeps the new
     name and every reader intact at zero extra disk. Linking is best-effort:
     if the filesystem refuses (non-NTFS, cross-volume, permissions) the bytes
-    are written normally, never an error.
+    are written normally, never an error. The previous file's bytes are always
+    compared first: a caller passing the wrong previous snapshot must get a
+    correct copy, never a silent alias to another run's content.
     """
     path = Path(path)
     if previous is not None:
         previous = Path(previous)
         if previous.exists():
             try:
-                os.link(previous, path)
-                return
+                if previous.read_bytes() == data:
+                    os.link(previous, path)
+                    return
             except OSError:
                 pass
     path.write_bytes(data)

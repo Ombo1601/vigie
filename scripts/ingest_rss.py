@@ -153,14 +153,13 @@ def _scalar(val: str):
     return val
 
 
-def load_enabled_by_type(path: Path, source_type: str) -> list[dict]:
-    """Minimal parser for our sources.yaml list-of-maps. Not a general YAML engine."""
-    text = path.read_text(encoding="utf-8")
+def _parse_sources_block(path: Path) -> list[dict]:
+    """Every record in the sources: block (enabled or cut). Not a general YAML engine."""
+    text = Path(path).read_text(encoding="utf-8")
     m = re.search(r"(?ms)^sources:\n(.*?)(?=^[a-zA-Z].*:|\Z)", text)
     if not m:
-        raise SystemExit(f"No sources: block in {path}")
-    body = m.group(1)
-    chunks = re.split(r"\n  - id:", "\n" + body)
+        return []
+    chunks = re.split(r"\n  - id:", "\n" + m.group(1))
     out: list[dict] = []
     for chunk in chunks:
         chunk = chunk.strip("\n")
@@ -177,13 +176,36 @@ def load_enabled_by_type(path: Path, source_type: str) -> list[dict]:
                 line = line[2:]
             key, _, val = line.partition(":")
             rec[key.strip()] = _scalar(val)
-        if rec.get("enabled") is True and rec.get("type") == source_type and rec.get("id") and rec.get("url"):
+        if rec.get("id"):
             out.append(rec)
     return out
 
 
+def _has_sources_block(path: Path) -> bool:
+    return bool(re.search(r"(?ms)^sources:\n", Path(path).read_text(encoding="utf-8")))
+
+
+def load_enabled_by_type(path: Path, source_type: str) -> list[dict]:
+    """Minimal parser for our sources.yaml list-of-maps. Not a general YAML engine."""
+    if not _has_sources_block(path):
+        raise SystemExit(f"No sources: block in {path}")
+    return [
+        rec for rec in _parse_sources_block(path)
+        if rec.get("enabled") is True and rec.get("type") == source_type and rec.get("url")
+    ]
+
+
 def load_enabled_rss(path: Path) -> list[dict]:
     return load_enabled_by_type(path, "rss")
+
+
+def load_cut_sources(path: Path) -> list[dict]:
+    """Sources carrying enabled:false + cut_reason: an R10 opt-out stays visible.
+
+    A cut source is neither collected nor ranked, but the cut itself is a
+    published fact — the sources page lists it with its reason, never silently.
+    """
+    return [rec for rec in _parse_sources_block(path) if rec.get("enabled") is False]
 
 
 def public_http_url(url: str, *, resolve: bool = False) -> str:
@@ -444,7 +466,8 @@ def fetch_bytes(url: str) -> tuple[bytes, str | None]:
                     continue
             if refused:
                 break
-    assert last_err is not None
+    if last_err is None:  # unreachable with RETRIES >= 1; never an assert (python -O)
+        raise RuntimeError("fetch produced no body and no error")
     raise last_err
 
 
@@ -653,7 +676,7 @@ def ingest_one(src: dict, fetched_at: datetime) -> dict:
             "fetched_at": fetched_at.isoformat(),
         }
         err_path = dest_dir / f"{stamp}_error.json"
-        err_path.write_text(json.dumps(err, ensure_ascii=False, indent=2), encoding="utf-8")
+        store_io.write_json_atomic(err_path, err)
         return err
 
     digest = sha256_hex(raw)
@@ -733,7 +756,7 @@ def ingest_one(src: dict, fetched_at: datetime) -> dict:
         ],
     }
     meta_path = dest_dir / f"{stamp}_{digest[:12]}.json"
-    meta_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    store_io.write_json_atomic(meta_path, payload)
     payload["meta_file"] = rel_or_abs(meta_path)
     return payload
 

@@ -83,11 +83,17 @@ def _parse_ts(value: object) -> datetime | None:
 
 def _disk_bytes(root: Path) -> int:
     total = 0
+    seen: set[tuple[int, int]] = set()
     try:
         for path in Path(root).rglob("*"):
             try:
                 if path.is_file() and not path.is_symlink():
-                    total += path.stat().st_size
+                    # Same inode discipline as feed_health: hard-linked
+                    # snapshots count once, or growth is overstated.
+                    stat = path.stat()
+                    if (stat.st_dev, stat.st_ino) not in seen:
+                        seen.add((stat.st_dev, stat.st_ino))
+                        total += stat.st_size
             except OSError:
                 continue
     except OSError:
@@ -132,12 +138,18 @@ def read_refresh_log(path: Path = REFRESH_LOG, tail: int = LOG_TAIL_LINES,
         return None
 
     entries = [p for p in (parse_line(ln) for ln in lines) if p is not None]
+
+    def _is_deploy(msg: str) -> bool:
+        # Both production writers count: the six-hour full refresh and the
+        # hourly roads-only lane. A NOCHANGE roads run logs neither line.
+        return "OK production updated" in msg or "OK roads production updated" in msg
+
     last_deploy = next((stamp for stamp, msg in reversed(entries)
-                        if "OK production updated" in msg), None)
+                        if _is_deploy(msg)), None)
     last_activity = entries[-1][0] if entries else None
     anchor = _parse_ts(last_activity)
     last_ok_index = max((i for i, (_, msg) in enumerate(entries)
-                         if "OK production updated" in msg), default=-1)
+                         if _is_deploy(msg)), default=-1)
     fails = fails_since_ok = 0
     for i, (stamp, msg) in enumerate(entries):
         if not msg.startswith("FAIL"):

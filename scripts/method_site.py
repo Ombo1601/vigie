@@ -38,27 +38,27 @@ SITE_URL = "https://vigieqc.com"
 # slug -> (source file, French title, eyebrow, one-line intro). Order = index order.
 PAGES: tuple[tuple[str, str, str, str, str], ...] = (
     ("classement", "ranking.md", "Le classement", "LA LOI PUBLIQUE",
-     "Comment les articles sont ordonnés — et ce qui ne pèse jamais dans l'ordre."),
+     "Comment les articles sont ordonnés — et ce qui ne pèse jamais dans l’ordre."),
     ("sources", "sources.yaml", "Les sources", "LA CHANCELLERIE",
      "La liste finie des flux suivis, les coupes consignées et leurs raisons."),
     ("financement", "RENT.md", "Qui finance Vigie", "LE LOYER",
-     "Gratuit ne veut pas dire sans coût. Qui paie la machine — et ce qui n'est jamais à vendre."),
+     "Gratuit ne veut pas dire sans coût. Qui paie la machine — et ce qui n’est jamais à vendre."),
     ("vision", "VISION.md", "La vision", "LE SERMENT",
-     "Ce que Vigie est, et refuse d'être. Le serment avant la machine."),
+     "Ce que Vigie est, et refuse d’être. Le serment avant la machine."),
     ("registre", "REGISTRE.md", "La méthode du registre", "SCELLÉ ET VÉRIFIABLE",
-     "Ce qu'un sceau contient, ce qu'il prouve, et ce qu'il ne prouve pas."),
+     "Ce qu’un sceau contient, ce qu’il prouve, et ce qu’il ne prouve pas."),
     ("legal", "legal.md", "Mentions légales", "ATTRIBUTION ET RETRAIT",
      "Le fondement juridique du point local, et le retrait le jour même."),
     ("design", "DESIGN.md", "La loi du design", "LA BEAUTÉ SANS BROUILLARD",
      "Pourquoi le point ressemble à ceci : chaque choix de forme est une loi écrite."),
     ("facettes", "FACETS.md", "Les facettes", "VOS LUNETTES, OPT-IN",
-     "Les lentilles de lecture : elles réordonnent l'arrivée, jamais le classement public."),
-    ("rues", "edge.md", "L'atlas des rues", "RAPPROCHEMENTS LITTÉRAUX",
+     "Les lentilles de lecture : elles réordonnent l’arrivée, jamais le classement public."),
+    ("rues", "edge.md", "L’atlas des rues", "RAPPROCHEMENTS LITTÉRAUX",
      "Un nom de rue partagé entre un dossier et une entrave officielle — jamais une preuve géographique."),
     ("anomalies", "anomalies.md", "Les anomalies", "LECTURE STRUCTURELLE",
      "Les règles à seuils fixes qui lisent la collecte officielle — des faits mesurés, pas des prédictions."),
     ("frictions", "FRICTION.md", "Les frictions", "LE CARNET DE BORD",
-     "Les douleurs de l'arrivée, nommées une à une. La méthode s'améliore en public."),
+     "Les douleurs de l’arrivée, nommées une à une. La méthode s’améliore en public."),
 )
 
 # Internal cross-links inside the method files -> their page.
@@ -260,6 +260,7 @@ def _sources_html() -> str:
     )
     deferred = _deferred_sources()
     rules = _rules_scalars()
+    cuts = ingest_rss.load_cut_sources(ROOT / "sources.yaml")
     nest_label = {"primary": "Québec et environs", "province": "Au Québec", "linked": "Ailleurs"}
     rows = []
     for src in sources:
@@ -297,6 +298,18 @@ def _sources_html() -> str:
             f'<li><strong>{brief.esc(str(src.get("name") or src.get("id")))}</strong> — '
             f'{brief.esc(str(src.get("reason") or "coupé, raison consignée"))}</li>'
         )
+    # R10 opt-outs: enabled:false in the chancellery block itself. These are
+    # live cuts (a publisher asked to leave), distinct from the deferred
+    # never-added probes — and they must be named with their reason, never
+    # silently dropped from the page the brief promises.
+    for src in cuts:
+        reason = str(src.get("cut_reason") or "retrait à la demande de l’éditeur")
+        when = str(src.get("cut_at") or "").strip()
+        stamp = f" ({brief.esc(when)})" if when else ""
+        cut_rows.append(
+            f'<li><strong>{brief.esc(str(src.get("name") or src.get("id")))}</strong> — '
+            f"retiré{stamp} : {brief.esc(reason)}</li>"
+        )
     cuts = (
         f'<h3 id="coupes">Coupées ou reportées</h3><ul class="methode-cuts">{"".join(cut_rows)}</ul>'
         if cut_rows else ""
@@ -308,7 +321,7 @@ def _sources_html() -> str:
         fine.append(brief.esc(str(rules["coverage_note"])))
     return (
         f'<p>Vigie suit une liste <strong>finie et publiée</strong> de sources : '
-        f"<strong>{len(sources)}</strong> actives, <strong>{len(deferred)}</strong> coupées ou "
+        f"<strong>{len(sources)}</strong> actives, <strong>{len(deferred) + len(cuts)}</strong> coupées ou "
         "reportées. Chaque coupe est consignée avec sa raison, jamais effacée en silence. "
         "Toute institution est nommée ; aucune ne possède le point.</p>"
         f"{table}{cuts}"
@@ -366,9 +379,8 @@ def _body(eyebrow: str, title: str, intro: str, content: str, *, link_index: boo
 
 def render_page(slug: str, file: str, title: str, eyebrow: str, intro: str) -> str:
     path = ROOT / file
-    # utf-8-sig: a BOM must never turn the file's first `#` heading into a
-    # paragraph (ranking.md / RENT.md shipped with one; the BOM is stripped
-    # here even if it reappears).
+    # utf-8-sig: a stray BOM must never turn a file's first `#` heading into
+    # a paragraph. Defensive — current method files ship without one.
     text = path.read_text(encoding="utf-8-sig")
     if file == "sources.yaml":
         content = _sources_html()

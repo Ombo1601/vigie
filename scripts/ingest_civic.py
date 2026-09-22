@@ -182,7 +182,8 @@ def _cap(text: str, limit: int) -> str:
     text = " ".join(str(text or "").split())
     if len(text) <= limit:
         return text
-    return text[:limit].rstrip() + "…"
+    # The ellipsis counts: the relayed text stays within the limit.
+    return text[:limit - 1].rstrip() + "…"
 
 
 def parse_row(row: dict, base_url: str) -> tuple[dict | None, str | None]:
@@ -344,6 +345,21 @@ def snapshot_fetched_at(snapshot: Path) -> datetime | None:
     return None
 
 
+def snapshot_content_type(snapshot: Path) -> str | None:
+    """The archived Content-Type, so an offline re-decode uses the same charset
+    the online collection used (a windows-1252 page re-read as UTF-8 would be
+    mojibake, not a rebuild)."""
+    meta = snapshot.with_suffix(".json")
+    if meta.exists():
+        try:
+            doc = json.loads(meta.read_text(encoding="utf-8"))
+            if isinstance(doc, dict) and isinstance(doc.get("content_type"), str):
+                return doc.get("content_type")
+        except (OSError, ValueError):
+            pass
+    return None
+
+
 def collect(sources: list[dict], now: datetime, *, offline: bool = False,
             raw_dir: Path = RAW_DIR, store_path: Path = STORE_PATH,
             fetch=fetch_bytes) -> dict:
@@ -379,7 +395,7 @@ def collect(sources: list[dict], now: datetime, *, offline: bool = False,
                 print(f"  FAIL {source_id}: unreadable snapshot ({exc}); keeping previous store")
                 return {"ok": False, "reason": "snapshot_unreadable"}
             fetched_at = snapshot_fetched_at(snapshot) or now
-            content_type = "text/html"
+            content_type = snapshot_content_type(snapshot)
             print(f"  {source_id}: reusing {snapshot.name} (fetched {fetched_at.isoformat()})")
             archived = False
         else:
@@ -418,7 +434,7 @@ def collect(sources: list[dict], now: datetime, *, offline: bool = False,
             except OSError as exc:
                 archived = False
                 print(f"  WARN {source_id}: snapshot not archived ({exc}); continuing from memory")
-        html = decode_html(raw, content_type if not offline else None)
+        html = decode_html(raw, content_type)
         events, counts = parse_activities(html, page_url)
         parse_error = counts.pop("parse_error", None)
         if not offline and archived:

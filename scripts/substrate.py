@@ -21,7 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
 
 import registre  # noqa: E402
 import resident_brief as brief  # noqa: E402
@@ -41,9 +42,11 @@ SUMMARY_CAP = 280
 
 
 def _plain(value: object, cap: int | None = None) -> str:
+    """Verbatim words, truncated. The ellipsis counts, so the result never
+    exceeds `cap` — the same ≤cap law the brief's own cards follow."""
     text = brief.plain(value)
     if cap is not None and len(text) > cap:
-        text = text[:cap].rstrip() + "…"
+        text = text[:cap - 1].rstrip() + "…"
     return text
 
 
@@ -449,7 +452,7 @@ Current edition: {edition or "unknown"}. Rules for agents: cite the original pub
 - [Avant de partir]({SITE_URL}/partir.html): the departure screen — declared obstructions, followed corridors (on-device), what changed.
 - [La mémoire]({SITE_URL}/memoire.html): every sealed edition, readable — dossiers, voices, silence, edition by edition.
 - [Registre (HTML)]({SITE_URL}/registre.html): the human view of the register.
-- [L'affiche]({SITE_URL}/affiche.html): the printable neighbourhood sheet.
+- [L’affiche]({SITE_URL}/affiche.html): the printable neighbourhood sheet.
 - [Explorer]({SITE_URL}/explorer.html): evidence workbench (English).
 - [Morning pulse]({SITE_URL}/morning.html): ambient digest of the same store.
 """

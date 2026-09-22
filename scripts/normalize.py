@@ -1,4 +1,4 @@
-﻿"""Vigie v0 — normalize latest raw ingest JSON into StoryCandidates.
+"""Vigie v0 — normalize latest raw ingest JSON into StoryCandidates.
 
 Reads newest ingest outcome for enabled sources; failed/stale feeds stay unavailable.
 Writes append-only snapshot to data/normalized/.
@@ -28,6 +28,7 @@ FUTURE_TOLERANCE_MINUTES = 15
 HISTORY_RETENTION_DAYS = 30  # stamped candidate snapshots (mirrors raw retention)
 STAMPED_NAME_RE = re.compile(r"^(\d{8})T\d{6}Z_candidates\.json$")
 STAMPED_TMP_RE = re.compile(r"^(\d{8})T\d{6}Z_candidates\.json\..*\.tmp$")
+LATEST_TMP_RE = re.compile(r"^latest_candidates\.json\..*\.tmp$")
 TRACKING_PARAMS = {"fbclid", "gclid", "dclid", "msclkid", "mc_cid", "mc_eid", "igshid"}
 
 
@@ -115,6 +116,8 @@ def prune_candidate_history(out_dir: Path, days: int = HISTORY_RETENTION_DAYS,
             except OSError:
                 continue
     # Orphaned temp files from a crashed atomic write are never a store.
+    # Stamped temps carry their date; latest_* temps carry none, so they are
+    # judged by file age (older than the window).
     for path in entries:
         m = STAMPED_TMP_RE.match(path.name)
         if m and m.group(1) < cutoff:
@@ -123,6 +126,17 @@ def prune_candidate_history(out_dir: Path, days: int = HISTORY_RETENTION_DAYS,
                 removed += 1
             except OSError:
                 continue
+        elif LATEST_TMP_RE.match(path.name):
+            try:
+                age_days = (now - datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)).days
+            except (OSError, ValueError, OverflowError):
+                continue
+            if age_days > days:
+                try:
+                    path.unlink()
+                    removed += 1
+                except OSError:
+                    continue
     return removed
 
 
