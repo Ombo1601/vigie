@@ -131,7 +131,18 @@ class Phase4SinceLeft(unittest.TestCase):
         raw = re.search(r'id="vigie-pulse">(.*?)</script>', html, re.S)
         self.assertIsNotNone(raw)
         pulse = json.loads(raw.group(1))
-        self.assertTrue(pulse.get("clustered_at"))
+        self.assertIn("clustered_at", pulse)
+        # Contract: the arrival pulse carries the issues store's collection
+        # clock verbatim (never the build clock). When a store with a clock is
+        # on disk, the embedded pulse must match it exactly.
+        issues_store = harness.ROOT / "data" / "issues" / "latest_issues.json"
+        if issues_store.is_file():
+            try:
+                doc = json.loads(issues_store.read_text(encoding="utf-8"))
+            except ValueError:
+                doc = {}
+            if isinstance(doc, dict) and doc.get("clustered_at"):
+                self.assertEqual(pulse.get("clustered_at"), str(doc["clustered_at"]))
         for a in pulse.get("approaches") or []:
             self.assertIn("fp", a)
             self.assertIn("unit_count", a)

@@ -118,6 +118,24 @@ class Phase5AmbientPulse(unittest.TestCase):
         self.assertIn("1v/0s", long_w)
         self.assertIn(" · x", long_w)
 
+    def test_store_clock_is_shared_twin_when_issues_empty(self) -> None:
+        """An empty issues store still carries the collection clock at its top
+        level; both pulses must read it — never the build clock."""
+        clock = "2026-09-24T14:38:03.081754+00:00"
+        self.assertEqual(rank_display.resolve_store_clock(clock, []), clock)
+        self.assertEqual(rank_display.resolve_store_clock(None, []), "")
+        self.assertEqual(
+            rank_display.resolve_store_clock(None, [{"clustered_at": clock}]), clock
+        )
+        digest = ambient_pulse.build_digest([], [], clustered_at=clock, built_at="t0")
+        self.assertEqual(digest["clustered_at"], clock)
+        self.assertEqual(digest["pulse"]["clustered_at"], clock)
+        approaches = rank_display.build_approaches([], rank_display.build_continuity([], []))
+        arrival = rank_display.pulse_payload(
+            approaches, rank_display.resolve_store_clock(clock, [])
+        )
+        self.assertEqual(arrival["clustered_at"], digest["pulse"]["clustered_at"])
+
     def test_live_files_twin_arrival_pulse(self) -> None:
         morning = harness.ROOT / "data" / "pulse" / "latest_morning.json"
         widget = harness.ROOT / "data" / "pulse" / "latest_morning.widget.txt"

@@ -451,14 +451,39 @@ def load_store() -> tuple[list[dict], list[dict], str | None]:
     return issues, ranked, ranked_at
 
 
+def load_store_clock() -> str:
+    """The issues store's top-level collection clock, read fail-soft.
+
+    Same source the arrival pulse and the other store-clock readers use; an
+    absent or unreadable store yields "" (an absent collection date stays
+    absent, never the build clock).
+    """
+    if not ISSUES.exists():
+        return ""
+    try:
+        loaded = json.loads(ISSUES.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if isinstance(loaded, dict):
+        return str(loaded.get("clustered_at") or "")
+    return ""
+
+
 def emit_from_store(
     *,
     issues: list[dict] | None = None,
     ranked: list[dict] | None = None,
     ranked_at: str | None = None,
+    clustered_at: str | None = None,
     built_at: str | None = None,
 ) -> dict:
-    """Emit digest. Prefer in-memory store from rank_display so paint twins cannot drift."""
+    """Emit digest. Prefer in-memory store from rank_display so paint twins cannot drift.
+
+    ``clustered_at`` is the issues store's top-level collection clock, handed in
+    by rank_display so the ambient digest and the arrival ``#vigie-pulse`` read
+    the same value. When it is absent the digest keeps the per-issue fallback,
+    then "" — never the build clock.
+    """
     if issues is None or ranked is None:
         loaded_issues, loaded_ranked, loaded_ranked_at = load_store()
         if issues is None:
@@ -467,9 +492,12 @@ def emit_from_store(
             ranked = loaded_ranked
         if ranked_at is None:
             ranked_at = loaded_ranked_at
+    if clustered_at is None:
+        clustered_at = load_store_clock() or None
     digest = build_digest(
         issues,
         ranked,
+        clustered_at=clustered_at,
         ranked_at=ranked_at,
         built_at=built_at,
     )

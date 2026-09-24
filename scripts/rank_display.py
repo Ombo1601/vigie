@@ -605,6 +605,24 @@ def build_approaches(issues: list[dict], continuity: dict) -> list[dict]:
     return out
 
 
+def resolve_store_clock(explicit: str | None, issue_list: list[dict] | None) -> str:
+    """The collection clock carried by the pulse — never the build clock.
+
+    One source of truth shared with the ambient twin and with the other
+    store-clock readers (depart, edge_atlas, registre): the issues store's
+    top-level ``clustered_at``. Only when no store clock is handed in do we
+    fall back to a per-issue ``clustered_at``; an absent collection date stays
+    absent (""), never the build clock — rebuilding an empty store is not a
+    new collection of news.
+    """
+    if explicit:
+        return str(explicit)
+    for iss in issue_list or []:
+        if isinstance(iss, dict) and iss.get("clustered_at"):
+            return str(iss["clustered_at"])
+    return ""
+
+
 def pulse_payload(approaches: list[dict], clustered_at: str) -> dict:
     """Embeddable pulse for Since-you-left — store facts only."""
     return {
@@ -1141,7 +1159,7 @@ def archive_block(
     )
 
 
-def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None = None, clock: dict | None = None) -> str:
+def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None = None, clock: dict | None = None, clustered_at: str | None = None) -> str:
     clock = clock or {"ranked_at": generated_at, "sources": "sources.yaml"}
     ranked = [c for c in (ranked or []) if isinstance(c, dict)]
     issues = [i for i in (issues or []) if isinstance(i, dict)]
@@ -1388,12 +1406,7 @@ def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None
             "No Approaches yet — scars need ≥2 institutions. Lookout field still holds Near me."
             "</p>"
         )
-    clustered_at = generated_at
-    for iss in issue_list:
-        if iss.get("clustered_at"):
-            clustered_at = str(iss["clustered_at"])
-            break
-    pulse = pulse_payload(approaches, clustered_at)
+    pulse = pulse_payload(approaches, resolve_store_clock(clustered_at, issue_list))
     # Safe embed: no HTML esc (breaks JSON); neutralize script breakers only.
     pulse_json = (
         json.dumps(pulse, ensure_ascii=False, separators=(",", ":"))
@@ -2600,13 +2613,19 @@ def main() -> None:
 
     OUT_HTML.parent.mkdir(parents=True, exist_ok=True)
     clock = load_clock(now.isoformat())
+    # The collection clock the pulse carries: the issues store's top-level
+    # clustered_at, shared verbatim by the arrival pulse and the ambient twin so
+    # the two can never disagree (never the build clock).
+    store_clustered_at = (
+        str(issues_doc.get("clustered_at") or "") if isinstance(issues_doc, dict) else ""
+    )
     # Keep the experimental evidence workbench accessible without making
     # residents learn its vocabulary before reading their local news.
     import resident_brief
 
     store_io.write_text_atomic(
         OUT_HTML.parent / "explorer.html",
-        render_html(ranked, now.isoformat(), issues, clock),
+        render_html(ranked, now.isoformat(), issues, clock, clustered_at=store_clustered_at),
     )
     store_io.write_text_atomic(
         OUT_HTML,
@@ -2634,6 +2653,7 @@ def main() -> None:
         issues=issues,
         ranked=ranked,
         ranked_at=now.isoformat(),
+        clustered_at=store_clustered_at,
     )
 
     # The record layer: the sealed registre (edition chain + voice register),
