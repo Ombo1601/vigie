@@ -55,7 +55,8 @@ class Index(unittest.TestCase):
             self.assertIn("La mémoire de la ville.", index)
             self.assertLess(index.index("N° 2"), index.index("N° 1"))
             self.assertIn('href="/memoire/2.html"', index)
-            self.assertIn("ont parlé", index)
+            self.assertIn("en dossier", index)
+            self.assertNotIn("ont parlé", index)
             self.assertIn("2 éditions scellées", index)
 
     def test_empty_chain_is_honest(self):
@@ -88,8 +89,12 @@ class EditionPage(unittest.TestCase):
             self.assertIn("Édition n° 2", page)
             self.assertIn("Les dossiers", page)
             self.assertIn("Le tramway", page)
-            self.assertIn("Ont parlé", page)
-            self.assertIn("N’ont pas parlé", page)
+            self.assertIn("Dans un dossier", page)
+            self.assertIn("Non établi", page)
+            # The old dichotomy asserted a silence the register never measured.
+            self.assertNotIn("Ont parlé", page)
+            self.assertNotIn("N’ont pas parlé", page)
+            self.assertIn("n’est pas un silence", page)
             self.assertIn("Nouveaux dossiers", page)
             self.assertIn("Disparus de cette collecte", page)
             self.assertIn("jamais « réglés »", page)

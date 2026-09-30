@@ -57,6 +57,46 @@ ROADS_SEAL_CAP = 2000      # roadworks roots kept (hourly lane, tiny records)
 QUESTION_CAP = 300
 HTML_SEALS_SHOWN = 12
 
+ENRICHED = ROOT / "data" / "normalized" / "latest_enriched.json"
+FEED_HEALTH = ROOT / "data" / "ops" / "feed_health.json"
+SOURCES_PATH = ROOT / "sources.yaml"
+
+# Sealed records gained collection facts at schema 2. Schema-1 seals (the ones
+# published before the correction) carry no `collection` key, so their voice
+# state is reported as not established rather than guessed at.
+RECORD_SCHEMA = 2
+
+# Voice states. An institution is NEVER called silent on the strength of
+# Vigie's own clustering: a dossier needs a named scar and two institutions, so
+# the great majority of collected items never enter one. Measuring "did they
+# speak" with "did our clustering group them" reports our rules as their
+# behaviour — and, when a feed fails, reports our outage as their silence.
+STATE_SPOKE = "spoke"                    # appeared in a dossier of this edition
+STATE_PUBLISHED = "published"            # feeds returned items; none clustered
+STATE_NO_ITEMS = "no_items"              # feeds answered, zero items in the window
+STATE_COLLECTION_GAP = "collection_gap"  # our fetch failed: Vigie's fault, not theirs
+STATE_NOT_ESTABLISHED = "not_established"  # sealed before collection facts existed
+
+# The correction is a constant, never a wall clock: ledgers stay reproducible.
+CORRECTION_DATE = "2026-09-30"
+CORRECTION_WRONG = (
+    "Jusqu’à cette date, le registre définissait « n’a pas parlé » par « absent de tout dossier "
+    "de l’édition ». Un dossier exige un sujet nommé et deux institutions : la plupart des articles "
+    "collectés n’entrent donc dans aucun dossier. Le registre mesurait les règles de rapprochement "
+    "de Vigie, pas la parole des institutions — et il présentait comme un silence institutionnel "
+    "des éditions où les flux avaient pourtant été collectés avec succès."
+)
+CORRECTION_NOW = (
+    "Depuis cette date, chaque édition scelle le nombre d’articles réellement collectés par "
+    "institution. Une institution dont les flux ont rendu des articles est « a publié, hors dossier » ; "
+    "une collecte en échec est signalée comme une lacune de Vigie. Aucun compteur ne s’accumule "
+    "contre une institution du fait de nos règles de rapprochement."
+)
+CORRECTION_CHAIN = (
+    "Les sceaux déjà publiés restent octet pour octet identiques : une chaîne ne se réécrit pas. "
+    "Seule leur lecture a changé — elle est désormais « non établi » plutôt qu’une accusation."
+)
+
 # Includes unpaired surrogates: a JSON escape can carry \ud800, which would
 # make canonical() raise UnicodeEncodeError inside the seal.
 _SPOOF = re.compile(
@@ -134,13 +174,60 @@ def edition_key(payload: dict, history: dict) -> str:
     return dt.isoformat() if dt else ""
 
 
-def edition_record(payload: dict, edition: str) -> dict | None:
+def institution_collection(source_status: object, sources_path: Path = SOURCES_PATH) -> dict:
+    """Per-institution collection facts for one edition: counts only.
+
+    This is the evidence that separates "they said nothing we could see" from
+    "we saw plenty" and from "our fetch failed". It reuses
+    cluster_issues.collapse_institutions so that "institution" has exactly one
+    definition in the codebase — a register that collapsed feeds differently
+    from the clustering would be wrong in a new way.
+
+    Fail-soft: any problem yields {} and the register reports the state as not
+    established rather than guessing.
+    """
+    if not isinstance(source_status, dict) or not source_status:
+        return {}
+    try:
+        import cluster_issues  # noqa: PLC0415 - lazy: keeps the module import cheap
+        import ingest_rss  # noqa: PLC0415
+
+        chancellery = ingest_rss.load_enabled_rss(Path(sources_path))
+        institutions = cluster_issues.collapse_institutions(chancellery)
+    except Exception:  # noqa: BLE001 - a missing mapping must never fake a silence
+        return {}
+    out: dict[str, dict] = {}
+    for inst in institutions:
+        iid = str(inst.get("institution_id") or "")
+        if not iid:
+            continue
+        feeds = [str(f) for f in (inst.get("feed_ids") or []) if f]
+        items = ok = 0
+        for fid in feeds:
+            row = source_status.get(fid)
+            if not isinstance(row, dict):
+                continue
+            items += _int(row.get("candidate_count"))
+            # A feed answered and parsed: "ok" with no parse error. Anything else
+            # is our gap, not the institution's silence.
+            if row.get("status") == "ok" and not row.get("error"):
+                ok += 1
+        out[iid] = {"items": items, "feeds_ok": ok, "feeds_total": len(feeds)}
+    return out
+
+
+def edition_record(payload: dict, edition: str, collection: dict | None = None) -> dict | None:
     """The sealed content of one edition: IDs and counts, no publisher text.
 
     The only text carried is Vigie's own subject label for a dossier
     (truncated, never rewritten). Dossiers labelled by an attributed publisher
     headline carry an empty question and their label_kind, so no publisher
     text is ever frozen in the chain.
+
+    `collection` (schema 2) adds per-institution collected-item counts, so a
+    later reader can tell institutional quiet from a Vigie collection gap. It is
+    sealed only when present, so replaying a historical edition without those
+    facts reproduces the original bytes exactly.
     """
     if not edition or not isinstance(payload, dict):
         return None
@@ -183,13 +270,24 @@ def edition_record(payload: dict, edition: str) -> dict | None:
         "developed": _ids(ledger_in.get("developed")),
         "quiet": _ids(ledger_in.get("quiet")),
     }
-    return {
+    record = {
         "method": METHOD,
         "edition": edition,
         "followed": followed,
         "dossiers": dossiers,
         "ledger": ledger,
     }
+    if isinstance(collection, dict) and collection:
+        keep = set(followed)
+        sealed = {
+            iid: {k: _int(v.get(k)) for k in ("items", "feeds_ok", "feeds_total")}
+            for iid, v in sorted(collection.items())
+            if iid in keep and isinstance(v, dict)
+        }
+        if sealed:
+            record["record_schema"] = RECORD_SCHEMA
+            record["collection"] = sealed
+    return record
 
 
 def _int(value: object) -> int:
@@ -228,19 +326,61 @@ def institution_names(payload: dict) -> dict[str, dict]:
     return out
 
 
+VOICE_KEYS = ("spoke", "published", "no_items", "collection_gap", "not_established")
+
+
 def voice_row(record: dict) -> dict:
-    """Who spoke / who did not, across the whole edition (institution seats)."""
-    spoke: set[str] = set()
+    """Who spoke, who published without entering a dossier, and where *we* failed.
+
+    An institution absent from every dossier is classified by the collection
+    facts sealed with the edition, never by our clustering alone:
+
+      published       its feeds returned items this edition (they were not quiet)
+      no_items        its feeds answered but yielded nothing in the window
+      collection_gap  at least one of its feeds failed — Vigie's outage, not theirs
+      not_established sealed before collection facts existed: no claim is made
+
+    `absent_from_dossiers` stays as the one factual absence the register asserts.
+    The old edition-level `silent` list is gone on purpose: any consumer still
+    looking for it must be updated rather than keep publishing the false claim.
+    """
+    record = record if isinstance(record, dict) else {}
+    spoke_set: set[str] = set()
     for d in record.get("dossiers") or []:
-        spoke.update(d.get("spoke") or [])
-    followed = set(record.get("followed") or [])
+        if isinstance(d, dict):
+            spoke_set.update(str(s) for s in (d.get("spoke") or []) if s)
+    followed = sorted({str(i) for i in (record.get("followed") or []) if i})
     established = bool(record.get("dossiers"))
-    silent = sorted(followed - spoke) if established else []
+    collection = record.get("collection") if isinstance(record.get("collection"), dict) else {}
+
+    published: list[str] = []
+    no_items: list[str] = []
+    gap: list[str] = []
+    not_established: list[str] = []
+    for iid in followed:
+        if iid in spoke_set:
+            continue
+        facts = collection.get(iid)
+        if not isinstance(facts, dict):
+            not_established.append(iid)
+            continue
+        feeds_total = _int(facts.get("feeds_total"))
+        if feeds_total and _int(facts.get("feeds_ok")) < feeds_total:
+            gap.append(iid)
+        elif _int(facts.get("items")) > 0:
+            published.append(iid)
+        else:
+            no_items.append(iid)
+
     return {
-        "edition": record["edition"],
-        "spoke": sorted(spoke & followed) if followed else sorted(spoke),
-        "silent": silent,
+        "edition": record.get("edition"),
         "established": established,
+        "spoke": sorted(spoke_set & set(followed)) if followed else sorted(spoke_set),
+        "published": published,
+        "no_items": no_items,
+        "collection_gap": gap,
+        "not_established": not_established,
+        "absent_from_dossiers": sorted(set(followed) - spoke_set) if established else [],
     }
 
 
@@ -256,6 +396,26 @@ def empty_state() -> dict:
         "names": {},
         "travaux": {"method": ROADS_METHOD, "seals": [], "latest_record": None},
     }
+
+
+def migrate_voice_row(row: dict) -> dict:
+    """Bring a pre-correction voice row into the current vocabulary.
+
+    Old rows carry `silent` = followed minus spoke, with no collection facts to
+    say which of those institutions actually published. That distinction is
+    unknowable after the fact, so the honest migration is `not_established`:
+    the institution keeps its place in the history, and no silence is asserted.
+    Without this, every institution that only ever appeared in an old `silent`
+    list would drop out of the register entirely.
+    """
+    if any(key in row for key in ("published", "no_items", "collection_gap", "not_established")):
+        return row
+    legacy = row.get("silent")
+    if not isinstance(legacy, list):
+        return row
+    out = {k: v for k, v in row.items() if k != "silent"}
+    out["not_established"] = sorted({str(i) for i in legacy if i})
+    return out
 
 
 def load_state(path: Path = STATE) -> dict:
@@ -275,7 +435,10 @@ def load_state(path: Path = STATE) -> dict:
         and isinstance(s["record"].get("edition"), str)
         and isinstance(s.get("edition"), str)
     ]
-    state["voice"] = [v for v in (loaded.get("voice") or []) if isinstance(v, dict) and v.get("edition")]
+    state["voice"] = [
+        migrate_voice_row(v) for v in (loaded.get("voice") or [])
+        if isinstance(v, dict) and v.get("edition")
+    ]
     state["names"] = loaded.get("names") if isinstance(loaded.get("names"), dict) else {}
     trav = loaded.get("travaux") if isinstance(loaded.get("travaux"), dict) else {}
     if trav.get("method") == ROADS_METHOD and isinstance(trav.get("seals"), list):
@@ -285,17 +448,27 @@ def load_state(path: Path = STATE) -> dict:
 
 
 def seal_edition(state: dict, record: dict) -> tuple[dict, str]:
-    """Append (or idempotently replace the last) seal. Returns (state, action)."""
+    """Append a new seal, or confirm the existing one. Returns (state, action).
+
+    A seal that already exists is **immutable**. Re-rendering the same edition
+    must reproduce the same leaf; if it does not — because the record gained a
+    field, as it did at schema 2 — the published seal is kept and the divergence
+    is printed. Rewriting it would move a root the git anchor already witnessed,
+    which is the one thing a chain must never do.
+    """
     seals = state["seals"]
     edition = record["edition"]
     if seals:
         last = seals[-1]
         if last.get("edition") == edition:
-            prev = seals[-2]["root"] if len(seals) > 1 else ""
-            seq = _int(last.get("seq")) or len(seals)
-            seals[-1] = _seal(seq, prev, record)
-            state["voice"] = [v for v in state["voice"] if v.get("edition") != edition] + [voice_row(record)]
-            return state, "replaced"
+            recomputed = leaf_of(record)
+            if recomputed == last.get("leaf"):
+                # Identical bytes: genuinely idempotent, nothing to do.
+                return state, "replaced"
+            print(f"registre: edition {edition} recomputes to a different leaf "
+                  f"({str(last.get('leaf'))[:12]} -> {recomputed[:12]}); keeping the "
+                  f"published seal — a chain is append-only, an anchored root never moves")
+            return state, "diverged-kept"
         if not _after(edition, last.get("edition")):
             return state, "ignored"
         prev = last["root"]
@@ -391,52 +564,145 @@ def _roads_seal(seq: int, prev: str, record: dict, signal: str) -> dict:
 # --------------------------------------------------------------------------- #
 # Derived views
 # --------------------------------------------------------------------------- #
+_STATE_RANK = {
+    STATE_COLLECTION_GAP: 0,   # our failure first: the register is self-critical
+    STATE_NO_ITEMS: 1,
+    STATE_NOT_ESTABLISHED: 2,
+    STATE_PUBLISHED: 3,
+    STATE_SPOKE: 4,
+}
+
+
+STATE_LABEL_FR = {
+    STATE_SPOKE: "a parlé dans un dossier de cette édition",
+    STATE_PUBLISHED: "a publié, hors dossier",
+    STATE_NO_ITEMS: "aucun article collecté dans la fenêtre de 7 jours",
+    STATE_COLLECTION_GAP: "collecte en échec — lacune de Vigie, pas un silence",
+    STATE_NOT_ESTABLISHED: "état non établi",
+}
+
+
+def state_label_fr(row: dict) -> str:
+    """One honest French sentence for an institution's state in the latest edition.
+
+    Single source of wording: the registre page, the Markdown twin and the
+    affiche must not each invent their own phrasing for the same fact.
+    """
+    stt = str(row.get("current") or STATE_NOT_ESTABLISHED)
+    label = STATE_LABEL_FR.get(stt, STATE_LABEL_FR[STATE_NOT_ESTABLISHED])
+    if stt == STATE_PUBLISHED and isinstance(row.get("items_collected"), int):
+        n = row["items_collected"]
+        label += f" ({n} article{'s' if n != 1 else ''} collecté{'s' if n != 1 else ''})"
+    if stt == STATE_COLLECTION_GAP and _int(row.get("collection_gap_streak")) > 1:
+        label += f" depuis {row['collection_gap_streak']} éditions"
+    return label
+
+
+def latest_collection(state: dict) -> dict:
+    """Collection facts sealed with the newest edition ({} for schema-1 seals)."""
+    seals = state.get("seals") or []
+    if not seals:
+        return {}
+    record = seals[-1].get("record") if isinstance(seals[-1], dict) else None
+    collection = record.get("collection") if isinstance(record, dict) else None
+    return collection if isinstance(collection, dict) else {}
+
+
 def institution_register(state: dict) -> list[dict]:
     """Per-institution voice facts derived from the per-edition voice rows.
 
-    silent_streak counts consecutive *established* editions (at least one
-    dossier) from the newest backwards in which the institution did not speak.
-    Nothing here is an escalation or a verdict: it is arithmetic over absence.
+    Only one streak is ever accumulated, and it counts *Vigie's* failure to
+    collect — never an institution's supposed silence. "Published, outside a
+    dossier" is the normal state of a followed institution, because a dossier
+    needs a named scar and two institutions; treating that as silence was the
+    defect corrected on CORRECTION_DATE.
     """
-    rows = sorted((v for v in state.get("voice") or [] if v.get("edition")), key=lambda v: v["edition"])
+    rows = sorted((v for v in state.get("voice") or [] if v.get("edition")), key=lambda v: str(v["edition"]))
     names = state.get("names") or {}
+    collection = latest_collection(state)
     ids: set[str] = set(names)
     for v in rows:
-        ids.update(v.get("spoke") or [])
-        ids.update(v.get("silent") or [])
+        for key in (*VOICE_KEYS, "absent_from_dossiers"):
+            ids.update(str(i) for i in (v.get(key) or []))
     out: list[dict] = []
-    established = [v for v in rows if v.get("established")]
     for iid in sorted(ids):
-        spoke_eds = [v["edition"] for v in established if iid in (v.get("spoke") or [])]
-        silent_eds = [v["edition"] for v in established if iid in (v.get("silent") or [])]
-        if not spoke_eds and not silent_eds:
+        counts = {key: 0 for key in VOICE_KEYS}
+        last_spoke = None
+        for v in rows:
+            for key in VOICE_KEYS:
+                if iid in (v.get(key) or []):
+                    counts[key] += 1
+                    if key == "spoke":
+                        last_spoke = v.get("edition")
+        if not any(counts.values()):
             continue
-        streak = 0
-        for v in reversed(established):
-            if iid in (v.get("silent") or []):
-                streak += 1
-            elif iid in (v.get("spoke") or []):
-                break
+        gap_streak = 0
+        for v in reversed(rows):
+            if iid in (v.get("collection_gap") or []):
+                gap_streak += 1
             else:
                 break
-        current = established[-1] if established else None
+        current = STATE_NOT_ESTABLISHED
+        if rows:
+            newest = rows[-1]
+            for key in VOICE_KEYS:
+                if iid in (newest.get(key) or []):
+                    current = key
+                    break
+        facts = collection.get(iid) if isinstance(collection.get(iid), dict) else {}
+        measured = counts["spoke"] + counts["published"] + counts["no_items"] + counts["collection_gap"]
         meta = names.get(iid) if isinstance(names.get(iid), dict) else {}
         out.append({
             "institution_id": iid,
             "institution_name": str(meta.get("name") or iid),
             "source_kind": str(meta.get("kind") or "media"),
-            "editions_spoke": len(spoke_eds),
-            "editions_silent": len(silent_eds),
-            "last_spoke": spoke_eds[-1] if spoke_eds else None,
-            "silent_streak": streak,
-            "current": (
-                "spoke" if current and iid in (current.get("spoke") or [])
-                else "silent" if current and iid in (current.get("silent") or [])
-                else "unknown"
-            ),
+            "current": current,
+            "items_collected": _int(facts.get("items")) if facts else None,
+            "feeds_ok": _int(facts.get("feeds_ok")) if facts else None,
+            "feeds_total": _int(facts.get("feeds_total")) if facts else None,
+            "editions_spoke": counts["spoke"],
+            "editions_published_outside_dossiers": counts["published"],
+            "editions_no_items_collected": counts["no_items"],
+            "editions_collection_gap": counts["collection_gap"],
+            "editions_not_established": counts["not_established"],
+            "editions_measured": measured,
+            "last_spoke": last_spoke,
+            "collection_gap_streak": gap_streak,
         })
-    out.sort(key=lambda r: (0 if r["source_kind"] == "official" else 1, -r["silent_streak"], r["institution_id"]))
+    out.sort(key=lambda r: (
+        0 if r["source_kind"] == "official" else 1,
+        _STATE_RANK.get(r["current"], 9),
+        r["institution_id"],
+    ))
     return out
+
+
+def correction_notice(state: dict) -> dict | None:
+    """Which seals were published under the old definition. Derived, never hard-coded.
+
+    The seals themselves are untouched — a chain is not rewritten. This states,
+    precisely and verifiably, which of them predate the collection facts, so a
+    reader who downloads an old record is not left with a false impression.
+    """
+    affected = [
+        _int(s.get("seq"))
+        for s in (state.get("seals") or [])
+        if isinstance(s, dict) and isinstance(s.get("record"), dict)
+        and not isinstance(s["record"].get("collection"), dict)
+    ]
+    affected = [n for n in affected if n]
+    if not affected:
+        return None
+    return {
+        "method": "registre-correction-v1",
+        "corrected_at": CORRECTION_DATE,
+        "affects_seal_min": min(affected),
+        "affects_seal_max": max(affected),
+        "affects_count": len(affected),
+        "wrong": CORRECTION_WRONG,
+        "now": CORRECTION_NOW,
+        "chain": CORRECTION_CHAIN,
+    }
 
 
 def checkpoint_text(state: dict) -> str:
@@ -472,24 +738,38 @@ def public_chain(state: dict) -> dict:
             "(empty for the genesis seal). Script: scripts/registre.py --verify chain.json"
         ),
         "note": (
-            "Le silence enregistré est une absence dans les flux collectés par Vigie, "
-            "pas la preuve qu'une institution n'a rien dit ailleurs. Identifiants et comptes seulement ; "
-            "aucun texte d'éditeur."
+            "Chaque sceau porte les identifiants et les comptes d'une édition, dont le nombre "
+            "d'articles réellement collectés par institution. « absent_from_dossiers » est un fait : "
+            "l'institution n'est entrée dans aucun dossier de cette édition. Ce n'est pas un silence — "
+            "un dossier exige un sujet nommé et deux institutions. Aucun texte d'éditeur."
         ),
+        "correction": correction_notice(state),
         "seals": shown,
     }
 
 
 def public_institutions(state: dict) -> dict:
     seals = state.get("seals") or []
+    rows = state.get("voice") or []
     return {
         "method": METHOD,
+        "record_schema": RECORD_SCHEMA,
         "edition": seals[-1].get("edition", "") if seals else "",
-        "edition_count": len([v for v in state.get("voice") or [] if v.get("established")]),
+        "edition_count": len(rows),
+        "edition_count_with_dossiers": len([v for v in rows if v.get("established")]),
+        "states": {
+            STATE_SPOKE: "un de ses flux suivis apparaît dans un dossier de l'édition",
+            STATE_PUBLISHED: "ses flux ont rendu des articles cette édition, aucun n'est entré dans un dossier — l'institution n'a pas été silencieuse",
+            STATE_NO_ITEMS: "ses flux ont répondu mais n'ont rendu aucun article dans la fenêtre de 7 jours",
+            STATE_COLLECTION_GAP: "au moins un de ses flux a échoué : lacune de collecte de Vigie, jamais un silence institutionnel",
+            STATE_NOT_ESTABLISHED: "édition scellée avant que les faits de collecte existent : aucune affirmation",
+        },
         "note": (
-            "Une institution « n'a pas parlé » quand aucun de ses flux suivis n'apparaît dans un dossier "
-            "de l'édition. Compteur d'absence, jamais un verdict."
+            "Aucun compteur ne s'accumule contre une institution du fait des règles de rapprochement "
+            "de Vigie. Le seul compteur de suite (collection_gap_streak) mesure les échecs de collecte "
+            "de Vigie. Une absence de faits est rapportée comme une absence, jamais comme une santé."
         ),
+        "correction": correction_notice(state),
         "institutions": institution_register(state),
     }
 
@@ -527,6 +807,7 @@ def render_registre_html(state: dict) -> str:
     register = institution_register(state)
     established_count = len([v for v in state.get("voice") or [] if v.get("established")])
     trav = (state.get("travaux") or {}).get("seals") or []
+    correction = correction_notice(state)
 
     if last:
         head_fact = (
@@ -541,22 +822,32 @@ def render_registre_html(state: dict) -> str:
     medias = [r for r in register if r["source_kind"] != "official"]
 
     def _row(r: dict) -> str:
-        if r["current"] == "spoke":
-            state_txt = "a parlé dans cette édition"
-            cls = "spoke"
-        elif r["current"] == "silent":
-            n = r["silent_streak"]
-            state_txt = ("n’a pas parlé dans cette édition" if n <= 1
-                         else f"n’a pas parlé depuis <strong>{n}</strong> éditions")
-            cls = "silent"
+        items = r.get("items_collected")
+        collected = f"{items} article{'s' if items != 1 else ''} collecté{'s' if items != 1 else ''} cette édition" if isinstance(items, int) else "collecte non établie pour cette édition"
+        if r["current"] == STATE_SPOKE:
+            state_txt, cls = "a parlé dans un dossier de cette édition", "spoke"
+        elif r["current"] == STATE_PUBLISHED:
+            state_txt, cls = f"a publié, hors dossier — {collected}", "published"
+        elif r["current"] == STATE_COLLECTION_GAP:
+            n = _int(r.get("collection_gap_streak"))
+            state_txt = "collecte en échec — lacune de Vigie"
+            if n > 1:
+                state_txt += f" depuis <strong>{n}</strong> éditions"
+            cls = "gap"
+        elif r["current"] == STATE_NO_ITEMS:
+            state_txt, cls = "aucun article collecté dans la fenêtre — flux répondus", "noitems"
         else:
-            state_txt, cls = "état non établi", "unknown"
-        last_spoke = f"dernière prise de parole : {_date(r['last_spoke'])}" if r.get("last_spoke") else "aucune prise de parole enregistrée"
+            state_txt, cls = "état non établi (édition antérieure à la correction)", "unknown"
+        last_spoke = (f"dernière parole en dossier : {_date(r['last_spoke'])}" if r.get("last_spoke")
+                      else "aucune parole en dossier enregistrée")
+        measured = _int(r.get("editions_measured"))
         return (
             f'<li class="reg-inst reg-{cls}"><span class="reg-inst-name">{esc(r["institution_name"])}'
             f'{" <span class=\"reg-chip\">officiel</span>" if r["source_kind"] == "official" else ""}</span>'
             f'<span class="reg-inst-state">{state_txt}</span>'
-            f'<span class="reg-inst-meta">{last_spoke} · {r["editions_spoke"]} édition{"s" if r["editions_spoke"] != 1 else ""} avec parole · {r["editions_silent"]} sans</span></li>'
+            f'<span class="reg-inst-meta">{last_spoke} · {r["editions_spoke"]} édition{"s" if r["editions_spoke"] != 1 else ""} en dossier · '
+            f'{r["editions_published_outside_dossiers"]} publiée{"s" if r["editions_published_outside_dossiers"] != 1 else ""} hors dossier · '
+            f'{measured} mesurée{"s" if measured != 1 else ""}</span></li>'
         )
 
     inst_html = ""
@@ -574,11 +865,20 @@ def render_registre_html(state: dict) -> str:
         rec = s.get("record") or {}
         v = voice_row(rec)
         led = rec.get("ledger") or {}
+        voice_parts = [f'{len(v["spoke"])} en dossier']
+        if v["published"]:
+            voice_parts.append(f'{len(v["published"])} publié{"s" if len(v["published"]) != 1 else ""} hors dossier')
+        if v["collection_gap"]:
+            voice_parts.append(f'{len(v["collection_gap"])} en lacune de collecte')
+        if v["no_items"]:
+            voice_parts.append(f'{len(v["no_items"])} sans article collecté')
+        if v["not_established"]:
+            voice_parts.append(f'{len(v["not_established"])} non établi{"s" if len(v["not_established"]) != 1 else ""}')
         return (
             f'<li class="reg-seal"><a class="reg-seq" href="/memoire/{s.get("seq", "")}.html">n° {s.get("seq", "")}</a>'
             f'<span class="reg-when">{_date(s.get("edition"))}</span>'
             f'<span class="reg-counts">{len(rec.get("dossiers") or [])} dossier{"s" if len(rec.get("dossiers") or []) != 1 else ""} · '
-            f'{len(v["spoke"])} ont parlé · {len(v["silent"])} n’ont pas parlé'
+            + " · ".join(voice_parts)
             + (f' · +{len(led.get("new") or [])} / ~{len(led.get("developed") or [])} / −{len(led.get("quiet") or [])}' if led.get("has_previous") else "")
             + f'</span><code class="reg-hash" title="{esc(s.get("root", ""))}">{_short(s.get("root", ""))}…</code></li>'
         )
@@ -593,10 +893,28 @@ def render_registre_html(state: dict) -> str:
         if trav else '<p class="no-data">Aucun état des entraves scellé pour l’instant.</p>'
     )
 
+    # A correction is published, not applied silently: the affected seals stay
+    # byte-identical, and the reader is told which ones predate the fix.
+    correction_html = ""
+    if correction:
+        lo, hi = correction["affects_seal_min"], correction["affects_seal_max"]
+        span = f"n° {lo}" if lo == hi else f"n° {lo} à {hi}"
+        correction_html = (
+            '<section class="reg-correction" id="correction" aria-labelledby="correction-title">'
+            '<p class="eyebrow">CORRECTION PUBLIÉE</p>'
+            f'<h2 id="correction-title">Le registre a mal mesuré le silence des sceaux {esc(span)}.</h2>'
+            f'<p>{esc(correction["wrong"])}</p>'
+            f'<p>{esc(correction["now"])}</p>'
+            f'<p class="fine">{esc(correction["chain"])} Correction du {_date(correction["corrected_at"])} · '
+            f'{correction["affects_count"]} sceau{"s" if correction["affects_count"] != 1 else ""} concerné{"s" if correction["affects_count"] != 1 else ""} · '
+            'méthode : <a href="/methode/registre.html">la méthode du registre</a>.</p>'
+            '</section>'
+        )
+
     return f'''<!doctype html>
 <html lang="fr-CA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Le Registre — Vigie</title>
-<meta name="description" content="Le registre public de Vigie : chaque édition scellée par sha256, et pour chaque institution suivie, qui a parlé et qui n’a pas parlé, édition après édition.">
+<meta name="description" content="Le registre public de Vigie : chaque édition scellée par sha256, et pour chaque institution suivie, ce qu’elle a publié et ce que notre collecte a manqué, édition après édition.">
 <link rel="canonical" href="{SITE_URL}/registre.html"><meta name="robots" content="index, follow">
 <link rel="describedby" href="/llms.txt">
 <meta name="theme-color" content="#f5f8f8" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0e1518" media="(prefers-color-scheme: dark)"><meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer">
@@ -604,11 +922,12 @@ def render_registre_html(state: dict) -> str:
 <body class="reg-body"><a class="skip-link" href="#registre">Aller au registre</a>
 <header class="masthead"><a class="wordmark" href="/" aria-label="Vigie, accueil"><svg width="28" height="32" viewBox="0 0 28 32" aria-hidden="true"><path d="M2 5 14 28 26 5M8 5l6 12 6-12" fill="none" stroke="currentColor" stroke-width="2.5"/></svg>vigie<span class="wordmark-dot">.</span></a><span class="edition">LE REGISTRE</span><nav aria-label="Navigation principale"><a href="/">Le point</a><a href="#voix">Les voix</a><a href="#chaine">La chaîne</a><a href="#verifier">Vérifier</a></nav></header>
 <main id="registre">
-<section class="intro" aria-labelledby="reg-title"><div><p class="eyebrow">CE QUE PERSONNE NE MESURE : L’ABSENCE</p><h1 id="reg-title">Qui a parlé.<br><em>Qui n’a pas parlé.</em></h1><p class="intro-text">Chaque édition de Vigie est scellée : une empreinte sha256 chaînée à la précédente, publiée ici et lisible par n’importe qui. Le registre garde, institution par institution, la trace de la parole et du silence dans les dossiers collectés. Pas un verdict : une arithmétique de l’absence, vérifiable.</p></div>
-<aside class="edition-note" aria-label="État du registre"><p class="eyebrow">ÉTAT DU REGISTRE</p>{head_fact}<p class="fine">Le silence enregistré est une absence dans les flux suivis, jamais la preuve qu’une institution n’a rien dit ailleurs.</p></aside></section>
-<section class="reg-section" id="voix" aria-labelledby="voix-title"><div class="section-top"><div><p class="eyebrow">LES VOIX SUIVIES</p><h2 id="voix-title">Le registre des institutions.</h2></div><p class="section-note">{established_count} édition{"s" if established_count != 1 else ""} avec dossiers<br>entrent dans ce compte.</p></div>{inst_html}<p class="fine">Une institution « a parlé » quand un de ses flux suivis apparaît dans un dossier de l’édition (plusieurs flux d’une même institution comptent pour un seul siège). Les compteurs ne s’additionnent qu’aux éditions où au moins un dossier existait.</p></section>
-<section class="reg-section" id="chaine" aria-labelledby="chaine-title"><div class="section-top"><div><p class="eyebrow">LA CHAÎNE DES ÉDITIONS</p><h2 id="chaine-title">Scellé, puis chaîné.</h2></div><p class="section-note">Les {min(len(seals), HTML_SEALS_SHOWN)} derniers sceaux.<br>La chaîne complète est dans <a href="/registre/chain.json">chain.json</a> · toutes les éditions : <a href="/memoire.html">la mémoire</a>.</p></div>{seals_html if seals else '<p class="no-data">La chaîne commence à la prochaine édition.</p>'}<h3>Entraves déclarées par la Ville</h3>{trav_html}<p class="fine">Légende des sceaux : dossiers · institutions ayant parlé · institutions n’ayant pas parlé · (+ nouveaux / ~ développés / − disparus depuis l’édition précédente).</p></section>
-<section class="method reg-section" id="verifier" aria-labelledby="verif-title"><div><p class="eyebrow">LA CONFIANCE SE VÉRIFIE</p><h2 id="verif-title">Vérifiez-le<br>vous-même.</h2><p>Aucune clé, aucun compte, aucun service tiers. Un terminal suffit.</p></div><div class="method-details"><details open><summary>Comment recalculer la chaîne ?</summary><p>Téléchargez <a href="/registre/chain.json">chain.json</a>. Pour chaque sceau : <code>leaf = sha256(JSON canonique du record)</code> (clés triées, sans espaces, UTF-8) puis <code>root = sha256(prev + leaf)</code>. Le <code>prev</code> du premier sceau publié vaut <code>anchor_root</code> (vide pour le sceau de genèse). La dernière racine doit être celle affichée dans <a href="/registre/checkpoint.txt">checkpoint.txt</a>.</p><p><code>python scripts/registre.py --verify chain.json</code> fait ce calcul, avec la bibliothèque standard seulement.</p></details><details><summary>Que contient un sceau ?</summary><p>Des identifiants et des comptes : les dossiers de l’édition (identifiant, question, nombre d’articles, voix officielles), les institutions qui ont parlé et celles qui n’ont pas parlé, et le journal des changements (nouveaux, développés, disparus). Aucun texte d’éditeur, aucun extrait. Le registre peut être copié et redistribué sans toucher au droit d’auteur de quiconque.</p></details><details><summary>Que prouve-t-il, et que ne prouve-t-il pas ?</summary><p>Il prouve que Vigie a publié une édition donnée avant la suivante, et que cette édition n’a pas été modifiée après coup. Il ne prouve pas la date absolue de publication (aucune autorité d’horodatage) et ne prouve rien sur ce qu’une institution a dit hors des flux suivis. Méthode complète : <a href="/methode/registre.html">la méthode du registre</a>.</p></details><details><summary>Pour les machines</summary><p><a href="/registre/chain.json">chain.json</a> · <a href="/registre/institutions.json">institutions.json</a> · <a href="/registre/travaux.json">travaux.json</a> · <a href="/registre/checkpoint.txt">checkpoint.txt</a> · <a href="/delta/latest.json">delta/latest.json</a> · <a href="/llms.txt">llms.txt</a></p></details></div></section>
+<section class="intro" aria-labelledby="reg-title"><div><p class="eyebrow">LA PRÉSENCE MESURÉE, JAMAIS PRÉSUMÉE</p><h1 id="reg-title">Qui a parlé.<br><em>Ce que nous avons manqué.</em></h1><p class="intro-text">Chaque édition de Vigie est scellée : une empreinte sha256 chaînée à la précédente, publiée ici et lisible par n’importe qui. Pour chaque institution suivie, le registre distingue ce qu’elle a publié de ce que <strong>notre</strong> collecte a manqué. Une institution absente de nos dossiers n’est pas une institution muette : un dossier exige un sujet nommé et deux voix.</p></div>
+<aside class="edition-note" aria-label="État du registre"><p class="eyebrow">ÉTAT DU REGISTRE</p>{head_fact}<p class="fine">Chaque édition scelle le nombre d’articles réellement collectés par institution. Une lacune de collecte est signalée comme la nôtre, jamais comme un silence.</p></aside></section>
+{correction_html}
+<section class="reg-section" id="voix" aria-labelledby="voix-title"><div class="section-top"><div><p class="eyebrow">LES VOIX SUIVIES</p><h2 id="voix-title">Le registre des institutions.</h2></div><p class="section-note">{established_count} édition{"s" if established_count != 1 else ""} avec dossiers<br>sur {len(state.get("voice") or [])} scellée{"s" if len(state.get("voice") or []) != 1 else ""}.</p></div>{inst_html}<p class="fine">« A parlé » = un de ses flux suivis apparaît dans un dossier de l’édition (plusieurs flux d’une même institution comptent pour un seul siège). « A publié, hors dossier » = ses flux ont rendu des articles, mais aucun n’est entré dans un dossier — ce n’est pas un silence. Nos propres échecs de collecte sont listés en premier : le registre est d’abord critique envers lui-même.</p></section>
+<section class="reg-section" id="chaine" aria-labelledby="chaine-title"><div class="section-top"><div><p class="eyebrow">LA CHAÎNE DES ÉDITIONS</p><h2 id="chaine-title">Scellé, puis chaîné.</h2></div><p class="section-note">Les {min(len(seals), HTML_SEALS_SHOWN)} derniers sceaux.<br>La chaîne complète est dans <a href="/registre/chain.json">chain.json</a> · toutes les éditions : <a href="/memoire.html">la mémoire</a>.</p></div>{seals_html if seals else '<p class="no-data">La chaîne commence à la prochaine édition.</p>'}<h3>Entraves déclarées par la Ville</h3>{trav_html}<p class="fine">Légende des sceaux : dossiers · institutions entrées dans un dossier · institutions ayant publié hors dossier · lacunes de collecte de Vigie · (+ nouveaux / ~ développés / − disparus depuis l’édition précédente).</p></section>
+<section class="method reg-section" id="verifier" aria-labelledby="verif-title"><div><p class="eyebrow">LA CONFIANCE SE VÉRIFIE</p><h2 id="verif-title">Vérifiez-le<br>vous-même.</h2><p>Aucune clé, aucun compte, aucun service tiers. Un terminal suffit.</p></div><div class="method-details"><details open><summary>Comment recalculer la chaîne ?</summary><p>Téléchargez <a href="/registre/chain.json">chain.json</a>. Pour chaque sceau : <code>leaf = sha256(JSON canonique du record)</code> (clés triées, sans espaces, UTF-8) puis <code>root = sha256(prev + leaf)</code>. Le <code>prev</code> du premier sceau publié vaut <code>anchor_root</code> (vide pour le sceau de genèse). La dernière racine doit être celle affichée dans <a href="/registre/checkpoint.txt">checkpoint.txt</a>.</p><p><code>python scripts/registre.py --verify chain.json</code> fait ce calcul, avec la bibliothèque standard seulement.</p></details><details><summary>Que contient un sceau ?</summary><p>Des identifiants et des comptes : les dossiers de l’édition (identifiant, question, nombre d’articles, voix officielles), les institutions entrées dans un dossier, et — depuis la correction — le nombre d’articles réellement collectés par institution, qui sépare un flux muet d’un flux que nous n’avons pas su lire. Aucun texte d’éditeur, aucun extrait. Le registre peut être copié et redistribué sans toucher au droit d’auteur de quiconque.</p></details><details><summary>Que prouve-t-il, et que ne prouve-t-il pas ?</summary><p>Il prouve que Vigie a publié une édition donnée avant la suivante, et que cette édition n’a pas été modifiée après coup. Il ne prouve pas la date absolue de publication (aucune autorité d’horodatage) et ne prouve rien sur ce qu’une institution a dit hors des flux suivis. Méthode complète : <a href="/methode/registre.html">la méthode du registre</a>.</p></details><details><summary>Pour les machines</summary><p><a href="/registre/chain.json">chain.json</a> · <a href="/registre/institutions.json">institutions.json</a> · <a href="/registre/travaux.json">travaux.json</a> · <a href="/registre/checkpoint.txt">checkpoint.txt</a> · <a href="/delta/latest.json">delta/latest.json</a> · <a href="/llms.txt">llms.txt</a></p></details></div></section>
 </main>
 <footer><a class="wordmark" href="/">vigie<span class="wordmark-dot">.</span></a><p>Un peu plus au courant.<br>Un peu plus libre de votre temps.</p><span>Fait pour Québec.<br>Registre expérimental.</span><a class="legal-link" href="/methode/legal.html">Mentions légales, attribution et retrait</a></footer></body></html>'''
 
@@ -616,8 +935,30 @@ def render_registre_html(state: dict) -> str:
 # --------------------------------------------------------------------------- #
 # Emit
 # --------------------------------------------------------------------------- #
+def collection_for_edition(edition: str, enriched: dict | None = None, *,
+                          enriched_path: Path = ENRICHED,
+                          sources_path: Path = SOURCES_PATH) -> dict:
+    """Collection facts, but only when they belong to *this* edition.
+
+    Attaching the wrong edition's counts would be worse than attaching none:
+    the seal would look measured while being false. So the enriched store's own
+    collection clock must equal the edition key, otherwise no facts are sealed
+    and the register honestly reports the state as not established.
+    """
+    enriched = enriched if isinstance(enriched, dict) else load_json(enriched_path)
+    status = enriched.get("source_status")
+    if not isinstance(status, dict) or not status:
+        return {}
+    stamp = parse_ts(enriched.get("normalized_at"))
+    edition_dt = parse_ts(edition)
+    if not stamp or not edition_dt or stamp != edition_dt:
+        return {}
+    return institution_collection(status, sources_path)
+
+
 def emit(payload: dict | None = None, roadworks: dict | None = None, *,
-         history: dict | None = None, state_path: Path = STATE,
+         history: dict | None = None, collection: dict | None = None,
+         state_path: Path = STATE,
          out_dir: Path = OUT_DIR, out_html: Path = OUT_HTML) -> dict:
     """Update the state from the stores and write every public artefact.
 
@@ -629,7 +970,10 @@ def emit(payload: dict | None = None, roadworks: dict | None = None, *,
     roadworks = roadworks if isinstance(roadworks, dict) else load_json(ROADWORKS)
     state = load_state(state_path)
     action = "no-edition"
-    record = edition_record(payload, edition_key(payload, history))
+    edition = edition_key(payload, history)
+    if collection is None:
+        collection = collection_for_edition(edition, sources_path=SOURCES_PATH)
+    record = edition_record(payload, edition, collection)
     if record is not None:
         for iid, meta in institution_names(payload).items():
             state["names"][iid] = meta
@@ -648,7 +992,8 @@ def emit(payload: dict | None = None, roadworks: dict | None = None, *,
     seals = state["seals"]
     root_short = str(seals[-1].get("root", ""))[:12] if seals else "-"
     print(f"registre: edition {action}, travaux {roads_action}; "
-          f"{len(seals)} seals, root {root_short} -> {out_html}")
+          f"{len(seals)} seals, root {root_short}; "
+          f"collection facts for {len(record.get('collection') or {}) if record else 0} institutions -> {out_html}")
     return state
 
 

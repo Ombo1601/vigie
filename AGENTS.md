@@ -47,8 +47,12 @@ twin), from the same stores, with no second brain:
 
 - `scripts/registre.py` — **Le Registre**: seals every edition
   (`leaf = sha256(canonical record)`, `root = sha256(prev || leaf)`), keyed by
-  the collection clock so re-renders never mint a new seal; keeps per-edition
-  voice rows (who spoke / who did not, institution seats) and a roadworks chain
+  the collection clock so re-renders never mint a new seal. **A published seal is
+  immutable**: if a re-render recomputes a different leaf (because the record
+  gained a field), the old seal is kept and the divergence is printed — moving an
+  anchored root would break the chain's only promise. Keeps per-edition
+  voice rows (per institution: entered a dossier / published outside one /
+  no items collected / **our** collection failed / not established) and a roadworks chain
   (one root per change of the City's active set). State:
   `data/registre/registre.json` (packed with the private state). Public:
   `public/registre.html`, `public/registre/{checkpoint.txt,chain.json,institutions.json,travaux.json}`.
@@ -56,7 +60,7 @@ twin), from the same stores, with no second brain:
 - `scripts/memoire.py` — **La mémoire**: `public/memoire.html` +
   `public/memoire/<seq>.html` — the sealed chain made readable: per edition,
   the dossiers (Vigie's labels only — attributed headlines stay empty), the
-  voices, who spoke and who did not, and the ledger. Zero JavaScript; pages
+  voices with their measured state, and the ledger. Zero JavaScript; pages
   exist only for published seals.
 - `scripts/depart.py` — **Avant de partir**: `public/partir.html`, the
   departure instrument — most-restrictive declared obstructions, the reader's

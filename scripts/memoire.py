@@ -92,10 +92,7 @@ def _chrome(title: str, desc: str, canonical: str, body: str) -> str:
 
 def _voices_html(record: dict, names: dict) -> str:
     row = registre.voice_row(record)
-    spoke = [row_i for row_i in (row.get("spoke") or [])]
-    silent = [row_i for row_i in (row.get("silent") or [])]
-    if not spoke and not silent:
-        return ""
+
     def chips(ids: list[str]) -> str:
         out = []
         for iid in ids:
@@ -104,14 +101,29 @@ def _voices_html(record: dict, names: dict) -> str:
             cls = "memoire-official" if official else ""
             out.append(f'<li class="{cls}">{brief.esc(_name(names, iid))}</li>')
         return "".join(out)
+
+    # Honest columns: an institution absent from the dossiers is classified by
+    # what we actually collected, never by our clustering rules alone.
+    columns = (
+        ("Dans un dossier", row.get("spoke") or []),
+        ("Publié, hors dossier", row.get("published") or []),
+        ("Collecte manquée par Vigie", [*(row.get("collection_gap") or []), *(row.get("no_items") or [])]),
+        ("Non établi", row.get("not_established") or []),
+    )
+    columns = [(title, ids) for title, ids in columns if ids]
+    if not columns:
+        return ""
+    blocks = "".join(
+        f'<div><h3>{title} <span class="n">({len(ids)})</span></h3><ul>{chips(ids)}</ul></div>'
+        for title, ids in columns
+    )
     return (
         '<section class="memoire-section"><h2>Les voix de l’édition</h2>'
-        '<div class="memoire-voices">'
-        f'<div><h3>Ont parlé <span class="n">({len(spoke)})</span></h3><ul>{chips(spoke) or "<li>—</li>"}</ul></div>'
-        f'<div><h3>N’ont pas parlé <span class="n">({len(silent)})</span></h3><ul>{chips(silent) or "<li>—</li>"}</ul></div>'
-        "</div>"
-        '<p class="fine">Absence dans les flux suivis pendant cette édition — jamais la preuve '
-        "qu’une institution s’est tue ailleurs.</p></section>"
+        f'<div class="memoire-voices">{blocks}</div>'
+        '<p class="fine">« Publié, hors dossier » n’est pas un silence : un dossier exige un sujet nommé '
+        'et deux institutions. « Collecte manquée » est une lacune de Vigie, jamais une absence de '
+        'l’institution. Les éditions scellées avant la correction du 30 septembre 2026 restent '
+        '« non établi » : on ne réécrit pas un sceau.</p></section>'
     )
 
 
@@ -168,8 +180,8 @@ def _dossiers_html(record: dict, names: dict, current_routes: dict[str, str]) ->
             '<li class="memoire-dossier">'
             f'<p class="memoire-dossier-q">{title}</p>'
             f'<p class="memoire-dossier-meta">{brief.safe_int(dossier.get("item_count"))} articles · '
-            f'{spoke} institution{"s" if spoke != 1 else ""} ont parlé · '
-            f'{silent} n’{"ont" if silent != 1 else "a"} pas parlé · '
+            f'{spoke} institution{"s" if spoke != 1 else ""} dans ce dossier · '
+            f'{silent} absente{"s" if silent != 1 else ""} de ce dossier · '
             f'{brief.safe_int(dossier.get("official_voice_count"))} voix officielle'
             f'{"s" if brief.safe_int(dossier.get("official_voice_count")) != 1 else ""}'
             "</p></li>"
@@ -217,7 +229,7 @@ def render_edition(seal: dict, names: dict, *, prev_seq: int | None, next_seq: i
     )
     return _chrome(
         f"Édition n° {seq} — La mémoire",
-        f"Édition n° {seq} du registre de Vigie : dossiers rapprochés, voix officielles, qui a parlé et qui n’a pas parlé.",
+        f"Édition n° {seq} du registre de Vigie : dossiers rapprochés, voix officielles, ce que chaque institution suivie a publié et ce que notre collecte a manqué.",
         f"{SITE_URL}/memoire/{seq}.html",
         body,
     )
@@ -236,12 +248,23 @@ def render_index(seals: list[dict], names: dict, *, total: int | None = None) ->
                 f" · +{len(ledger.get('new') or [])} / ~{len(ledger.get('developed') or [])} "
                 f"/ −{len(ledger.get('quiet') or [])}"
             )
+        # Voice counts state what was measured, never an inferred silence.
+        voices = f'{len(row.get("spoke") or [])} en dossier'
+        published = len(row.get("published") or [])
+        if published:
+            voices += f' · {published} publié{"s" if published != 1 else ""} hors dossier'
+        missed = len(row.get("collection_gap") or []) + len(row.get("no_items") or [])
+        if missed:
+            voices += f" · {missed} collecte manquée"
+        undetermined = len(row.get("not_established") or [])
+        if undetermined:
+            voices += f" · {undetermined} non établi"
         items.append(
             '<li class="memoire-item">'
             f'<span class="memoire-seq">N° {seq}</span>'
             f'<span class="memoire-counts">{brief.date_html(seal.get("edition"))} · '
             f'{len(record.get("dossiers") or [])} dossier{"s" if len(record.get("dossiers") or []) != 1 else ""} · '
-            f'{len(row.get("spoke") or [])} ont parlé · {len(row.get("silent") or [])} n’ont pas parlé{changes}</span>'
+            f'{voices}{changes}</span>'
             f'<a class="memoire-go" href="/memoire/{seq}.html">Lire ↗</a></li>'
         )
     if items:
@@ -263,15 +286,15 @@ def render_index(seals: list[dict], names: dict, *, total: int | None = None) ->
         '<header class="memoire-head"><p class="eyebrow">LE REGISTRE, LISIBLE</p>'
         '<h1 class="recit-title">La mémoire de la ville.</h1>'
         '<p class="recit-attrib">Chaque édition scellée, lisible : les dossiers rapprochés, les voix '
-        "officielles, qui a parlé et qui n’a pas parlé. Aucun texte d’éditeur, aucun verdict — la "
-        "chaîne des éditions, édition par édition.</p></header>"
+        "officielles, ce que chaque institution a publié et ce que notre collecte a manqué. Aucun "
+        "texte d’éditeur, aucun verdict — la chaîne des éditions, édition par édition.</p></header>"
         f'<p class="section-note">{note}</p>'
         f"{listing}"
         '<p class="fine">La vérification reste dans <a href="/registre.html">le registre</a> : '
         'chaque racine se recalcule avec sha256, sans compte ni clé.</p>'
     )
     return _chrome(
-        "La mémoire", "Toutes les éditions scellées de Vigie : dossiers, voix officielles et silences, édition par édition.",
+        "La mémoire", "Toutes les éditions scellées de Vigie : dossiers, voix officielles, publications et lacunes de collecte, édition par édition.",
         f"{SITE_URL}/memoire.html", body,
     )
 

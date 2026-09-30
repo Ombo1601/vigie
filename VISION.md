@@ -18,7 +18,7 @@ For Quebec City first:
 6. Leave assent with the reader.
 7. Expand nesting only when that method holds.
 8. Name the rent (how the lookout stays alive).
-9. Record absence: who spoke and who did not, edition after edition — sealed, verifiable, never a verdict (`REGISTRE.md`).
+9. Record presence, measured: what each followed institution published and what our own collection missed, edition after edition — sealed, verifiable, never a verdict, never an inferred silence (`REGISTRE.md`).
 10. Serve the record before the page: the brief is one view; the register, the Markdown twin and the delta are the product.
 
 ## Kill list (we will not sell)

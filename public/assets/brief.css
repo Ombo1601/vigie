@@ -603,8 +603,17 @@ footer .surfaces a small{display:block;font-family:var(--sans);font-size:var(--s
 .reg-inst-name{font-family:var(--serif);font-size:var(--step-1);line-height:1.2}
 .reg-chip{display:inline-block;font-family:var(--sans);font-size:9px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;padding:2px 7px;border:1px solid var(--accent);color:var(--accent);border-radius:999px;vertical-align:middle;margin-left:6px}
 .reg-inst-state{font-size:var(--step-0);color:var(--body)}
-.reg-silent .reg-inst-state{color:#7a2e1d}
 .reg-spoke .reg-inst-state{color:var(--accent)}
+.reg-published .reg-inst-state{color:var(--body)}
+.reg-gap .reg-inst-state{color:#7a2e1d;font-weight:600}
+.reg-noitems .reg-inst-state,.reg-unknown .reg-inst-state{color:var(--muted)}
+.reg-gap{border-left:3px solid #7a2e1d;padding-left:12px}
+.reg-correction{margin:26px 0 0;padding:22px 24px;border:1px solid #7a2e1d;border-left:5px solid #7a2e1d;background:#fbf3f1}
+.reg-correction .eyebrow{color:#7a2e1d;margin-bottom:10px}
+.reg-correction h2{font-family:var(--serif);font-size:var(--step-2);font-weight:500;line-height:1.2;margin:0 0 12px}
+.reg-correction p{margin:0 0 10px;max-width:var(--measure);color:var(--body)}
+.reg-correction .fine{color:var(--muted);font-size:var(--step--1)}
+@media(prefers-color-scheme:dark){.reg-correction{background:#241a18;border-color:#e0906f}.reg-correction .eyebrow,.reg-correction h2{color:#f0c3b4}}
 .reg-inst-meta{font-size:var(--step--1);color:var(--muted)}
 .reg-seals{list-style:none;margin:0;padding:0}
 .reg-seal{display:grid;grid-template-columns:64px 190px 1fr auto;gap:8px 18px;align-items:baseline;padding:11px 0;border-top:1px solid var(--line);font-size:var(--step--1)}
@@ -631,7 +640,9 @@ body{font-weight:380}
 img{opacity:.94}
 .depart-item.rw-sev-0{border-left-color:#e0906f}
 .depart-item.rw-sev-1{border-left-color:#e0b072}
-.reg-silent .reg-inst-state{color:#e0906f}
+.reg-gap .reg-inst-state{color:#e0906f}
+.reg-noitems .reg-inst-state,.reg-unknown .reg-inst-state{color:var(--muted)}
+.reg-gap{border-left-color:#e0906f}
 .rw-sketch svg{background:#131e22}
 .rw-dot-closed{fill:#e0906f}
 .rw-key-closed{background:#e0906f}

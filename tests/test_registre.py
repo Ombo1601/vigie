@@ -52,6 +52,39 @@ def history(ts):
     return {"method": "dossier-history-v1", "updated_at": ts, "edition_count": 1, "dossiers": {}}
 
 
+# The nine institutions Vigie actually follows, with their real kinds.
+NAMES9 = {
+    "ville-quebec": ("Ville de Québec", "official"),
+    "gouv-quebec": ("Gouvernement du Québec", "official"),
+    "hydro-quebec": ("Hydro-Québec", "official"),
+    "cbc": ("CBC", "media"),
+    "journal-de-quebec": ("Le Journal de Québec", "media"),
+    "la-presse": ("La Presse", "media"),
+    "le-devoir": ("Le Devoir", "media"),
+    "le-soleil": ("Le Soleil", "media"),
+    "radio-canada": ("Radio-Canada", "media"),
+}
+ALL9 = tuple(sorted(NAMES9))
+
+# The live edition that exposed the defect: two institutions clustered into the
+# single dossier, the other seven were reported as having "never spoken" while
+# their feeds had returned items successfully.
+PROD_SPOKE = ("la-presse", "le-devoir")
+PROD_ABSENT = tuple(i for i in ALL9 if i not in PROD_SPOKE)
+PROD_ITEMS = {"ville-quebec": 9, "hydro-quebec": 40, "gouv-quebec": 10, "cbc": 39,
+              "journal-de-quebec": 43, "le-soleil": 40, "radio-canada": 119,
+              "la-presse": 10, "le-devoir": 37}
+
+
+def prod_issue(iid="a"):
+    """One dossier, exactly as clustered in production on 2026-09-24."""
+    return issue(iid, spoke=PROD_SPOKE, silent=PROD_ABSENT, names=NAMES9, official=0)
+
+
+def payload9(issues, ledger=None):
+    return payload(issues, followed=ALL9, ledger=ledger)
+
+
 class Primitives(unittest.TestCase):
     def test_canonical_json_is_sorted_compact_utf8(self):
         self.assertEqual(registre.canonical({"b": 1, "a": "é"}), '{"a":"é","b":1}'.encode("utf-8"))
@@ -124,6 +157,43 @@ class Chain(unittest.TestCase):
         self.assertEqual(json.dumps(state["seals"], sort_keys=True), before)
         self.assertEqual(len(state["voice"]), 1)
 
+    def test_a_published_root_never_moves_when_the_record_shape_changes(self):
+        """The hazard the schema-2 fix introduced: an anchored root must not change.
+
+        Production anchors each root in a git commit. If re-rendering the same
+        edition with a richer record recomputed the leaf, the published checkpoint
+        would contradict its own witness. A seal is immutable once written.
+        """
+        edition = "2026-09-10T12:00:00+00:00"
+        state = registre.empty_state()
+        # Seal as schema 1 (no collection facts), as production already did.
+        state, _ = registre.seal_edition(state, self._rec(edition))
+        anchored_leaf = state["seals"][-1]["leaf"]
+        anchored_root = state["seals"][-1]["root"]
+        before = json.dumps(state, sort_keys=True)
+        # Re-render the same edition after the fix: the record now carries
+        # record_schema + collection, so it recomputes to a different leaf.
+        richer = registre.edition_record(
+            payload([issue("a")]), edition,
+            {"ville-quebec": {"items": 9, "feeds_ok": 1, "feeds_total": 1}},
+        )
+        self.assertNotEqual(registre.leaf_of(richer), anchored_leaf)
+        state, act = registre.seal_edition(state, richer)
+        self.assertEqual(act, "diverged-kept")
+        self.assertEqual(state["seals"][-1]["leaf"], anchored_leaf)
+        self.assertEqual(state["seals"][-1]["root"], anchored_root)
+        self.assertEqual(json.dumps(state, sort_keys=True), before, "state must be untouched")
+        self.assertNotIn("collection", state["seals"][-1]["record"])
+        ok, msg = registre.verify_chain(state["seals"])
+        self.assertTrue(ok, msg)
+        # The next edition does pick up the richer shape.
+        state, act = registre.seal_edition(state, registre.edition_record(
+            payload([issue("a")]), "2026-09-10T18:00:00+00:00",
+            {"ville-quebec": {"items": 9, "feeds_ok": 1, "feeds_total": 1}}))
+        self.assertEqual(act, "appended")
+        self.assertEqual(state["seals"][-1]["record"]["record_schema"], registre.RECORD_SCHEMA)
+        self.assertEqual(state["seals"][-1]["prev"], anchored_root)
+
     def test_older_edition_is_ignored_forward_only(self):
         state = registre.empty_state()
         state, _ = registre.seal_edition(state, self._rec("2026-09-10T18:00:00+00:00"))
@@ -175,29 +245,133 @@ class Roadworks(unittest.TestCase):
         self.assertEqual(state["travaux"]["seals"], [])
 
 
+def collection(items, *, feeds_ok=None, feeds_total=1):
+    """Collection facts as sealed at schema 2: {iid: {items, feeds_ok, feeds_total}}."""
+    return {
+        iid: {"items": n, "feeds_ok": feeds_total if feeds_ok is None else feeds_ok,
+              "feeds_total": feeds_total}
+        for iid, n in items.items()
+    }
+
+
 class VoiceRegister(unittest.TestCase):
-    def test_streaks_count_consecutive_established_editions_only(self):
+    """The corrected contract: our clustering must never read as their silence."""
+
+    def _seal(self, state, edition, issues, coll):
+        p = payload9(issues)
+        for iid, meta in registre.institution_names(p).items():
+            state["names"][iid] = meta
+        state, _ = registre.seal_edition(state, registre.edition_record(p, edition, coll))
+        return state
+
+    def test_collected_items_can_never_read_as_silence(self):
+        """The regression that shipped to production: Hydro/City published, register said silent."""
         state = registre.empty_state()
-        p1 = payload([issue("a", spoke=("ville-quebec", "le-soleil"), silent=("gouv-quebec", "cbc"))])
-        p2 = payload([issue("a", spoke=("ville-quebec", "cbc"), silent=("gouv-quebec", "le-soleil"))])
-        p3 = payload([])  # no dossier: silence not established, must not count
-        p4 = payload([issue("a", spoke=("le-soleil", "cbc"), silent=("gouv-quebec", "ville-quebec"))])
-        for n, p in enumerate((p1, p2, p3, p4), start=1):
-            for iid, meta in registre.institution_names(p).items():
-                state["names"][iid] = meta
-            state, _ = registre.seal_edition(state, registre.edition_record(p, f"2026-09-1{n}T12:00:00+00:00"))
+        # Two institutions cluster into the single dossier, exactly as in the live
+        # 2026-09-24 edition -- but all seven others DID publish, successfully.
+        coll = collection(PROD_ITEMS)
+        state = self._seal(state, "2026-09-24T12:00:00+00:00", [prod_issue()], coll)
         reg = {r["institution_id"]: r for r in registre.institution_register(state)}
-        self.assertEqual(reg["gouv-quebec"]["silent_streak"], 3)
-        self.assertEqual(reg["gouv-quebec"]["current"], "silent")
-        self.assertIsNone(reg["gouv-quebec"]["last_spoke"])
-        self.assertEqual(reg["ville-quebec"]["silent_streak"], 1)
-        self.assertEqual(reg["ville-quebec"]["last_spoke"], "2026-09-12T12:00:00+00:00")
-        self.assertEqual(reg["le-soleil"]["current"], "spoke")
-        self.assertEqual(reg["le-soleil"]["editions_spoke"], 2)
-        self.assertEqual(reg["le-soleil"]["editions_silent"], 1)
-        # officials first, then the longest silence
-        order = [r["institution_id"] for r in registre.institution_register(state)]
-        self.assertEqual(order[:2], ["gouv-quebec", "ville-quebec"])
+        for iid in PROD_ABSENT:
+            self.assertEqual(reg[iid]["current"], registre.STATE_PUBLISHED, iid)
+            self.assertEqual(reg[iid]["items_collected"], PROD_ITEMS[iid], iid)
+            self.assertEqual(reg[iid]["collection_gap_streak"], 0, iid)
+            self.assertEqual(reg[iid]["editions_published_outside_dossiers"], 1, iid)
+        for iid in PROD_SPOKE:
+            self.assertEqual(reg[iid]["current"], registre.STATE_SPOKE, iid)
+        # The two institutions the live registre called eternally silent:
+        self.assertEqual(reg["hydro-quebec"]["editions_spoke"], 0)
+        self.assertEqual(reg["hydro-quebec"]["current"], registre.STATE_PUBLISHED)
+        # The old vocabulary must be gone entirely: no consumer can resurrect it.
+        for row in registre.institution_register(state):
+            self.assertNotIn("silent_streak", row)
+            self.assertNotIn("editions_silent", row)
+            self.assertNotEqual(row["current"], "silent")
+
+    def test_failed_feed_is_our_gap_not_their_silence(self):
+        state = registre.empty_state()
+        ok = collection(PROD_ITEMS)
+        broken = {k: dict(v) for k, v in ok.items()}
+        broken["ville-quebec"] = {"items": 0, "feeds_ok": 0, "feeds_total": 1}
+        state = self._seal(state, "2026-09-10T12:00:00+00:00", [prod_issue()], ok)
+        state = self._seal(state, "2026-09-11T12:00:00+00:00", [prod_issue()], broken)
+        state = self._seal(state, "2026-09-12T12:00:00+00:00", [prod_issue()], broken)
+        reg = {r["institution_id"]: r for r in registre.institution_register(state)}
+        self.assertEqual(reg["ville-quebec"]["current"], registre.STATE_COLLECTION_GAP)
+        self.assertEqual(reg["ville-quebec"]["collection_gap_streak"], 2)
+        self.assertEqual(reg["ville-quebec"]["editions_collection_gap"], 2)
+        self.assertEqual(reg["hydro-quebec"]["current"], registre.STATE_PUBLISHED)
+        self.assertEqual(reg["hydro-quebec"]["collection_gap_streak"], 0)
+        # Our failures sort first: the register is self-critical before accusatory.
+        self.assertEqual(registre.institution_register(state)[0]["institution_id"], "ville-quebec")
+
+    def test_answered_feed_with_no_items_is_not_a_gap(self):
+        state = registre.empty_state()
+        coll = collection(PROD_ITEMS)
+        coll["ville-quebec"] = {"items": 0, "feeds_ok": 1, "feeds_total": 1}
+        state = self._seal(state, "2026-09-10T12:00:00+00:00", [prod_issue()], coll)
+        reg = {r["institution_id"]: r for r in registre.institution_register(state)}
+        self.assertEqual(reg["ville-quebec"]["current"], registre.STATE_NO_ITEMS)
+        self.assertEqual(reg["ville-quebec"]["collection_gap_streak"], 0)
+
+    def test_schema_one_seal_makes_no_claim(self):
+        """Seals published before the correction stay 'not established', never silent."""
+        state = registre.empty_state()
+        p = payload([issue("a")])
+        for iid, meta in registre.institution_names(p).items():
+            state["names"][iid] = meta
+        state, _ = registre.seal_edition(state, registre.edition_record(p, "2026-09-10T12:00:00+00:00"))
+        row = registre.voice_row(state["seals"][-1]["record"])
+        self.assertEqual(row["not_established"], ["cbc", "gouv-quebec"])
+        self.assertNotIn("silent", row)
+        reg = {r["institution_id"]: r for r in registre.institution_register(state)}
+        self.assertEqual(reg["gouv-quebec"]["current"], registre.STATE_NOT_ESTABLISHED)
+        self.assertIsNone(reg["gouv-quebec"]["items_collected"])
+
+    def test_correction_names_the_affected_seals_from_the_chain(self):
+        state = registre.empty_state()
+        p = payload([issue("a")])
+        for iid, meta in registre.institution_names(p).items():
+            state["names"][iid] = meta
+        state, _ = registre.seal_edition(state, registre.edition_record(p, "2026-09-10T12:00:00+00:00"))
+        state, _ = registre.seal_edition(state, registre.edition_record(p, "2026-09-11T12:00:00+00:00"))
+        state, _ = registre.seal_edition(
+            state,
+            registre.edition_record(p, "2026-09-12T12:00:00+00:00",
+                                    collection({"ville-quebec": 9, "le-soleil": 8, "gouv-quebec": 4, "cbc": 6})),
+        )
+        c = registre.correction_notice(state)
+        self.assertEqual((c["affects_seal_min"], c["affects_seal_max"], c["affects_count"]), (1, 2, 2))
+        self.assertEqual(c["corrected_at"], registre.CORRECTION_DATE)
+        # Once every seal carries facts, the correction retires itself.
+        state["seals"] = state["seals"][-1:]
+        state["voice"] = state["voice"][-1:]
+        self.assertIsNone(registre.correction_notice(state))
+
+    def test_voice_row_lists_partition_the_followed_institutions(self):
+        state = registre.empty_state()
+        coll = collection(PROD_ITEMS)
+        coll["ville-quebec"] = {"items": 0, "feeds_ok": 1, "feeds_total": 1}
+        coll["cbc"] = {"items": 0, "feeds_ok": 0, "feeds_total": 2}
+        state = self._seal(state, "2026-09-10T12:00:00+00:00", [prod_issue()], coll)
+        row = registre.voice_row(state["seals"][-1]["record"])
+        buckets = [row[k] for k in registre.VOICE_KEYS]
+        flat = [i for b in buckets for i in b]
+        self.assertEqual(len(flat), len(set(flat)), "an institution must occupy exactly one state")
+        self.assertEqual(sorted(flat), list(ALL9), "every followed institution is classified exactly once")
+        self.assertEqual(row["not_established"], [])
+        self.assertEqual(row["collection_gap"], ["cbc"])
+        self.assertEqual(row["no_items"], ["ville-quebec"])
+        self.assertEqual(sorted(row["spoke"]), list(PROD_SPOKE))
+        self.assertEqual(row["absent_from_dossiers"], list(PROD_ABSENT))
+
+    def test_collection_facts_are_rejected_for_a_mismatched_edition(self):
+        """A seal must never borrow another edition's counts."""
+        enriched = {"normalized_at": "2026-09-11T12:00:00+00:00",
+                    "source_status": {"ville-quebec": {"status": "ok", "candidate_count": 9}}}
+        self.assertEqual(registre.collection_for_edition("2026-09-10T12:00:00+00:00", enriched), {})
+        self.assertEqual(registre.collection_for_edition("", enriched), {})
+        self.assertEqual(registre.collection_for_edition("2026-09-11T12:00:00+00:00", {}), {})
 
     def test_checkpoint_text_shape(self):
         state = registre.empty_state()
@@ -208,6 +382,7 @@ class VoiceRegister(unittest.TestCase):
         self.assertEqual(lines[1], "1")
         self.assertEqual(lines[2], state["seals"][0]["root"])
         self.assertEqual(lines[4], "edition 2026-09-10T12:00:00+00:00")
+
 
 
 class HumanView(unittest.TestCase):
@@ -231,6 +406,76 @@ class HumanView(unittest.TestCase):
     def test_empty_state_still_renders_a_page(self):
         page = registre.render_registre_html(registre.empty_state())
         self.assertIn("Aucune édition scellée", page)
+
+
+class LegacyStateMigration(unittest.TestCase):
+    """Production already holds 40 old-shape voice rows; they must not vanish."""
+
+    FOLLOWED = ["cbc", "gouv-quebec", "hydro-quebec", "journal-de-quebec", "la-presse",
+                "le-devoir", "le-soleil", "radio-canada", "ville-quebec"]
+
+    def _legacy_state(self, editions=3):
+        spoke = ["la-presse", "le-devoir"]
+        silent = [i for i in self.FOLLOWED if i not in spoke]
+        seals, voice = [], []
+        for n in range(1, editions + 1):
+            edition = f"2026-09-{n:02d}T12:00:00+00:00"
+            rec = {"method": registre.METHOD, "edition": edition, "followed": self.FOLLOWED,
+                   "dossiers": [{"issue_id": "a", "label_kind": "subject_label", "question": "Q",
+                                 "item_count": 3, "official_voice_count": 0,
+                                 "spoke": spoke, "silent": silent}],
+                   "ledger": {"has_previous": n > 1, "new": [], "developed": [], "quiet": []}}
+            leaf = registre.leaf_of(rec)
+            prev = seals[-1]["root"] if seals else ""
+            seals.append({"seq": n, "edition": edition, "prev": prev, "leaf": leaf,
+                          "root": registre.chain_hash(prev, leaf), "record": rec})
+            voice.append({"edition": edition, "spoke": spoke, "silent": silent, "established": True})
+        return {"method": registre.METHOD, "origin": registre.ORIGIN, "seals": seals, "voice": voice,
+                "names": {i: {"name": i, "kind": "official" if i in ("ville-quebec", "gouv-quebec", "hydro-quebec") else "media"}
+                          for i in self.FOLLOWED},
+                "travaux": {"method": registre.ROADS_METHOD, "seals": [], "latest_record": None}}
+
+    def test_old_silent_rows_become_not_established_not_vanished(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "registre.json"
+            path.write_text(json.dumps(self._legacy_state()), encoding="utf-8")
+            state = registre.load_state(path)
+            self.assertNotIn("silent", state["voice"][0])
+            self.assertEqual(state["voice"][0]["not_established"],
+                             [i for i in self.FOLLOWED if i not in ("la-presse", "le-devoir")])
+            reg = {r["institution_id"]: r for r in registre.institution_register(state)}
+            # The regression: without migration, 7 of 9 institutions disappear.
+            self.assertEqual(len(reg), len(self.FOLLOWED))
+            self.assertEqual(reg["hydro-quebec"]["editions_not_established"], 3)
+            self.assertEqual(reg["hydro-quebec"]["current"], registre.STATE_NOT_ESTABLISHED)
+            self.assertEqual(reg["hydro-quebec"]["editions_spoke"], 0)
+            self.assertEqual(reg["la-presse"]["editions_spoke"], 3)
+            self.assertIsNone(reg["ville-quebec"]["items_collected"])
+            ok, msg = registre.verify_chain(state["seals"])
+            self.assertTrue(ok, msg)
+
+    def test_migration_is_idempotent_and_leaves_new_rows_alone(self):
+        row = {"edition": "2026-09-01T12:00:00+00:00", "spoke": ["a"], "published": ["b"],
+               "no_items": [], "collection_gap": [], "not_established": [], "established": True}
+        self.assertEqual(registre.migrate_voice_row(row), row)
+        legacy = {"edition": "2026-09-01T12:00:00+00:00", "spoke": ["a"], "silent": ["b", "b"],
+                  "established": True}
+        once = registre.migrate_voice_row(legacy)
+        self.assertEqual(registre.migrate_voice_row(once), once)
+        self.assertEqual(once["not_established"], ["b"])
+
+    def test_correction_covers_the_legacy_seals_after_migration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "registre.json"
+            path.write_text(json.dumps(self._legacy_state()), encoding="utf-8")
+            state = registre.load_state(path)
+            c = registre.correction_notice(state)
+            self.assertEqual((c["affects_seal_min"], c["affects_seal_max"], c["affects_count"]), (1, 3, 3))
+            # A schema-1 page must still render, and must not accuse anyone.
+            page = registre.render_registre_html(state)
+            self.assertIn("CORRECTION PUBLIÉE", page)
+            self.assertIn("non établi", page)
+            self.assertNotIn("n’a pas parlé depuis", page)
 
 
 class EmitFailSoft(unittest.TestCase):

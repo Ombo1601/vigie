@@ -1,9 +1,10 @@
 """The substrate — Vigie for machines, without a second brain.
 
 When nobody opens a browser, Vigie survives as the memory that stateless
-agents do not have: what changed since a cursor, who spoke, who did not, and
-where the official record stands. Three artefacts, all derived from the same
-stores as the brief, all deterministic, all attribution-preserving:
+agents do not have: what changed since a cursor, what each followed institution
+actually published, where our own collection failed, and where the official
+record stands. Three artefacts, all derived from the same stores as the brief,
+all deterministic, all attribution-preserving:
 
   public/llms.txt          curated map for agents (llms.txt v2; rel="describedby")
   public/index.html.md     Markdown twin of the front door (rel="alternate")
@@ -11,8 +12,9 @@ stores as the brief, all deterministic, all attribution-preserving:
 
 House law holds for machines exactly as for people: titles verbatim, source
 URL and publisher name on every item, no rewriting, no excerpt beyond the
-publisher's own summary (capped), silence stated as absence in the collected
-feeds. Stdlib only; no network.
+publisher's own summary (capped), and no asserted silence — an institution
+absent from the dossiers is reported as published-outside-dossiers, as a
+collection gap of ours, or as not established. Stdlib only; no network.
 """
 from __future__ import annotations
 
@@ -136,6 +138,11 @@ def dossier_view(issue: dict, names: dict, cap: int) -> dict:
         "media_remix": bool(issue.get("media_remix")),
         "spoke": spoke,
         "silent": silent,
+        # Scope guard: this list is dossier-scoped. Read without its scope it
+        # looks like an edition-level silence claim, which is exactly the defect
+        # corrected on 2026-09-30. The key travels with the data.
+        "silent_scope": "dossier",
+        "silent_meaning": "absent from this dossier only; not a claim about the edition or the institution",
         "items": items_of(issue, cap),
     }
     if tracking.get("editions_seen") is not None:
@@ -234,8 +241,11 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
         return out
 
     register = registre.institution_register(state)
-    silent_now = [r for r in register if r["current"] == "silent"]
-    spoke_now = [r for r in register if r["current"] == "spoke"]
+
+    def _inst(r: dict, *extra: str) -> dict:
+        keys = ("institution_id", "institution_name", "source_kind", "current", *extra)
+        return {k: r.get(k) for k in keys if k in r}
+
     return {
         "method": METHOD,
         "site": SITE_URL,
@@ -258,9 +268,18 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
             "all": [dossier_view(by_id[i], names, DELTA_ITEMS_CAP) for i in sorted(by_id)],
         },
         "institutions": {
-            "spoke": [{k: r[k] for k in ("institution_id", "institution_name", "source_kind")} for r in spoke_now],
-            "silent": [{k: r[k] for k in ("institution_id", "institution_name", "source_kind", "silent_streak", "last_spoke")} for r in silent_now],
+            "note": (
+                "State per followed institution for this edition. 'published' means its feeds returned "
+                "items that no dossier picked up — the institution was NOT silent. 'collection_gap' means "
+                "Vigie failed to collect it. No state is ever derived from Vigie's clustering alone."
+            ),
+            "spoke": [_inst(r) for r in register if r["current"] == registre.STATE_SPOKE],
+            "published": [_inst(r, "items_collected") for r in register if r["current"] == registre.STATE_PUBLISHED],
+            "no_items_collected": [_inst(r) for r in register if r["current"] == registre.STATE_NO_ITEMS],
+            "collection_gap": [_inst(r, "collection_gap_streak") for r in register if r["current"] == registre.STATE_COLLECTION_GAP],
+            "not_established": [_inst(r) for r in register if r["current"] == registre.STATE_NOT_ESTABLISHED],
         },
+        "correction": registre.correction_notice(state),
         "roadworks": roadworks_view(roadworks, DELTA_ITEMS_CAP),
         "links": {
             "brief": f"{SITE_URL}/",
@@ -278,7 +297,8 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
         "rules_for_agents": [
             "Cite the original publisher (source_name + url) for every item; Vigie is an index, never the author.",
             "Titles are verbatim publisher titles (truncated only). Do not present Vigie text as a quotation of the publisher.",
-            "'silent' means absent from the feeds Vigie collects in this edition — a measured absence, not a statement that the institution said nothing anywhere.",
+            "Never infer that an institution was silent. 'published' means it produced items this edition that no dossier picked up; 'collection_gap' means Vigie failed to collect it. Only 'spoke' means it entered a dossier.",
+            "A dossier needs a named subject and two institutions, so most collected items never enter one. Absence from dossiers is a property of Vigie's clustering, not of the institution.",
             "'quiet' dossiers left this collection; nothing is 'resolved' or 'ended'.",
             "Verify this edition against registre/chain.json before treating it as a record.",
         ],
@@ -297,7 +317,7 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
     lines: list[str] = []
     lines.append("# Vigie — Québec, à hauteur de vie")
     lines.append("")
-    lines.append("> Un point local pour la ville de Québec : titres et extraits d’éditeurs cités tels quels, dossiers où plusieurs institutions se répondent, entraves officielles, et le registre de qui a parlé et qui n’a pas parlé. Vigie n’écrit pas la nouvelle et ne décide pas de ce qui est vrai.")
+    lines.append("> Un point local pour la ville de Québec : titres et extraits d’éditeurs cités tels quels, dossiers où plusieurs institutions se répondent, entraves officielles, et un registre scellé qui distingue ce que chaque institution suivie a publié de ce que notre collecte a manqué. Vigie n’écrit pas la nouvelle et ne décide pas de ce qui est vrai.")
     lines.append("")
     if status.get("at"):
         lines.append(f"- Collecte : {status['at']} — {status.get('ok', 0)} flux disponibles sur {status.get('total', 0)}" + (" (collecte partielle)" if status.get("partial") else ""))
@@ -333,8 +353,10 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
             lines.append(f"### {heading}")
             spoke = ", ".join(f"{_md(v['institution_name'])}{' (officiel)' if v['source_kind'] == 'official' else ''}" for v in view["spoke"])
             silent = ", ".join(f"{_md(v['institution_name'])}{' (officiel)' if v['source_kind'] == 'official' else ''}" for v in view["silent"])
-            lines.append(f"- Ont parlé ({len(view['spoke'])}) : {spoke or '—'}")
-            lines.append(f"- N’ont pas parlé dans cette collecte ({len(view['silent'])}) : {silent or '—'}")
+            lines.append(f"- Dans ce dossier ({len(view['spoke'])}) : {spoke or '—'}")
+            # Dossier-scoped, and labelled as such: this list says who is absent
+            # from THIS dossier, never who was silent across the collection.
+            lines.append(f"- Absents de ce dossier ({len(view['silent'])}) : {silent or '—'}")
             if view.get("media_remix"):
                 lines.append("- Aucun texte officiel dans ce dossier : reprise médiatique seulement.")
             for it in view["items"]:
@@ -384,13 +406,13 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
         lines.append("")
         for r in register:
             tag = " (officiel)" if r["source_kind"] == "official" else ""
-            if r["current"] == "spoke":
-                stt = "a parlé dans cette édition"
-            elif r["current"] == "silent":
-                stt = "n’a pas parlé dans cette édition" if r["silent_streak"] <= 1 else f"n’a pas parlé depuis {r['silent_streak']} éditions"
-            else:
-                stt = "état non établi"
-            lines.append(f"- {_md(r['institution_name'])}{tag} : {stt}.")
+            lines.append(f"- {_md(r['institution_name'])}{tag} : {registre.state_label_fr(r)}.")
+        lines.append("")
+        lines.append("« Publié, hors dossier » n’est pas un silence : un dossier exige un sujet nommé et deux institutions. « Collecte en échec » est une lacune de Vigie.")
+        correction = registre.correction_notice(state)
+        if correction:
+            lines.append("")
+            lines.append(f"Correction du {correction['corrected_at']} : les sceaux {correction['affects_seal_min']} à {correction['affects_seal_max']} avaient été publiés avec une définition du silence qui mesurait les règles de rapprochement de Vigie. Ils restent inchangés — une chaîne ne se réécrit pas — et leur lecture est désormais « non établi ».")
         lines.append("")
         lines.append(f"Registre complet et chaîne des éditions : {SITE_URL}/registre.html")
         lines.append("")
@@ -398,7 +420,7 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
     lines.append("## Attribution et règles")
     lines.append("")
     lines.append("- Chaque titre appartient à son éditeur ; citez l’éditeur et son lien, jamais Vigie comme auteur.")
-    lines.append("- Le silence est une absence dans les flux collectés par Vigie, pas la preuve qu’une institution n’a rien dit ailleurs.")
+    lines.append("- Vigie n’affirme jamais qu’une institution s’est tue. Une institution absente des dossiers a publié sans y entrer, ou bien notre collecte a échoué ; les deux sont distingués dans le registre.")
     lines.append(f"- Sources suivies : {SITE_URL}/methode/sources.html · Méthode : {SITE_URL}/methode/classement.html, {SITE_URL}/methode/registre.html · Mentions légales et retrait : {SITE_URL}/methode/legal.html")
     lines.append("")
     return "\n".join(lines)
@@ -413,21 +435,21 @@ def render_llms_txt(state: dict, status: dict) -> str:
     edition = last.get("edition") or status.get("at") or ""
     return f"""# Vigie
 
-> Vigie is a free, non-commercial lookout for Québec City (French-first). It aggregates a finite, published list of sources, never rewrites them, groups articles into dossiers where several institutions speak, relays the City's official roadworks feed, and keeps a sealed register (sha256 chain) of every edition: which institutions spoke and which did not. Silence means absence from the collected feeds, not proof of silence elsewhere. Judgment stays with the reader.
+> Vigie is a free, non-commercial lookout for Québec City (French-first). It aggregates a finite, published list of sources, never rewrites them, groups articles into dossiers where several institutions speak, relays the City's official roadworks feed, and keeps a sealed register (sha256 chain) of every edition: what each followed institution published, and what Vigie's own collection missed. Vigie never asserts that an institution was silent — a dossier needs a named subject and two institutions, so absence from dossiers is a property of Vigie's clustering, not of the institution. Judgment stays with the reader.
 
-Current edition: {edition or "unknown"}. Rules for agents: cite the original publisher (name + URL) for every item; Vigie is an index, never the author. Do not present dossier questions as publisher quotations. Treat "quiet" as "left this collection", never "resolved". Verify an edition against the chain before calling it a record.
+Current edition: {edition or "unknown"}. Rules for agents: cite the original publisher (name + URL) for every item; Vigie is an index, never the author. Do not present dossier questions as publisher quotations. Never infer that an institution was silent — use the per-institution state (spoke / published / no_items_collected / collection_gap / not_established). Treat "quiet" as "left this collection", never "resolved". Verify an edition against the chain before calling it a record.
 
 ## Edition
 
-- [Le point (Markdown)]({SITE_URL}/index.html.md): the front door as plain Markdown — stories with publisher and URL, dossiers with who spoke / who did not, official roadworks, the voice register.
-- [Delta]({SITE_URL}/delta/latest.json): machine-readable edition delta (delta-v1) — new / developed / quiet dossiers with items, institutions spoke and silent with streaks, roadworks diff, cursor = chain root.
-- [Dossiers complets (HTML)]({SITE_URL}/dossiers.html): one record page per dossier of the current edition — every voice with every verbatim headline, the collection timeline, who spoke and who did not.
+- [Le point (Markdown)]({SITE_URL}/index.html.md): the front door as plain Markdown — stories with publisher and URL, dossiers with their voices, official roadworks, the voice register.
+- [Delta]({SITE_URL}/delta/latest.json): machine-readable edition delta (delta-v1) — new / developed / quiet dossiers with items, per-institution state with collected item counts, roadworks diff, cursor = chain root.
+- [Dossiers complets (HTML)]({SITE_URL}/dossiers.html): one record page per dossier of the current edition — every voice with every verbatim headline, the collection timeline, and the institutions absent from that dossier.
 
 ## Registre
 
 - [Checkpoint]({SITE_URL}/registre/checkpoint.txt): origin, chain size, current root, edition stamp.
 - [Chain]({SITE_URL}/registre/chain.json): the sealed editions (records + sha256 leaves and roots); verify with `scripts/registre.py --verify`.
-- [Institutions]({SITE_URL}/registre/institutions.json): per followed institution — spoke or silent this edition, silent streak, last time it spoke.
+- [Institutions]({SITE_URL}/registre/institutions.json): per followed institution — its state this edition (spoke / published / no_items_collected / collection_gap / not_established), collected item counts, and Vigie's own collection-gap streak.
 - [Roadworks chain]({SITE_URL}/registre/travaux.json): one root per change of the City's active obstruction set.
 - [Method]({SITE_URL}/methode/registre.html): what a seal contains, what it proves, what it does not.
 
@@ -447,7 +469,7 @@ Current edition: {edition or "unknown"}. Rules for agents: cite the original pub
 
 - [Front door (HTML)]({SITE_URL}/): the resident brief.
 - [Avant de partir]({SITE_URL}/partir.html): the departure screen — declared obstructions, followed corridors (on-device), what changed.
-- [La mémoire]({SITE_URL}/memoire.html): every sealed edition, readable — dossiers, voices, silence, edition by edition.
+- [La mémoire]({SITE_URL}/memoire.html): every sealed edition, readable — dossiers, voices, published items and collection gaps, edition by edition.
 - [Registre (HTML)]({SITE_URL}/registre.html): the human view of the register.
 - [L'affiche]({SITE_URL}/affiche.html): the printable neighbourhood sheet.
 - [Explorer]({SITE_URL}/explorer.html): evidence workbench (English).

@@ -48,8 +48,10 @@ class MarkdownTwin(unittest.TestCase):
         self.assertIn("Un titre verbatim & fidèle", md.replace("\\&", "&"))
         self.assertIn("<https://presse.example.com/s1>", md)
         self.assertIn("Le Soleil", md)
-        self.assertIn("Ont parlé (2)", md)
-        self.assertIn("N’ont pas parlé dans cette collecte (1)", md)
+        self.assertIn("Dans ce dossier (2)", md)
+        self.assertIn("Absents de ce dossier (1)", md)
+        # A dossier-scoped list must never be labelled as a collection-wide silence.
+        self.assertNotIn("N’ont pas parlé dans cette collecte", md)
         self.assertIn(state["seals"][0]["root"], md)
         self.assertNotIn("<em>", md)  # markup stripped, words kept
 
@@ -76,10 +78,34 @@ class Delta(unittest.TestCase):
         self.assertEqual({i["source_name"] for i in items}, {"Le Soleil", "Ville de Québec"})
         self.assertTrue(all(i["url"].startswith("https://exemple.test/") for i in items))
         self.assertEqual({i["title"] for i in items}, {"Titre le-soleil", "Titre ville-quebec"})  # markup stripped, never rewritten
-        self.assertEqual([s["institution_id"] for s in delta["institutions"]["silent"]], ["gouv-quebec", "cbc"])  # officials first
+        # state_with_edition seals no collection facts (schema 1), so the honest
+        # answer is "not established" -- never "silent".
+        self.assertEqual([s["institution_id"] for s in delta["institutions"]["not_established"]],
+                         ["gouv-quebec", "cbc"])  # officials first
+        self.assertEqual([s["institution_id"] for s in delta["institutions"]["spoke"]],
+                         ["ville-quebec", "le-soleil"])  # officials first
+        self.assertEqual(delta["institutions"]["published"], [])
+        self.assertNotIn("silent", delta["institutions"])
         self.assertEqual(delta["roadworks"]["most_restrictive"][0]["impact_label"], "Toutes les voies fermées")
-        self.assertTrue(any("silent" in r for r in delta["rules_for_agents"]))
+        self.assertTrue(any("Never infer that an institution was silent" in r for r in delta["rules_for_agents"]))
         json.dumps(delta)  # serialisable
+
+    def test_delta_reports_published_institutions_with_their_item_counts(self):
+        state, p = state_with_edition()
+        coll = {"gouv-quebec": {"items": 10, "feeds_ok": 1, "feeds_total": 1},
+                "cbc": {"items": 0, "feeds_ok": 0, "feeds_total": 2},
+                "ville-quebec": {"items": 9, "feeds_ok": 1, "feeds_total": 1},
+                "le-soleil": {"items": 40, "feeds_ok": 1, "feeds_total": 1}}
+        state, _ = registre.seal_edition(
+            state, registre.edition_record(p, "2026-09-11T13:30:00+00:00", coll))
+        delta = substrate.build_delta(p["issues"], {}, None, state, {"at": NOW})
+        published = {s["institution_id"]: s for s in delta["institutions"]["published"]}
+        self.assertEqual(published["gouv-quebec"]["items_collected"], 10)
+        self.assertEqual([s["institution_id"] for s in delta["institutions"]["collection_gap"]], ["cbc"])
+        self.assertEqual(delta["institutions"]["collection_gap"][0]["collection_gap_streak"], 1)
+        self.assertEqual(delta["institutions"]["not_established"], [])
+        self.assertIsNotNone(delta["correction"])
+        self.assertEqual(delta["correction"]["affects_seal_min"], 1)
 
     def test_delta_without_previous_has_empty_buckets_but_full_list(self):
         state, p = state_with_edition()
@@ -135,7 +161,10 @@ class Affiche(unittest.TestCase):
         self.assertIn("Un titre verbatim &amp; fidèle", page)  # publisher markup stripped, words kept, escaped
         self.assertNotIn("<script", page)           # paper needs no JavaScript
         self.assertIn('href="/assets/affiche.css"', page)
-        self.assertIn("n’a pas parlé", page)
+        self.assertIn("Les voix de cette édition", page)
+        # A wall sheet must never name an institution as silent on our clustering.
+        self.assertIn("n’est pas muette", page)
+        self.assertNotIn("n’a pas parlé", page)
 
     def test_sheet_with_nothing_still_prints(self):
         page = affiche.render_affiche([], [], None, registre.empty_state(), NOW, {})

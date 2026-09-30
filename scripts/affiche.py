@@ -114,19 +114,23 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
     rw_fetched = brief.parse_date((roadworks or {}).get("fetched_at")) if isinstance(roadworks, dict) else None
 
     register = registre.institution_register(state)
-    spoke = [r for r in register if r["current"] == "spoke"]
-    silent = [r for r in register if r["current"] == "silent"]
-    silent_names = ", ".join(esc(r["institution_name"]) for r in silent[:SILENT_NAMES_CAP])
-    if len(silent) > SILENT_NAMES_CAP:
-        rest = len(silent) - SILENT_NAMES_CAP
-        silent_names += f" et {rest} autre" + ("s" if rest != 1 else "")
+    spoke = [r for r in register if r["current"] == registre.STATE_SPOKE]
+    published = [r for r in register if r["current"] == registre.STATE_PUBLISHED]
+    missed = [r for r in register if r["current"] in (registre.STATE_COLLECTION_GAP, registre.STATE_NO_ITEMS)]
+    missed_names = ", ".join(esc(r["institution_name"]) for r in missed[:SILENT_NAMES_CAP])
+    if len(missed) > SILENT_NAMES_CAP:
+        rest = len(missed) - SILENT_NAMES_CAP
+        missed_names += f" et {rest} autre" + ("s" if rest != 1 else "")
+    # A sheet on a wall must never name an institution as silent on the strength
+    # of our own clustering. It states what entered a dossier, what was published
+    # anyway, and what WE failed to collect.
     voices_html = (
-        f'<p><strong>{len(spoke)}</strong> institution{"s" if len(spoke) != 1 else ""} suivie{"s" if len(spoke) != 1 else ""} '
-        f'{"ont" if len(spoke) != 1 else "a"} parlé dans les dossiers de cette édition ; '
-        f'<strong>{len(silent)}</strong> {"n’ont" if len(silent) != 1 else "n’a"} pas parlé'
-        + (f" : {silent_names}." if silent_names else ".")
+        f'<p><strong>{len(spoke)}</strong> institution{"s" if len(spoke) != 1 else ""} dans un dossier de cette édition · '
+        f'<strong>{len(published)}</strong> {"ont" if len(published) != 1 else "a"} publié sans entrer dans un dossier'
+        + (f' · <strong>{len(missed)}</strong> collecte{"s" if len(missed) != 1 else ""} manquée{"s" if len(missed) != 1 else ""} par Vigie : {missed_names}.'
+           if missed else ".")
         + "</p>"
-        if register else "<p>Registre des voix : pas encore d’édition avec dossiers.</p>"
+        if register else "<p>Registre des voix : pas encore d’édition scellée.</p>"
     )
 
     seal_html = (
@@ -138,7 +142,7 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
     return f'''<!doctype html>
 <html lang="fr-CA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>L’affiche — Vigie, Québec</title>
-<meta name="description" content="La feuille de quartier de Vigie : les nouvelles locales, les entraves déclarées par la Ville et qui a parlé, sur une seule page à imprimer et à afficher.">
+<meta name="description" content="La feuille de quartier de Vigie : les nouvelles locales, les entraves déclarées par la Ville et les voix de l’édition, sur une seule page à imprimer et à afficher.">
 <link rel="canonical" href="{SITE_URL}/affiche.html"><meta name="robots" content="index, follow"><meta name="referrer" content="no-referrer">
 <link rel="describedby" href="/llms.txt">
 <meta name="color-scheme" content="light only">
@@ -150,7 +154,7 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
 <section class="af-lead"><h2>À Québec</h2><ol>{lead_html}</ol></section>
 <div class="af-areas">{areas_html}</div>
 <section class="af-roads"><h2>Entraves déclarées par la Ville</h2>{f'<ul>{roads_html}</ul><p class="af-fine">Collecte officielle du {brief.date_html(rw_fetched.isoformat())}. Retiré du flux ≠ terminé. Carte : carte.ville.quebec.qc.ca</p>' if roads else '<p class="af-fine">Aucune entrave déclarée dans la collecte, ou flux officiel indisponible.</p>'}</section>
-<section class="af-voices"><h2>Qui a parlé, qui n’a pas parlé</h2>{voices_html}<p class="af-fine">« N’a pas parlé » = absent des flux que Vigie suit dans cette édition. Ce n’est pas la preuve d’un silence ailleurs.</p></section>
+<section class="af-voices"><h2>Les voix de cette édition</h2>{voices_html}<p class="af-fine">Une institution absente de nos dossiers n’est pas muette : un dossier exige un sujet nommé et deux voix. Une collecte manquée est une lacune de Vigie.</p></section>
 <footer class="af-foot"><p>Titres cités tels quels, propriété de leurs éditeurs. Vigie ne réécrit rien et ne vend rien. Liste des sources et méthode : {SITE_URL}</p>{seal_html}</footer>
 </main></body></html>'''
 
