@@ -558,22 +558,25 @@ def dossier_voices_html(issue: dict) -> str:
         chip = '<span class="dv-kind">officiel</span>' if row["official"] else ""
         rows.append(
             f'<li class="dv-row dv-quiet">{chip}<span class="dv-inst">{esc(row["name"])}</span>'
-            '<span class="dv-state">n’a pas parlé dans cette collecte</span></li>'
+            '<span class="dv-state">absente de ce dossier</span></li>'
         )
     if not rows:
         return ""
     n_spoke, n_quiet = len(spoke_names), len(quiet_names)
+    # Dossier-scoped and labelled as such: this roster is one dossier's voices,
+    # never an edition-wide statement about who published.
     head = (
-        f'{n_spoke} institution{"s" if n_spoke != 1 else ""} '
-        f'{"ont" if n_spoke != 1 else "a"} parlé · '
-        f'{n_quiet} n’{"ont" if n_quiet != 1 else "a"} pas parlé'
+        f'{n_spoke} institution{"s" if n_spoke != 1 else ""} dans ce dossier · '
+        f'{n_quiet} absente{"s" if n_quiet != 1 else ""}'
     )
     return (
         '<div class="dossier-voices">'
         f'<p class="dv-head">{head}</p>'
         f'<ul class="dv-list">{"".join(rows)}</ul>'
-        '<p class="fine">Toutes les institutions suivies. Une absence dans nos flux '
-        "n’est pas un silence éditorial prouvé, et ce n’est pas un indicateur de biais.</p></div>"
+        '<p class="fine">Toutes les institutions suivies. « Absente de ce dossier » ne veut pas dire '
+        'muette : un dossier exige un sujet nommé et deux institutions, et la plupart des articles '
+        'collectés n’entrent dans aucun. Ce n’est pas un silence éditorial prouvé, et ce n’est pas '
+        'un indicateur de biais.</p></div>'
     )
 
 
@@ -644,9 +647,9 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
     ]
     quiet = [n for n in quiet if n]
     silence_line = (
-        '<p class="dossier-silence">Officiellement muets dans cette collecte : <strong>'
+        '<p class="dossier-silence">Aucun texte officiel dans ce dossier : <strong>'
         + " · ".join(esc(n) for n in quiet[:3])
-        + "</strong>.</p>"
+        + "</strong>. Une absence de ce dossier, pas un silence de l’institution.</p>"
     ) if quiet else ""
     remix_line = (
         '<p class="dossier-remix fine">Aucune source officielle sur ce dossier — '
@@ -664,7 +667,7 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
     voice_bars = (
         '<span class="dossier-viz" aria-hidden="true"><span class="dossier-viz-bar" '
         f'style="--voices:{spoke_count};--silent:{silent_count}" '
-        f'title="{spoke_count} ont parlé · {silent_count} n\'ont pas parlé"></span></span>'
+        f'title="{spoke_count} dans ce dossier · {silent_count} absente{"s" if silent_count != 1 else ""} de ce dossier"></span></span>'
     )
     return (
         f'<article class="dossier" id="dossier-{esc(_issue_dom_id(issue))}" '
@@ -673,8 +676,8 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
         f'data-search="{esc(search_blob)}">'
         f'<div class="dossier-head">{voice_bars}'
         f'<span class="dossier-nest">{esc(NEST_LABELS[nest])}</span>'
-        f'<span class="dossier-count">{spoke_count} ont parlé · '
-        f'{silent_count} n\'ont pas parlé</span>'
+        f'<span class="dossier-count">{spoke_count} dans ce dossier · '
+        f'{silent_count} absente{"s" if silent_count != 1 else ""}</span>'
         f'<a class="recit-more" href="{esc(dossier_page_path(issue))}">Récit complet ↗</a></div>'
         f'<h3 class="dossier-q">{question}</h3>{why}{promesse.html_of(issue)}'
         f"{tracking_html(issue)}{dossier_timeline_html(issue)}"
@@ -1652,28 +1655,97 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
                     names.add(name)
     if names:
         n = len(names)
+        # Dossier-scoped and labelled as such: these institutions are absent from
+        # this edition's dossiers, which is not the same as having said nothing.
         if n == 1:
-            text = ("<strong>1</strong> institution suivie n’a pas parlé dans les dossiers de cette édition. "
-                    "Le registre garde la trace.")
+            text = ("<strong>1</strong> institution suivie absente des dossiers de cette édition — "
+                    "pas nécessairement muette. Le registre mesure la différence.")
         else:
-            text = (f"<strong>{n}</strong> institutions suivies n’ont pas parlé dans les "
-                    "dossiers de cette édition. Le registre garde la trace.")
-        items.append(_glance_item("Silence", text, "/registre.html"))
+            text = (f"<strong>{n}</strong> institutions suivies absentes des dossiers de cette "
+                    "édition — pas nécessairement muettes. Le registre mesure la différence.")
+        items.append(_glance_item("Voix", text, "/registre.html"))
     if not items:
         return ""
     return ('<nav class="glance" aria-label="En un coup d’œil">' + "".join(items) + "</nav>")
 
 
-def silence_bar(issues: list[dict]) -> str:
-    """The silence bar — Vigie's most radical innovation made visible.
+def silence_bar(issues: list[dict], register: list[dict] | None = None) -> str:
+    """The voice strip — every followed institution, by what we actually measured.
 
-    A horizontal strip showing every followed institution and whether it spoke
-    or stayed silent across the edition's dossiers. Spoke = accent (present),
-    silent = muted (absent from the collected feeds — never a verdict).
-    Renders only when at least two institutions were tracked across dossiers.
+    Reads the corrected registre register when the render provides it, so the
+    front door and the register can never disagree. This function used to
+    re-derive its own silence union from the dossier maps and publish
+    « N n'ont pas parlé dans cette édition » — an edition-level claim built out
+    of Vigie's clustering rules, while those same feeds had returned hundreds of
+    items. A dossier needs a named subject and two institutions, so absence from
+    dossiers says nothing about whether an institution published.
+
+    Four measured rows, worst-first about ourselves: entered a dossier, published
+    outside one (with the item count that proves it), our collection failed, and
+    editions sealed before the facts existed. Without a register the strip falls
+    back to the dossier maps and claims only absence *from dossiers*.
     """
+    import registre as _registre  # noqa: PLC0415 - lazy: keeps the render import cheap
+
+    rows = [r for r in (register or []) if isinstance(r, dict) and r.get("institution_id")]
+
+    def _names(entries: list[dict]) -> str:
+        out = []
+        for r in sorted(entries, key=lambda x: str(x.get("institution_name") or "").casefold()):
+            name = str(r.get("institution_name") or r.get("institution_id"))
+            official = str(r.get("source_kind") or "") == "official"
+            cls = "sb-name sb-official" if official else "sb-name"
+            title = " institution officielle" if official else ""
+            out.append(f'<li class="{cls}" title="{esc(name)}{title}">{esc(name)}</li>')
+        return "".join(out)
+
+    def _row(label: str, entries: list[dict], cls: str) -> str:
+        if not entries:
+            return ""
+        return (f'<div class="sb-row {cls}"><span class="sb-row-label">{esc(label)} '
+                f'<span class="sb-n">({len(entries)})</span></span>'
+                f'<ul class="sb-names">{_names(entries)}</ul></div>')
+
+    if rows:
+        by = lambda st: [r for r in rows if r.get("current") == st]  # noqa: E731
+        spoke = by(_registre.STATE_SPOKE)
+        published = by(_registre.STATE_PUBLISHED)
+        missed = by(_registre.STATE_COLLECTION_GAP) + by(_registre.STATE_NO_ITEMS)
+        undetermined = by(_registre.STATE_NOT_ESTABLISHED)
+        if len(spoke) + len(published) + len(missed) + len(undetermined) < 2:
+            return ""
+        items = sum(safe_int(r.get("items_collected")) for r in published)
+        parts = [f'<strong>{len(spoke)}</strong> institution{"s" if len(spoke) != 1 else ""} dans un dossier']
+        if published:
+            parts.append(f'<strong>{len(published)}</strong> {"ont" if len(published) != 1 else "a"} publié hors dossier'
+                         + (f' ({items} articles collectés)' if items else ""))
+        if missed:
+            parts.append(f'<strong>{len(missed)}</strong> collecte{"s" if len(missed) != 1 else ""} manquée{"s" if len(missed) != 1 else ""} par Vigie')
+        if undetermined:
+            parts.append(f'<strong>{len(undetermined)}</strong> non établi{"s" if len(undetermined) != 1 else ""}')
+        summary = " · ".join(parts) + "."
+        ledger_rows = (
+            _row("Dans un dossier", spoke, "sb-spoke")
+            + _row("Publié, hors dossier", published, "sb-published")
+            + _row("Collecte manquée par Vigie", missed, "sb-missed")
+            + _row("Non établi", undetermined, "sb-unknown")
+        )
+        note = ("« Publié, hors dossier » n’est pas un silence : un dossier exige un sujet nommé et deux "
+                "institutions. Une collecte manquée est notre lacune, jamais l’absence d’une institution. ")
+        return (
+            '<section class="silence-bar" id="silence" aria-label="Les voix suivies de cette édition" data-cmdk="Voix des institutions">'
+            '<div class="bar-header"><p class="eyebrow">LES VOIX SUIVIES · MESURÉES, PAS PRÉSUMÉES</p>'
+            f'<p class="bar-summary">{summary}</p></div>'
+            f'<div class="sb-ledger">{ledger_rows}</div>'
+            f'<p class="bar-note fine">{note}'
+            '<a href="/registre.html">Le registre garde la trace scellée ↗</a></p>'
+            '</section>'
+        )
+
+    # Fallback: no register (a failed registre, or a direct render call). Claim
+    # only absence from dossiers, which is the fact the maps actually carry.
     spoke: dict[str, dict] = {}
-    silent: dict[str, dict] = {}
+    absent: dict[str, dict] = {}
     for iss in issues or []:
         if not isinstance(iss, dict):
             continue
@@ -1692,41 +1764,36 @@ def silence_bar(issues: list[dict]) -> str:
                 continue
             name = str(entry.get("institution_name") or "").strip()
             kind = str(entry.get("source_kind") or "").lower()
-            if name and name not in spoke and name not in silent:
-                silent[name] = {"kind": kind, "count": 1}
+            if name and name not in spoke and name not in absent:
+                absent[name] = {"kind": kind, "count": 1}
             elif name and name not in spoke:
-                silent[name]["count"] = silent[name].get("count", 0) + 1
+                absent[name]["count"] = absent[name].get("count", 0) + 1
     n_spoke = len(spoke)
-    n_silent = len(silent)
-    if n_spoke + n_silent < 2:
+    n_absent = len(absent)
+    if n_spoke + n_absent < 2:
         return ""
-    # One measured instrument strip: a ruled ledger line, not a chip cloud.
-    # Spoke names carry a present tick; quiet names sit muted. The count line
-    # is the fact; the names are its evidence; absence is named, never hidden.
-    def _name_list(names: dict, spoken: bool) -> str:
+
+    def _fallback_list(names: dict) -> str:
         out = []
         for name in sorted(names, key=lambda n: n.casefold()):
             official = names[name]["kind"] == "official"
-            mark = "●" if spoken else "·"
             cls = "sb-name sb-official" if official else "sb-name"
             title = " institution officielle" if official else ""
             out.append(f'<li class="{cls}" title="{esc(name)}{title}">{esc(name)}</li>')
         return "".join(out)
 
-    spoke_names = _name_list(spoke, True)
-    quiet_names = _name_list(silent, False)
     return (
-        '<section class="silence-bar" id="silence" aria-label="Qui a parlé, qui n\'a pas parlé" data-cmdk="Qui a parlé">'
-        '<div class="bar-header"><p class="eyebrow">QUI A PARLÉ · QUI N\'A PAS PARLÉ</p>'
+        '<section class="silence-bar" id="silence" aria-label="Les voix suivies de cette édition" data-cmdk="Voix des institutions">'
+        '<div class="bar-header"><p class="eyebrow">LES VOIX SUIVIES · MESURÉES, PAS PRÉSUMÉES</p>'
         f'<p class="bar-summary"><strong>{n_spoke}</strong> institution{"s" if n_spoke != 1 else ""} '
-        f'{"ont" if n_spoke != 1 else "a"} parlé dans les dossiers · '
-        f'<strong>{n_silent}</strong> n\'{"ont" if n_silent != 1 else "a"} pas parlé '
-        'dans cette édition.</p></div>'
+        f'{"dans" if n_spoke != 1 else "dans"} un dossier de cette édition · '
+        f'<strong>{n_absent}</strong> absente{"s" if n_absent != 1 else ""} des dossiers.</p></div>'
         '<div class="sb-ledger">'
-        f'<div class="sb-row sb-spoke"><span class="sb-row-label">Ont parlé</span><ul class="sb-names">{spoke_names}</ul></div>'
-        f'<div class="sb-row sb-quiet"><span class="sb-row-label">N\'ont pas parlé</span><ul class="sb-names">{quiet_names}</ul></div>'
+        f'<div class="sb-row sb-spoke"><span class="sb-row-label">Dans un dossier <span class="sb-n">({n_spoke})</span></span><ul class="sb-names">{_fallback_list(spoke)}</ul></div>'
+        f'<div class="sb-row sb-unknown"><span class="sb-row-label">Absente des dossiers <span class="sb-n">({n_absent})</span></span><ul class="sb-names">{_fallback_list(absent)}</ul></div>'
         '</div>'
-        '<p class="bar-note fine">Absence dans nos flux, pas un silence éditorial prouvé. '
+        '<p class="bar-note fine">Être absent de nos dossiers n’est pas un silence : un dossier exige un sujet '
+        'nommé et deux institutions. État détaillé non établi pour cette édition. '
         '<a href="/registre.html">Le registre garde la trace scellée ↗</a></p>'
         '</section>'
     )
@@ -1758,7 +1825,7 @@ def load_registre_checkpoint() -> dict:
     return {"size": size, "root_short": root[:8], "root_full": root, "edition": edition_line}
 
 
-def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run: dict | None = None, ledger: dict | None = None, roadworks: dict | None = None, media: dict | None = None, anomalies: dict | None = None, edges: dict | None = None, civic: dict | None = None) -> str:
+def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run: dict | None = None, ledger: dict | None = None, roadworks: dict | None = None, media: dict | None = None, anomalies: dict | None = None, edges: dict | None = None, civic: dict | None = None, register: list[dict] | None = None) -> str:
     now = parse_date(generated_at) or datetime.now(timezone.utc)
     rows, excluded = prepare_items(ranked, now)
     rw_html = roadworks_section(roadworks, now, anomalies, edges)
@@ -1817,7 +1884,7 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
     dossier_html = dossiers_section(issues, eligible, edge_streets, edge_issues)
     glance = digest_html(rows, status, ledger, roadworks, issues, now,
                          has_changes=bool(change_html), civic=civic)
-    bar = silence_bar(issues)
+    bar = silence_bar(issues, register)
     reg = load_registre_checkpoint()
     services_fine = (
         "Ces liens ouvrent les services officiels. Les consultations listées plus haut "
@@ -1875,5 +1942,5 @@ def render_brief(ranked: list[dict], generated_at: str, issues: list[dict], run:
 {change_html}
 {dossier_html}
 <section class="services" id="agir" aria-labelledby="services-title"><div class="section-top"><div><p class="eyebrow">L’INFORMATION DEVIENT UTILE</p><h2 id="services-title">Et maintenant ?</h2></div><p class="section-note">Quatre accès directs<br>aux services officiels.</p></div><div class="service-grid">{service_html}</div><p class="fine">{services_fine}</p></section>
-<section class="method" id="methode" aria-labelledby="method-title"><div><p class="eyebrow">LA CONFIANCE SE VÉRIFIE</p><h2 id="method-title">Les sources d’abord.<br>Le jugement vous appartient.</h2><p>Vigie rassemble des titres et des extraits. Il ne réécrit pas l’actualité et ne décide pas de ce qui est vrai à votre place.</p></div><div class="method-grid"><a class="method-card" href="/methode/classement.html"><span class="method-card-kicker">LE CLASSEMENT</span><span class="method-card-title">Comment les articles sont-ils choisis ?</span><span class="method-card-line">Proximité (60 %) + fraîcheur (40 %), moitié moins de poids toutes les 36 heures. Aucun poids pour les clics. {excluded} articles écartés de ce point. Les filtres changent la sélection, jamais l’ordre.</span><span class="method-card-go">Lire la loi du classement ↗</span></a><a class="method-card" href="/methode/sources.html"><span class="method-card-kicker">LES SOURCES</span><span class="method-card-title">D’où viennent les titres ?</span><span class="method-card-line">Une liste finie et publiée de flux — {coverage}. Chaque coupe est consignée avec sa raison, jamais effacée en silence.</span><span class="method-card-go">Voir la liste des sources ↗</span></a><a class="method-card" href="/methode/registre.html"><span class="method-card-kicker">LE REGISTRE</span><span class="method-card-title">Qui a parlé, qui n’a pas parlé.</span><span class="method-card-line">Chaque édition scellée par sha256, chaînée à la précédente. Vérifiable sans compte, sans clé, avec un terminal.</span><span class="method-card-go">La méthode du registre ↗</span></a><a class="method-card" href="/methode/legal.html"><span class="method-card-kicker">MENTIONS LÉGALES</span><span class="method-card-title">Attribution et retrait.</span><span class="method-card-line">Le fondement du point local, l’identité de collecte, et le retrait le jour même si un éditeur le demande.</span><span class="method-card-go">Lire les mentions ↗</span></a><a class="method-card" href="/methode/financement.html"><span class="method-card-kicker">QUI FINANCE VIGIE</span><span class="method-card-title">Le loyer, déclaré.</span><span class="method-card-line">Gratuit ne veut pas dire sans coût. Qui paie la machine — et ce qui n’est jamais à vendre, jamais.</span><span class="method-card-go">Lire le financement ↗</span></a><a class="method-card" href="/methode/vision.html"><span class="method-card-kicker">LA VISION</span><span class="method-card-title">Le serment avant la machine.</span><span class="method-card-line">Ce que Vigie est, et refuse d’être : pas de neutralité vendue, pas de vérité couronnée.</span><span class="method-card-go">Lire la vision ↗</span></a></div><div class="method-details"><details id="couverture"><summary>Quelles sont les limites de la couverture ?</summary><p>{coverage}. Collecte : {date_html(status['at'])}. Un flux peut omettre des articles, être tronqué ou indisponible. Cette liste n’est pas toute l’actualité de Québec.</p><ul class="coverage-list">{source_rows}</ul><a href="/methode/sources.html">Consulter la liste des sources ↗</a></details><details><summary>Mes repères restent-ils privés ?</summary><p>Les articles gardés, votre point de lecture, vos corridors et vos lectures (titres seulement, focus, mots masqués) restent sur cet appareil, dans ce navigateur. Aucun compte, suivi publicitaire ou accès à votre position. Les recherches restent dans la page. Les sites sources ont leurs propres pratiques.</p><p>Les images d’aperçu proviennent des éditeurs (og:image ou média attaché à leur propre flux) : Vigie les récupère au moment de la collecte et les sert depuis ce site — votre navigateur ne contacte aucun éditeur en lisant ce point. Un article dont l’éditeur ne publie pas d’image reste sans image : aucune image n’est inventée.</p><button id="clear-local" type="button" class="js-only">Effacer mes repères sur cet appareil</button><p id="privacy-status" role="status"></p></details><details><summary>Qui finance Vigie ?</summary><p>Le projet est financé à titre personnel, sans publicité et sans commandite. Aucun achat de placement dans le classement : le rang n’est jamais à vendre.</p><a href="/methode/financement.html">Lire le financement déclaré ↗</a></details><details><summary>Explorer le prototype et ses dossiers</summary><p>L’atelier conserve les comparaisons de sources et la méthode expérimentale. Les regroupements sont proposés, les contradictions et l’indépendance des sources ne sont pas établies.</p><a href="/explorer.html">Ouvrir l’atelier de recherche ↗</a></details></div><p class="fine">Toutes les pages méthode : <a href="/methode/index.html">la méthode complète</a> · la même édition pour les machines : <a href="/index.html.md">index.html.md</a>.</p></section></main>
-<footer><a class="wordmark" href="/">vigie<span class="wordmark-dot">.</span></a><p>Un peu plus au courant.<br>Un peu plus libre de votre temps.</p><span>Fait pour Québec.<br>Édition expérimentale.</span><a class="legal-link" href="/methode/legal.html">Mentions légales, attribution et retrait</a><nav class="surfaces" aria-label="Autres formes de cette édition"><span class="eyebrow">LA MÊME ÉDITION, AUTREMENT</span><a href="/registre.html">Le registre <small>qui a parlé, qui n’a pas parlé — scellé</small></a><a href="/affiche.html">L’affiche <small>une feuille à imprimer pour le quartier</small></a><a href="/index.html.md">En Markdown <small>pour les agents et les lecteurs texte</small></a><a href="/explorer.html" hreflang="en">Explorer <small>l’atelier des preuves (anglais)</small></a><a href="/morning.html">Le matin <small>le point ambiant du même magasin</small></a><a href="/partir.html">Avant de partir <small>un écran : vos rues, les entraves, le sceau</small></a><a href="/memoire.html">La mémoire <small>les éditions passées, scellées</small></a></nav></footer><div class="cmdk js-only" id="cmdk" hidden role="dialog" aria-modal="true" aria-labelledby="cmdk-title"><div class="cmdk-panel"><h2 id="cmdk-title" class="sr-only">Recherche rapide</h2><input id="cmdk-input" class="cmdk-input" type="text" role="combobox" aria-expanded="true" aria-controls="cmdk-list" aria-autocomplete="list" placeholder="Chercher un article, coller une URL…" autocomplete="off" maxlength="1000"><ul id="cmdk-list" class="cmdk-list" role="listbox" aria-label="Résultats"></ul><p class="cmdk-hint">Entrée pour ouvrir · Échap pour fermer · Ctrl ou ⌘ + K</p></div></div><div id="toast" role="status" aria-live="polite"></div></body></html>'''
+<section class="method" id="methode" aria-labelledby="method-title"><div><p class="eyebrow">LA CONFIANCE SE VÉRIFIE</p><h2 id="method-title">Les sources d’abord.<br>Le jugement vous appartient.</h2><p>Vigie rassemble des titres et des extraits. Il ne réécrit pas l’actualité et ne décide pas de ce qui est vrai à votre place.</p></div><div class="method-grid"><a class="method-card" href="/methode/classement.html"><span class="method-card-kicker">LE CLASSEMENT</span><span class="method-card-title">Comment les articles sont-ils choisis ?</span><span class="method-card-line">Proximité (60 %) + fraîcheur (40 %), moitié moins de poids toutes les 36 heures. Aucun poids pour les clics. {excluded} articles écartés de ce point. Les filtres changent la sélection, jamais l’ordre.</span><span class="method-card-go">Lire la loi du classement ↗</span></a><a class="method-card" href="/methode/sources.html"><span class="method-card-kicker">LES SOURCES</span><span class="method-card-title">D’où viennent les titres ?</span><span class="method-card-line">Une liste finie et publiée de flux — {coverage}. Chaque coupe est consignée avec sa raison, jamais effacée en silence.</span><span class="method-card-go">Voir la liste des sources ↗</span></a><a class="method-card" href="/methode/registre.html"><span class="method-card-kicker">LE REGISTRE</span><span class="method-card-title">Ce qu’elles ont publié, ce que nous avons manqué.</span><span class="method-card-line">Chaque édition scellée par sha256, chaînée à la précédente. Vérifiable sans compte, sans clé, avec un terminal.</span><span class="method-card-go">La méthode du registre ↗</span></a><a class="method-card" href="/methode/legal.html"><span class="method-card-kicker">MENTIONS LÉGALES</span><span class="method-card-title">Attribution et retrait.</span><span class="method-card-line">Le fondement du point local, l’identité de collecte, et le retrait le jour même si un éditeur le demande.</span><span class="method-card-go">Lire les mentions ↗</span></a><a class="method-card" href="/methode/financement.html"><span class="method-card-kicker">QUI FINANCE VIGIE</span><span class="method-card-title">Le loyer, déclaré.</span><span class="method-card-line">Gratuit ne veut pas dire sans coût. Qui paie la machine — et ce qui n’est jamais à vendre, jamais.</span><span class="method-card-go">Lire le financement ↗</span></a><a class="method-card" href="/methode/vision.html"><span class="method-card-kicker">LA VISION</span><span class="method-card-title">Le serment avant la machine.</span><span class="method-card-line">Ce que Vigie est, et refuse d’être : pas de neutralité vendue, pas de vérité couronnée.</span><span class="method-card-go">Lire la vision ↗</span></a></div><div class="method-details"><details id="couverture"><summary>Quelles sont les limites de la couverture ?</summary><p>{coverage}. Collecte : {date_html(status['at'])}. Un flux peut omettre des articles, être tronqué ou indisponible. Cette liste n’est pas toute l’actualité de Québec.</p><ul class="coverage-list">{source_rows}</ul><a href="/methode/sources.html">Consulter la liste des sources ↗</a></details><details><summary>Mes repères restent-ils privés ?</summary><p>Les articles gardés, votre point de lecture, vos corridors et vos lectures (titres seulement, focus, mots masqués) restent sur cet appareil, dans ce navigateur. Aucun compte, suivi publicitaire ou accès à votre position. Les recherches restent dans la page. Les sites sources ont leurs propres pratiques.</p><p>Les images d’aperçu proviennent des éditeurs (og:image ou média attaché à leur propre flux) : Vigie les récupère au moment de la collecte et les sert depuis ce site — votre navigateur ne contacte aucun éditeur en lisant ce point. Un article dont l’éditeur ne publie pas d’image reste sans image : aucune image n’est inventée.</p><button id="clear-local" type="button" class="js-only">Effacer mes repères sur cet appareil</button><p id="privacy-status" role="status"></p></details><details><summary>Qui finance Vigie ?</summary><p>Le projet est financé à titre personnel, sans publicité et sans commandite. Aucun achat de placement dans le classement : le rang n’est jamais à vendre.</p><a href="/methode/financement.html">Lire le financement déclaré ↗</a></details><details><summary>Explorer le prototype et ses dossiers</summary><p>L’atelier conserve les comparaisons de sources et la méthode expérimentale. Les regroupements sont proposés, les contradictions et l’indépendance des sources ne sont pas établies.</p><a href="/explorer.html">Ouvrir l’atelier de recherche ↗</a></details></div><p class="fine">Toutes les pages méthode : <a href="/methode/index.html">la méthode complète</a> · la même édition pour les machines : <a href="/index.html.md">index.html.md</a>.</p></section></main>
+<footer><a class="wordmark" href="/">vigie<span class="wordmark-dot">.</span></a><p>Un peu plus au courant.<br>Un peu plus libre de votre temps.</p><span>Fait pour Québec.<br>Édition expérimentale.</span><a class="legal-link" href="/methode/legal.html">Mentions légales, attribution et retrait</a><nav class="surfaces" aria-label="Autres formes de cette édition"><span class="eyebrow">LA MÊME ÉDITION, AUTREMENT</span><a href="/registre.html">Le registre <small>ce qu’elles ont publié, ce que nous avons manqué — scellé</small></a><a href="/affiche.html">L’affiche <small>une feuille à imprimer pour le quartier</small></a><a href="/index.html.md">En Markdown <small>pour les agents et les lecteurs texte</small></a><a href="/explorer.html" hreflang="en">Explorer <small>l’atelier des preuves (anglais)</small></a><a href="/morning.html">Le matin <small>le point ambiant du même magasin</small></a><a href="/partir.html">Avant de partir <small>un écran : vos rues, les entraves, le sceau</small></a><a href="/memoire.html">La mémoire <small>les éditions passées, scellées</small></a></nav></footer><div class="cmdk js-only" id="cmdk" hidden role="dialog" aria-modal="true" aria-labelledby="cmdk-title"><div class="cmdk-panel"><h2 id="cmdk-title" class="sr-only">Recherche rapide</h2><input id="cmdk-input" class="cmdk-input" type="text" role="combobox" aria-expanded="true" aria-controls="cmdk-list" aria-autocomplete="list" placeholder="Chercher un article, coller une URL…" autocomplete="off" maxlength="1000"><ul id="cmdk-list" class="cmdk-list" role="listbox" aria-label="Résultats"></ul><p class="cmdk-hint">Entrée pour ouvrir · Échap pour fermer · Ctrl ou ⌘ + K</p></div></div><div id="toast" role="status" aria-live="polite"></div></body></html>'''

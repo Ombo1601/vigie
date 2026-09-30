@@ -111,7 +111,7 @@ class DossierRendering(unittest.TestCase):
         page = brief.render_brief([story()], NOW.isoformat(), [issue()], collection())
         self.assertIn("n’est pas une contradiction", page)
         self.assertIn("pas plusieurs confirmations indépendantes", page)
-        self.assertIn("pas un silence éditorial prouvé", page)
+        self.assertIn("ne veut pas dire muette", page)
         self.assertIn("pas un indicateur de biais", page)
 
     def test_story_desk_shows_face_on_headlines_and_pourquoi(self):

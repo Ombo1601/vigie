@@ -2621,6 +2621,37 @@ def main() -> None:
     )
     # Keep the experimental evidence workbench accessible without making
     # residents learn its vocabulary before reading their local news.
+    #
+    # The record layer is emitted BEFORE the brief on purpose. The front door's
+    # voice strip must read the corrected register; when it re-derived its own
+    # silence union from the dossier maps it published "7 n'ont pas parlé dans
+    # cette édition" while those same feeds had returned 200+ items between
+    # them. One brain, one order: issues -> registre -> every view of it.
+    import affiche
+    import depart
+    import memoire
+    import method_site
+    import recits
+    import registre
+    import substrate
+
+    # Each emitter is independently fail-soft: one fault is printed and the
+    # others still run, so a registre fault can never leave a fresh brief
+    # beside a stale memory/index (the "all seven are fail-soft" house law).
+    def _emit(name, fn):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - diagnosed, never silent
+            print(f"{name}: FAILED ({type(exc).__name__}: {exc}); brief still rendered")
+            return None
+
+    state = _emit("registre", lambda: registre.emit(issues_doc, roadworks))
+    if not isinstance(state, dict):
+        # Registre failed: render the rest from the on-disk (last good) state
+        # instead of skipping every later emitter.
+        state = registre.load_state()
+    register = registre.institution_register(state) if isinstance(state, dict) else []
+
     import resident_brief
 
     store_io.write_text_atomic(
@@ -2631,7 +2662,7 @@ def main() -> None:
         OUT_HTML,
         resident_brief.render_brief(ranked, now.isoformat(), issues, ledger=ledger,
                                     roadworks=roadworks, anomalies=anomalies, edges=edges,
-                                    civic=civic),
+                                    civic=civic, register=register),
     )
     near = sum(1 for c in ranked if section_for(c) == "near")
     prov = sum(1 for c in ranked if section_for(c) == "province")
@@ -2656,34 +2687,10 @@ def main() -> None:
         clustered_at=store_clustered_at,
     )
 
-    # The record layer: the sealed registre (edition chain + voice register),
-    # the machine substrate (llms.txt, Markdown twin, delta) and the printable
-    # affiche. Same stores, no second brain. Idempotent on the collection clock,
-    # so the hourly roads-only re-render never mints a new edition seal. A fault
-    # here is diagnosed and reported; it never blocks the brief.
-    import affiche
-    import depart
-    import memoire
-    import method_site
-    import recits
-    import registre
-    import substrate
-
-    # Each emitter is independently fail-soft: one fault is printed and the
-    # others still run, so a registre fault can never leave a fresh brief
-    # beside a stale memory/index (the "all seven are fail-soft" house law).
-    def _emit(name, fn):
-        try:
-            return fn()
-        except Exception as exc:  # noqa: BLE001 - diagnosed, never silent
-            print(f"{name}: FAILED ({type(exc).__name__}: {exc}); brief still rendered")
-            return None
-
-    state = _emit("registre", lambda: registre.emit(issues_doc, roadworks))
-    if not isinstance(state, dict):
-        # Registre failed: render the rest from the on-disk (last good) state
-        # instead of skipping every later emitter.
-        state = registre.load_state()
+    # The remaining record-layer views. The registre itself was emitted above,
+    # before the brief, so every view here reads the same corrected register.
+    # Idempotent on the collection clock, so the hourly roads-only re-render
+    # never mints a new edition seal.
     _emit("memoire", lambda: memoire.emit(state, issues))
     _emit("substrate", lambda: substrate.emit(ranked, issues, ledger, roadworks, state, now.isoformat()))
     _emit("recits", lambda: recits.emit(issues, ranked, ledger, roadworks, edges))

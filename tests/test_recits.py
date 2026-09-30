@@ -142,7 +142,7 @@ class Emit(unittest.TestCase):
             self.assertIn("Indépendance des sources", page)
             self.assertIn("canonical", page)
             self.assertIn("https://vigieqc.com/dossiers/aa11bb22cc33dd44.html", page)
-            self.assertIn("pas un silence éditorial prouvé", page)
+            self.assertIn("ne veut pas dire muette", page)
             self.assertIn("n’est pas une résolution", page)
 
     def test_index_lists_every_dossier_with_links_and_honesty(self):

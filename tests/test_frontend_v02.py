@@ -229,10 +229,15 @@ class DossierVoicesAndTimeline(unittest.TestCase):
         for name in ("Le Soleil", "Ville de Québec", "Le Devoir", "Hydro-Québec"):
             self.assertIn(name, html)
         self.assertIn("officiel", html)
-        self.assertIn("2 institutions ont parlé", html)
-        self.assertIn("2 n’ont pas parlé", html)
+        # Dossier-scoped wording: this roster is one dossier's voices, and must
+        # never read as an edition-wide claim about who published.
+        self.assertIn("2 institutions dans ce dossier", html)
+        self.assertIn("2 absentes", html)
         self.assertIn("1 article", html)  # the javascript: item is not counted
-        self.assertIn("n’a pas parlé dans cette collecte", html)
+        self.assertIn("absente de ce dossier", html)
+        self.assertNotIn("n’a pas parlé dans cette collecte", html)
+        self.assertNotIn("n’ont pas parlé", html)
+        self.assertIn("ne veut pas dire muette", html)
 
     def test_roster_escapes_and_is_deterministic(self) -> None:
         evil = {
@@ -417,6 +422,74 @@ class MobileAndPWA(unittest.TestCase):
         for needle in ("pointer:coarse", "safe-area-inset", "font-size:16px",
                        "overflow-wrap:anywhere", "min-height:44px"):
             self.assertIn(needle, css)
+
+
+class VoiceStripReadsTheRegister(unittest.TestCase):
+    """The front door's voice strip must not re-derive its own silence claim.
+
+    This strip had no test at all, which is why it kept publishing
+    « 7 n'ont pas parlé dans cette édition » after the registre itself was
+    corrected — the same defect, in a more prominent place.
+    """
+
+    def _register(self) -> list[dict]:
+        import registre
+
+        def row(iid, name, kind, current, items):
+            return {
+                "institution_id": iid, "institution_name": name, "source_kind": kind,
+                "current": current, "items_collected": items, "feeds_ok": 1, "feeds_total": 1,
+                "editions_spoke": 1 if current == registre.STATE_SPOKE else 0,
+                "editions_published_outside_dossiers": 1 if current == registre.STATE_PUBLISHED else 0,
+                "editions_no_items_collected": 0, "editions_collection_gap": 0,
+                "editions_not_established": 0, "editions_measured": 1,
+                "last_spoke": None, "collection_gap_streak": 0,
+            }
+
+        return [
+            row("ville-quebec", "Ville de Québec", "official", registre.STATE_COLLECTION_GAP, None),
+            row("hydro-quebec", "Hydro-Québec", "official", registre.STATE_PUBLISHED, 40),
+            row("gouv-quebec", "Gouvernement du Québec", "official", registre.STATE_PUBLISHED, 10),
+            row("la-presse", "La Presse", "media", registre.STATE_SPOKE, 10),
+            row("le-devoir", "Le Devoir", "media", registre.STATE_SPOKE, 37),
+        ]
+
+    def test_published_institutions_are_never_listed_as_silent(self) -> None:
+        html = brief.silence_bar([], self._register())
+        self.assertIn("Publié, hors dossier", html)
+        self.assertIn("Hydro-Québec", html)
+        self.assertIn("50 articles collectés", html)  # 40 + 10, the proof they published
+        self.assertIn("Collecte manquée par Vigie", html)
+        # The false edition-level claim, in any of its wordings, must be gone.
+        for stale in ("n'ont pas parlé dans cette édition", "n’a pas parlé dans cette édition",
+                      "n'ont pas parlé", "QUI A PARLÉ"):
+            self.assertNotIn(stale, html)
+
+    def test_our_own_gap_is_named_as_ours(self) -> None:
+        html = brief.silence_bar([], self._register())
+        gap_row = html.split('class="sb-row sb-missed"')[1].split("</div>")[0]
+        self.assertIn("Ville de Québec", gap_row)
+        self.assertIn("notre lacune", html)
+
+    def test_without_a_register_it_claims_only_dossier_absence(self) -> None:
+        issue = {
+            "tensions": [{"institution_name": "La Presse", "source_kind": "media",
+                          "items": [{"url": "https://x.example/a"}]}],
+            "silence": {"silent": [{"institution_name": "Hydro-Québec", "source_kind": "official"}]},
+        }
+        html = brief.silence_bar([issue])
+        # Number-agnostic: French agreement makes it "absente"/"absentes".
+        self.assertIn("absente", html)
+        self.assertIn("des dossiers", html)
+        self.assertIn("n’est pas un silence", html)
+        self.assertIn("État détaillé non établi", html)
+        for stale in ("n'ont pas parlé dans cette édition", "n’a pas parlé dans cette collecte"):
+            self.assertNotIn(stale, html)
+
+    def test_strip_is_deterministic_and_collapses_when_thin(self) -> None:
+        self.assertEqual(brief.silence_bar([], self._register()), brief.silence_bar([], self._register()))
+        self.assertEqual(brief.silence_bar([], []), "")
+        self.assertEqual(brief.silence_bar([]), "")
 
 
 if __name__ == "__main__":

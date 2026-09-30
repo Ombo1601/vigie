@@ -60,7 +60,7 @@ def _status_html(iss: dict, ledger_entry: dict | None) -> str:
     chips.append(f'<span class="recit-chip">{brief.esc(brief.NEST_LABELS.get(nest, nest))}</span>')
     spoke = brief.safe_int(iss.get("source_count"))
     chips.append(
-        f'<span class="recit-chip">{"1 institution a parlé" if spoke == 1 else f"{spoke} institutions ont parlé"}</span>'
+        f'<span class="recit-chip">{"1 institution dans ce dossier" if spoke == 1 else f"{spoke} institutions dans ce dossier"}</span>'
     )
     official = brief.safe_int(iss.get("official_voice_count"))
     if official:
@@ -69,7 +69,7 @@ def _status_html(iss: dict, ledger_entry: dict | None) -> str:
         )
     silence = iss.get("silence") if isinstance(iss.get("silence"), dict) else {}
     silent = brief.safe_int(silence.get("silent_count"), len(silence.get("silent") or []))
-    chips.append(f'<span class="recit-chip">{silent} n’ont pas parlé dans cette collecte</span>')
+    chips.append(f'<span class="recit-chip">{silent} absente{"s" if silent != 1 else ""} de ce dossier</span>')
     if iss.get("media_remix"):
         chips.append('<span class="recit-chip developed">reprise médiatique seulement</span>')
     if ledger_entry:
@@ -301,8 +301,8 @@ def render_index(dossiers: list[dict], slug_of: dict[str, str]) -> str:
         silent = brief.safe_int(silence.get("silent_count"), len(silence.get("silent") or []))
         official = brief.safe_int(iss.get("official_voice_count"))
         meta = (
-            "1 institution a parlé" if spoke == 1 else f"{spoke} institutions ont parlé"
-        ) + f" · {silent} n’ont pas parlé dans cette collecte"
+            "1 institution dans ce dossier" if spoke == 1 else f"{spoke} institutions dans ce dossier"
+        ) + f" · {silent} absente{'s' if silent != 1 else ''} de ce dossier"
         if official:
             meta += f" · {official} voix officielle{'s' if official != 1 else ''}"
         tracking = iss.get("tracking") if isinstance(iss.get("tracking"), dict) else {}
@@ -345,7 +345,7 @@ def render_index(dossiers: list[dict], slug_of: dict[str, str]) -> str:
 <main id="dossiers">
 <header class="recit-head"><p class="eyebrow">REGARD CROISÉ — VERSION COMPLÈTE</p>
 <h1 class="recit-title">Tous les dossiers, en entier.</h1>
-<p class="recit-attrib">Chaque dossier de cette édition a sa propre page : toutes les voix, tous les titres tels quels, le suivi de collecte et qui n’a pas parlé.</p></header>
+<p class="recit-attrib">Chaque dossier de cette édition a sa propre page : toutes les voix, tous les titres tels quels, le suivi de collecte et les institutions absentes de ce dossier.</p></header>
 <section class="recit-index"><div class="section-top"><div><h2 class="recit-section-title">Les dossiers de l’édition</h2></div><p class="section-note">{count_note}</p></div>{listing}</section>
 <p class="recit-clock">Un rapprochement n’est pas une contradiction ; plusieurs médias ne sont pas plusieurs confirmations indépendantes. Les pages existent pour l’édition courante seulement.</p>
 </main>
