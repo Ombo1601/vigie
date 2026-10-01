@@ -84,7 +84,7 @@ h2{font-family:var(--serif);font-size:var(--step-3);line-height:1.18;font-weight
 .visit-list .visit-more{font-size:var(--step--2);color:var(--muted);text-decoration:none}
 
 /* ===== Controls & Filters ===== */
-.controls{border-bottom:1px solid var(--line);padding:0 0 18px;margin:0 0 20px}
+.controls{border-bottom:1px solid var(--line);padding:0 0 18px;margin:0 0 20px;flex-wrap:wrap;row-gap:12px;column-gap:22px;align-items:center}
 .view-tabs{display:flex;gap:24px;margin:0 0 16px}
 .view-tabs button{background:none;border:0;padding:8px 0;font-size:13px;font-weight:600;border-bottom:2px solid transparent}
 .view-tabs button[aria-pressed=true]{color:var(--accent);border-bottom-color:var(--accent)}
@@ -435,7 +435,7 @@ footer .surfaces a small{display:block;font-family:var(--sans);font-size:var(--s
 
 /* ===== Spatial sketch ===== */
 .rw-sketch{margin:0 0 18px}
-.rw-sketch svg{display:block;width:100%;height:auto;background:var(--light);border:1px solid var(--line)}
+.rw-sketch svg{display:block;width:100%;height:auto;max-height:340px;background:var(--light);border:1px solid var(--line)}
 .rw-sketch-frame{fill:none;stroke:var(--line)}
 .rw-grid{stroke:var(--line);stroke-opacity:.55;stroke-width:.6}
 .rw-scale{stroke:var(--ink);stroke-width:2}
@@ -844,3 +844,38 @@ footer .surfaces{display:none}
 
 /* ===== Reduced motion ===== */
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{animation:none!important;transition:none!important}}
+
+/* ===== Mobile control stack: the filter bar must never force horizontal scroll =====
+   .controls is a flex row (via .js .js-only); its seven children summed to ~1058px
+   inside a ~449px box at 390px viewports. Stack them, and let the tab/lens rows wrap. */
+@media(max-width:900px){.controls{flex-direction:column;align-items:stretch;row-gap:14px}.view-tabs,.lenses{flex-wrap:wrap;row-gap:8px}}
+@media(max-width:600px){.search-row{grid-template-columns:1fr}.select-label{width:100%}.view-tabs button{flex:1 1 auto;text-align:left}}
+
+/* ===== Fold budget =====
+   The resident's first job is "what changed near me". Measured, the first story
+   sat 77% into the document behind a poster hero, a micro-stat table and two
+   instruments. Order is fixed in the template; this block buys back vertical
+   space so a story card is visible without scrolling on a 900px viewport.
+   Typography keeps its scale elsewhere; only the opening band is compressed. */
+.intro{padding:16px 0 18px;gap:44px;grid-template-columns:1fr 232px}
+.intro h1{font-size:clamp(32px,3.2vw,46px);letter-spacing:-1.8px;line-height:1.06}
+.intro .eyebrow{margin-bottom:10px}
+.intro-text{font-size:var(--step-0);margin-top:10px}
+.intro-shared{font-size:var(--step--1);color:var(--muted);margin-top:8px}
+.edition-note{padding:8px 0}
+.edition-note .compass{width:64px;height:64px;margin-bottom:6px}
+.edition-note .compass svg{width:64px;height:64px}
+.glance-item{padding:9px 0}
+.glance{margin-bottom:6px}
+.brief .section-top{margin-bottom:12px}
+.visit-strip{padding:8px 12px;margin-bottom:12px}
+.controls{padding-bottom:12px;margin-bottom:14px}
+@media(min-width:1500px){.intro{gap:64px;grid-template-columns:1fr 300px;padding-top:22px;padding-bottom:24px}.intro h1{font-size:clamp(40px,3.4vw,56px)}}
+@media(max-width:900px){.intro{gap:28px;grid-template-columns:1fr 210px}}
+@media(max-width:600px){.intro{padding:14px 0}.intro h1{font-size:34px;letter-spacing:-1.4px}.edition-note .compass{display:none}}
+/* Deliberate toolbar rows instead of accidental flex wrapping:
+   [views | on-device lenses] / [search + territory + place] / [themes]. */
+.controls .view-tabs{order:1}
+.controls .lenses{order:2;margin-left:auto}
+.controls .search-row{order:3;flex:1 1 100%}
+.controls .topic-filters{order:4;flex:1 1 100%}
