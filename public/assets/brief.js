@@ -548,6 +548,13 @@
       draw();
     }
   }
+  // On a phone the filter stack measured taller than the news it filters
+  // (~800px before the first story). Collapse it to a disclosure there; on a
+  // wide screen the summary is hidden by CSS and the tools stay visible.
+  var filtersDisc = document.querySelector('.filters');
+  if (filtersDisc && window.matchMedia('(max-width: 900px)').matches) {
+    filtersDisc.removeAttribute('open');
+  }
   // Reveal controls first, then render: a missing shell element in a future
   // edition must leave the static article reading intact, never a dead page.
   document.documentElement.classList.add('js');

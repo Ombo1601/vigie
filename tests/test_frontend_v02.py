@@ -492,5 +492,69 @@ class VoiceStripReadsTheRegister(unittest.TestCase):
         self.assertEqual(brief.silence_bar([]), "")
 
 
+class FoldBudgetAndDisclosure(unittest.TestCase):
+    """The front door's job is to reach the news fast, on any viewport.
+
+    Measured 2026-10-02 at 1440x900: before this work the first story began at
+    913px (below the 805px fold); after, at 670px. On a 485px layout width the
+    stacked filter toolbar consumed ~800px before the first story; it is now a
+    disclosure. These tests pin the structural decisions that bought the space,
+    because none of them is visible in a diff as "the fold got better".
+    """
+
+    def _page(self) -> str:
+        run = {"fetched_at": NOW.isoformat(), "enabled_rss": ["local"],
+               "results": [{"source_id": "local", "ok": True}]}
+        roadworks = {"fetched_at": NOW.isoformat(), "events": [], "counts": {"active": 0}, "diff": {}}
+        issue = {
+            "issue_id": "a", "question": "Q", "sources": ["le-soleil", "ville-quebec"],
+            "source_count": 2, "official_voice_count": 1, "media_remix": False,
+            "geo_focus": ["quebec-city"], "item_count": 2, "evidence": {},
+            "tensions": [
+                {"institution_id": "le-soleil", "institution_name": "Le Soleil", "source_kind": "media",
+                 "items": [{"candidate_id": "1", "title": "T", "url": "https://a.example/1",
+                            "source_name": "Le Soleil", "published_at": NOW.isoformat()}]},
+                {"institution_id": "ville-quebec", "institution_name": "Ville de Québec", "source_kind": "official",
+                 "items": [{"candidate_id": "2", "title": "T2", "url": "https://a.example/2",
+                            "source_name": "Ville de Québec", "published_at": NOW.isoformat()}]},
+            ],
+            "silence": {"silent": [{"institution_id": "hydro-quebec", "institution_name": "Hydro-Québec",
+                                    "source_kind": "official"}],
+                        "silent_count": 1, "enabled_count": 3, "enabled_feed_count": 3},
+        }
+        return brief.render_brief([], NOW.isoformat(), [issue], run=run, roadworks=roadworks)
+
+    def test_news_precedes_every_instrument(self) -> None:
+        page = self._page()
+        self.assertLess(page.index('id="essentiel"'), page.index('id="travaux"'))
+        self.assertLess(page.index('id="travaux"'), page.index('id="silence"'))
+        self.assertLess(page.index('id="stories"'), page.index('id="travaux"'))
+
+    def test_hero_is_one_line_and_the_aside_is_slim(self) -> None:
+        page = self._page()
+        h1 = page.split('<h1 id="intro-title">')[1].split("</h1>")[0]
+        self.assertNotIn("<br>", h1, "the poster hero cost a whole line of fold")
+        self.assertNotIn('class="compass"', page.split("</section>")[0])
+
+    def test_filters_are_a_disclosure_with_a_real_summary(self) -> None:
+        """A details without a summary is an unopenable box on a phone."""
+        page = self._page()
+        self.assertIn('<details class="filters"', page)
+        frag = page.split('<details class="filters"')[1].split("</details>")[0]
+        self.assertIn("<summary>", frag)
+        for ident in ('id="search"', 'id="lens-title"', 'data-topic="all"'):
+            self.assertIn(ident, page)
+        # The lenses stay in the toolbar row, outside the disclosure.
+        self.assertLess(page.index('id="lens-title"'), page.index('<details class="filters"'))
+
+    def test_onboarding_sits_after_the_news_not_before_it(self) -> None:
+        page = self._page()
+        self.assertLess(page.index('id="stories"'), page.index('class="visit-strip'))
+
+    def test_type_floor_survives_on_touch(self) -> None:
+        css = (ROOT / "public" / "assets" / "brief.css").read_text(encoding="utf-8")
+        self.assertIn("@media(pointer:coarse){input,select,textarea{font-size:16px}}", css)
+
+
 if __name__ == "__main__":
     unittest.main()
