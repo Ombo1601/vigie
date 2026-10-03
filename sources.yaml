@@ -1,4 +1,4 @@
-﻿# Vigie — finite source chancellery (v0)
+# Vigie — finite source chancellery (v0)
 # Niche: Quebec City. Nest: city → province → linked world.
 # Rule: every source is named. Cuts are logged. No single court owns the fog.
 # Voice = institution (not RSS feed). Sister feeds share one institution_id.

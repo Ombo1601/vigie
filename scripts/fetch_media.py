@@ -1,4 +1,4 @@
-﻿"""Vigie faces v0.2 - map-scoped publisher faces. Never invent.
+"""Vigie faces v0.2 - map-scoped publisher faces. Never invent.
 
 Fetches og:image / twitter:image only for what the lookout shows:
 Near me, Province/Linked life-hit crown, fight Stage voices.

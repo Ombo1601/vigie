@@ -1,4 +1,4 @@
-﻿"""Vigie v0 — normalize latest raw ingest JSON into StoryCandidates.
+"""Vigie v0 — normalize latest raw ingest JSON into StoryCandidates.
 
 Reads newest ingest outcome for enabled sources; failed/stale feeds stay unavailable.
 Writes append-only snapshot to data/normalized/.
