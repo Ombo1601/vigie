@@ -696,6 +696,8 @@ html{scroll-padding-top:168px}
 }
 @media(min-width:1180px) and (max-width:1439px){#changements{columns:2}}
 @media(min-width:1500px){.rw-sketch svg{max-height:440px}}
+@media(max-width:600px){.rw-sketch svg{max-height:220px}}
+@media(max-width:390px){.rw-sketch svg{max-height:180px}}
 
 /* ===== Mobile responsive ===== */
 @media(max-width:900px){
@@ -798,6 +800,12 @@ footer .surfaces{grid-template-columns:1fr;gap:16px}
 .seal-line{font-size:var(--step--2);gap:12px;padding:7px 12px}
 .seal-hash{display:none}
 }
+@media(max-width:390px){
+.masthead{padding-left:12px;padding-right:12px}
+.masthead nav{gap:8px;font-size:11px}
+.wordmark{font-size:22px}
+.intro h1{font-size:38px}
+}
 
 /* ===== Finger targets ===== */
 @media(pointer:coarse){
@@ -850,6 +858,7 @@ footer .surfaces{display:none}
    inside a ~449px box at 390px viewports. Stack them, and let the tab/lens rows wrap. */
 @media(max-width:900px){.controls{flex-direction:column;align-items:stretch;row-gap:14px}.view-tabs,.lenses{flex-wrap:wrap;row-gap:8px}}
 @media(max-width:600px){.search-row{grid-template-columns:1fr}.select-label{width:100%}.view-tabs button{flex:1 1 auto;text-align:left}}
+@media(max-width:390px){.controls{row-gap:10px}.view-tabs{gap:16px}.topic-filters button{padding:6px 10px;font-size:12px}}
 
 /* ===== Fold budget =====
    The resident's first job is "what changed near me". Measured, the first story
@@ -873,6 +882,7 @@ footer .surfaces{display:none}
 @media(min-width:1500px){.intro{gap:64px;grid-template-columns:1fr 300px;padding-top:22px;padding-bottom:24px}.intro h1{font-size:clamp(40px,3.4vw,56px)}}
 @media(max-width:900px){.intro{gap:28px;grid-template-columns:1fr 210px}}
 @media(max-width:600px){.intro{padding:14px 0}.intro h1{font-size:34px;letter-spacing:-1.4px}.edition-note .compass{display:none}.edition-note,.intro-shared{display:none}}
+@media(max-width:390px){.intro{padding:10px 0}.intro h1{font-size:30px;letter-spacing:-1.2px}}
 /* Deliberate toolbar rows instead of accidental flex wrapping:
    [views | on-device lenses] / [search + territory + place] / [themes]. */
 .controls .view-tabs{order:1}
