@@ -809,7 +809,11 @@ is `off`, printed as a diagnosis.
   the page builder's own filter; the release gate refuses a tree that still
   references a withdrawn item. A voice whose article here was withdrawn reads
   "retiré à la demande de l'éditeur" in the silence panel; a voice withdrawn
-  whole is named nowhere on the event pages.
+  whole is named nowhere on the event pages. The dossier layer (brief,
+  récits, delta-v1, Markdown twin, explorer) re-renders dossiers clustered
+  before the request in the render-only lanes: `takedown.filter_issues` now
+  moves a voice withdrawn whole out of their silence map into `withdrawn`,
+  as a full edition does, so it is never counted "absente de ce dossier".
 - In live mode a fault of the event emitter leaves `/` empty (the previous
   front door is removed before it runs), so the release is refused,
   diagnosed, and the previous production release stays up; setting the
@@ -820,3 +824,60 @@ is `off`, printed as a diagnosis.
   and their `/#travaux` links land on the front door's roadworks block, which
   carries that id). The English mirror of those pages (MIGRATION step 10) is
   not started, so English pages flag them as French-only.
+
+### 19.1 End-to-end proof on the live state (2026-10-06)
+
+A copy of the production state restored on 2026-10-06 (edition
+2026-10-06T00:03Z, 325 candidates, 194 events, 767 declared obstructions of
+which 172 with all lanes closed, collected 02:53Z), per mode: `events.py`,
+`pipeline.py --render-only --stage`, `verify.py` with the data (Windows,
+Python 3.14; nothing deployed).
+
+- **off** is the release of `phase1/base` built without the event stores,
+  byte for byte, except the four published method files this tranche edits
+  (`ranking.md`, `REGISTRE.md`, `methode/classement.html`,
+  `methode/registre.html`) and the manifest. Against `phase1/base` built with
+  the stores (what a full run produced there), off also drops
+  `delta/v2/latest.json`, the llms.txt "Events" section (links to pages
+  nobody served) and delta-v1's deprecation: the defect the switch closes.
+  Same release with or without the stores; same bytes under two
+  `PYTHONHASHSEED` values in live mode (561 of 561 files).
+- **Sizes** (staged files, MB): off 166, 7.54; preview 559, 13.51; live
+  561, 13.60; live with a store replayed from 51 earlier editions (382
+  records: 194 current, 186 permanent, 2 merged) 937, 18.38. Front door
+  44.2 KB (budget 120 KB); largest event page 30.8 KB. The chain (events,
+  render and stage, verify) took 102 s off, 134 s preview, 135 s live; the
+  unit suite is 82 to 87 s of each, staging 2 s off and 12 to 14 s in
+  preview and live.
+- **Pages**: one h1 each, hreflang pairs reciprocal and staged, `noindex`
+  on all 390 preview event pages and none live, sitemap targets staged, no
+  inline style, script or handler on any event page, no external resource;
+  served locally with the headers of `vercel.json`, the front door and an
+  event page log no CSP violation; no horizontal scroll and no overlapping
+  text at 375 and 1280 px on the two front doors and six event pages. No
+  publisher 5-gram (from the 16,984 titles and excerpts of the live edition
+  and the history) on any of the 376 permanent and merged pages; every
+  current page carries some, as it should.
+- **R10** (a source takedown, then the hourly lane's render-only path): no
+  id, URL, title, author or excerpt of the voice in any staged file in any
+  mode; the event pages do not name it.
+- **Hourly lane** (a newer roadworks collection, render-only, pinned
+  clock): the 388 event pages, `qualite.json` and `delta/v2` are unchanged;
+  on the front doors and `latest.json` only the roadworks block and what the
+  ranking derives from the roadworks clock (the ages under "Pourquoi ici ?",
+  `rank_criteria.now`) move, as stated above. The wall clock moves no event
+  file.
+- **Fixed by this proof**: the hour ticks of every event timeline were
+  pinned like out-of-window members (a misplaced hour on all 194 pages, two
+  hours printed at one place on 161); `verify.py` failed after every live render (two checks read
+  the events door as the brief), which would have blocked every release
+  once the switch is live; a voice withdrawn whole stayed "absente de ce
+  dossier" in the dossier layer until the next full edition; the stager
+  wrote three CRLF files on Windows.
+- **Open, not done here**: the brief carries two `style=` attributes (the
+  dossier bar, `--voices`/`--silent`) that its CSP blocks, at `/` today and
+  at `/le-point.html` in live; in the brief's story cards the photo credit
+  overlaps the kicker line by a few pixels; the live front door does not
+  carry `rel="describedby" href="/llms.txt"` (the brief does); staging takes
+  12 to 22 s in preview and live on Windows (about 4 ms per file open), 2 s
+  off.
