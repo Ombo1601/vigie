@@ -702,21 +702,23 @@ class Persist(PersistBase):
         self.assertNotIn(f"upload:{ROLLING}", gh.keys())
 
     def test_confirm_compares_listed_sizes_as_integers(self) -> None:
-        self.baseline()
-        gh = FakeGh(assets=self.published())
-        real = gh.__call__
+        for kind in (str, float):    # an API that lists sizes as "1234" or 1234.0
+            with self.subTest(kind.__name__):
+                self.baseline()
+                gh = FakeGh(assets=self.published())
 
-        def floats(args, timeout):   # an API that lists sizes as 1234.0
-            res = real(args, timeout)
-            if FakeGh.key(args) == "api:release" and res.code == 0:
-                head, body = res.out.split("\r\n\r\n", 1)
-                doc = json.loads(body)
-                for asset in doc["assets"]:
-                    asset["size"] = float(asset["size"])
-                return Result(0, head + "\r\n\r\n" + json.dumps(doc), "")
-            return res
-        result, _ = self.persist(floats)
-        self.assertNotIsInstance(result, Exception)
+                def relisted(args, timeout, real=gh.__call__, kind=kind):
+                    res = real(args, timeout)
+                    if FakeGh.key(args) == "api:release" and res.code == 0:
+                        head, body = res.out.split("\r\n\r\n", 1)
+                        doc = json.loads(body)
+                        for asset in doc["assets"]:
+                            asset["size"] = kind(asset["size"])
+                        return Result(0, head + "\r\n\r\n" + json.dumps(doc), "")
+                    return res
+                result, _ = self.persist(relisted)
+                self.assertNotIsInstance(result, Exception)
+                self.assertIn(ROLLING, gh.assets)
 
     def test_prune_keeps_the_newest_n_and_never_the_rolling_asset(self) -> None:
         self.baseline()
