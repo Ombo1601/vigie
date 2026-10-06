@@ -11,7 +11,7 @@
     "fire engulfs"],
    "unless": ["foret", "forets", "forestier*", "wildfire*", "sopfeu", "vehicule*", "voiture", "camion",
     "autobus", "vehicle*", "car fire", "truck fire", "bateau", "corps incendie", "corps calcine",
-    "body burned", "burned body"]
+    "body burned", "burned body", "reconnaissance des pompiers", "journee nationale de reconnaissance"]
   },
   "fire-forest": {
    "fr": ["feux actifs", "feu de friche", "feux de friches"],
@@ -45,11 +45,14 @@
     "happe par un", "happe par une", "heurte par un", "heurte par une", "heurtee par un",
     "heurtee par une", "renverse par un", "renversee par un", "pieton decede", "pietonne decedee",
     "pieton perd la vie", "pietonne perd la vie", "cycliste decede", "cycliste decedee",
-    "cycliste perd la vie", "pieton fauche", "cycliste fauche", "pietons fauches"],
+    "cycliste perd la vie", "pieton fauche", "cycliste fauche", "pietons fauches",
+    "percute des pietons", "percute # pietons", "percute deux pietons", "percute trois pietons",
+    "percute quatre pietons", "percute cinq pietons", "percute six pietons", "pietons percutes",
+    "camion belier", "voiture belier", "vehicule belier", "fonce dans la foule"],
    "en_strong": ["pedestrian struck", "pedestrian hit", "pedestrian killed", "pedestrian dies",
     "pedestrian injured", "cyclist struck", "cyclist killed", "cyclist hit", "cyclist injured",
     "cyclist dies", "motorcyclist", "hit by a car", "struck by a car", "struck by a vehicle",
-    "hit by a vehicle"],
+    "hit by a vehicle", "ramming attack", "drove into a crowd", "plowed into a crowd", "rammed pedestrians"],
    "strong_weight": 4
   },
   "water-rescue": {
@@ -81,10 +84,10 @@
     "violences conjugales", "sequestre", "sequestration", "harcelement criminel"],
    "fr_strong": ["agression", "agressions", "agresse", "agressee", "agresses", "agresseur", "voies de fait",
     "agression sexuelle", "agressions sexuelles", "attentat a la pudeur", "inconduite sexuelle",
-    "agressees", "attaque a l arme blanche"],
+    "agressees", "attaque a l arme blanche", "viol", "viols", "viol collectif", "viols collectifs"],
    "en": ["brawl", "bar fight", "domestic violence"],
    "en_strong": ["assault", "assaulted", "assaults", "sexual assault", "sexually assaulted",
-    "aggravated assault"]
+    "aggravated assault", "rape", "raped", "gang rape"]
   },
   "shooting-stabbing": {
    "fr": ["arme a feu", "armes a feu", "par balle"],
@@ -744,7 +747,8 @@
    "en_strong": ["festival", "festivals", "summer festival", "winter carnival", "major event", "grand event",
     "street festival", "music festival", "film festival", "folk festival"],
    "unless": ["fair play", "fair share", "fair trade", "fair value", "fairness", "fair price", "fair wage",
-    "fair game", "unfair", "festival offensif", "festival de buts", "festival de points"]
+    "fair game", "unfair", "festival offensif", "festival de buts", "festival de points",
+    "blesse", "blesses", "blessee", "blessees", "percute", "fonce dans", "belier", "injured", "rammed"]
   },
   "sports-event": {
    "fr": ["gardien de but", "tournois", "demi marathon", "course a pied", "cyclisme", "entraineur",

@@ -52,6 +52,12 @@ EXPLICIT = (
     "normalized/latest_candidates.json",
     "normalized/latest_enriched.json",
     "normalized/latest_ranked.json",
+    # The event store (docs/EVENTS.md section 4): ids are minted once and read
+    # back, so without it every CI run would re-mint every id. The current
+    # view travels too, so the roads-only lane can render without re-running
+    # the event builder.
+    "events/store.json",
+    "events/latest_events.json",
 )
 
 
