@@ -839,9 +839,13 @@ def full_timeline(ev_or_members: object, lang: str, *, linked: bool = True) -> s
     w0, w1 = _window([e for _m, e in pts])
     a, b = _axis([min(max(e, w0), w1) for _m, e in pts])
 
+    def at(e: float) -> float:
+        # the axis itself: linear between a and b (an hour tick is where its hour is)
+        return (e - a) / (b - a) * 100
+
     def pos(e: float) -> float:
-        # out-of-window members are pinned to the axis edge, never off it
-        return (min(max(e, w0), w1) - a) / (b - a) * 100
+        # out-of-window members are pinned to the window edge, never off the axis
+        return at(min(max(e, w0), w1))
 
     lanes: list[tuple[str, list[tuple[dict, float]]]] = []
     for m, e in pts:
@@ -886,7 +890,9 @@ def full_timeline(ev_or_members: object, lang: str, *, linked: bool = True) -> s
     tm, i = a, 0
     while tm <= b:
         if i % step == 0:
-            x = pos(tm)
+            # never pinned like a member: the axis is padded beyond the window,
+            # so a pinned tick would print an hour where another one is
+            x = at(tm)
             ticks.append(f'<line class="tl-tickline" x1="{_pct(x)}" x2="{_pct(x)}" y1="0" y2="5"/>'
                          f'<text class="tl-tick" x="{_pct(x)}" y="17" text-anchor="middle">{esc(_tick_label(tm, lang))}</text>')
         tm += 3600.0

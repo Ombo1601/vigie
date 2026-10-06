@@ -433,6 +433,43 @@ class TimelinesAreSvgWithoutStyle(unittest.TestCase):
         self.assertEqual(ck.full_timeline({"members": []}, "fr"), "")
         self.assertEqual(ck.mini_timeline({"members": []}, "fr"), "")
 
+    def test_hour_ticks_sit_on_a_linear_axis(self):
+        """The axis is padded around the event window; the ticks before the
+        first voice were once pinned to its dot like out-of-window members, so
+        two hours were printed at the same place (seen on the live edition:
+        "3 h" and "4 h" both under a 4 h 15 voice)."""
+        def ticks(html):
+            svg = html[html.index('class="tl-ticks"'):]
+            return [(float(x), label) for x, label in
+                    re.findall(r'<text class="tl-tick" x="([\d.]+)%"[^>]*>([^<]*)<', svg)]
+
+        def epoch(m):
+            return ck._epoch(ck._shown_instant(m))
+
+        for ev in [FIRE, BYLAW, EN_ONLY, *VIEWS["events"]]:
+            for lang in ("fr", "en"):
+                html = ck.full_timeline(ev, lang)
+                if not html:
+                    continue
+                marks = ticks(html)
+                xs = [x for x, _label in marks]
+                self.assertEqual(xs, sorted(set(xs)), (ev.get("event_id"), lang, marks))
+                self.assertAlmostEqual(xs[0], 0.0, places=1)
+                gaps = {round(b - a, 1) for a, b in zip(xs, xs[1:])}
+                self.assertLessEqual(max(gaps) - min(gaps), 0.1, (ev.get("event_id"), marks))
+        # a voice at 4 h 15 (Quebec City) sits between the 4 h and 5 h ticks
+        ev = copy.deepcopy(EN_ONLY)
+        ev["members"] = ev["members"][:1]
+        ev["members"][0]["published_at"] = "2026-10-05T08:15:00Z"
+        html = ck.full_timeline(ev, "fr")
+        marks = dict((label, x) for x, label in ticks(html))
+        dot = float(re.search(r'<circle class="tl-hit" cx="([\d.]+)%"', html).group(1))
+        self.assertLess(marks["4 h"], dot)
+        self.assertLess(dot, marks["5 h"])
+        self.assertIn("3 h", marks)
+        self.assertLess(marks["3 h"], marks["4 h"])
+        self.assertIsNotNone(epoch(ev["members"][0]))
+
     def test_single_dot_is_centred_and_tick_labels_follow_the_language(self):
         mini = ck.mini_timeline(EN_ONLY, "fr")
         self.assertIn('cx="50%"', mini)
