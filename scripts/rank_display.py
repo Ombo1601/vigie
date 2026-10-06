@@ -2724,7 +2724,8 @@ def main() -> None:
 
     # Each emitter is independently fail-soft: one fault is printed and the
     # others still run, so a registre fault can never leave a fresh brief
-    # beside a stale memory/index (the "all seven are fail-soft" house law).
+    # beside a stale memory/index (the "all eight are fail-soft" house law;
+    # the eighth, the event surfaces, runs only when the switch is not off).
     def _emit(name, fn):
         try:
             return fn()
