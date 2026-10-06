@@ -1,4 +1,7 @@
-"""eval/graded_matcher.py and eval/lexicon_fr_en.py on invented headlines."""
+"""eval/graded_matcher.py and eval/lexicon_fr_en.py on invented headlines.
+
+Both are now thin layers over the production modules (scripts/event_match.py,
+scripts/event_lexicon.py): the evaluation measures what ships."""
 from __future__ import annotations
 
 import sys
@@ -12,6 +15,8 @@ if str(EVAL) not in sys.path:
 
 import graded_matcher as gm  # noqa: E402
 import lexicon_fr_en as lex  # noqa: E402
+import event_lexicon  # noqa: E402
+import event_match  # noqa: E402
 
 
 def item(i, title, when, lang="fr", summary=""):
@@ -30,6 +35,36 @@ FIRE_ELSEWHERE = item("f4", "Incendie dans un entrepôt de Beauport",
                       "2026-09-20T09:00:00+00:00")
 OLD_FIRE = item("f5", "Incendie dans un entrepôt de Limoilou", "2026-08-01T08:00:00+00:00")
 CORPUS = [FIRE_FR, FIRE_EN, FIRE_FR2, STRIKE, FIRE_ELSEWHERE, OLD_FIRE]
+
+
+class MeasuresWhatShips(unittest.TestCase):
+    def test_eval_uses_the_production_modules(self):
+        self.assertIs(gm.em, event_match)
+        self.assertIs(lex.ENTRIES, event_lexicon.ENTRIES)
+        self.assertIs(lex.WORD_CANON, event_lexicon.WORD_CANON)
+        self.assertIs(gm.ItemFeatures, event_match.ItemFeatures)
+        self.assertIs(gm.PRIOR_WEIGHTS, event_match.PRIOR_WEIGHTS)
+
+    def test_scores_equal_the_production_score(self):
+        m = gm.GradedMatcher(weights=event_match.WEIGHTS, fit=False, guard=True, name="shipped",
+                             thresholds=event_match.THRESHOLDS)
+        m.prepare(CORPUS)
+        ctx = event_match.MatchContext(CORPUS)
+        for a in CORPUS:
+            for b in CORPUS:
+                self.assertEqual(m.score(a, b), event_match.score(a, b, ctx)[0])
+                self.assertEqual(m.tier(a, b), event_match.match(a, b, ctx).tier)
+
+    def test_fit_reproduces_on_identical_input(self):
+        triples = [(FIRE_FR, FIRE_EN, 1), (FIRE_FR, STRIKE, 0), (FIRE_FR, FIRE_ELSEWHERE, 0)]
+        rows = []
+        for _ in range(2):
+            m = gm.GradedMatcher(fit=True, epochs=50)
+            m.prepare(CORPUS)
+            m.fit(triples)
+            rows.append(m.weights)
+        self.assertEqual(rows[0], rows[1])
+        self.assertEqual(set(rows[0]), set(event_match.WEIGHTS))
 
 
 class Lexicon(unittest.TestCase):
@@ -106,9 +141,9 @@ class Matcher(unittest.TestCase):
         self.assertGreater(same_fr, weeks_apart)
 
     def test_explanations_name_the_evidence(self):
-        why = " | ".join(self.m.explain(FIRE_FR, FIRE_EN, top=6))
+        why = " | ".join(self.m.explain(FIRE_FR, FIRE_EN, top=12))
         self.assertIn("Limoilou", why)
-        self.assertIn("60000", why)
+        self.assertIn("60 000 ≙ 60,000", why, "numbers are quoted as each outlet wrote them")
         conflict = " | ".join(self.m.explain(FIRE_FR, FIRE_ELSEWHERE, top=8))
         self.assertIn("different places", conflict)
         far = " | ".join(self.m.explain(FIRE_FR, OLD_FIRE, top=8))
