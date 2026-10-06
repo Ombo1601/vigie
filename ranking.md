@@ -570,3 +570,29 @@ Règle publiée en mots ; le code est `scripts/ranking_events.py`, une fonction 
 **L'étiquette de regroupement suit la qualité mesurée.** Sans échantillon vérifié par des personnes, l'étiquette dit « regroupé automatiquement » avec la précision mesurée, le nombre de paires et qui les a étiquetées (un modèle de langage, pour l'instant). Elle ne dit « certain » que lorsque la précision calculée sur des paires vérifiées par des personnes a une borne basse de 95 % (intervalle de Wilson) sur au moins 73 paires ; un regroupement « possible » n'est jamais une fusion. Les comptes sont publiés dans `qualite.json`.
 
 **Limites connues, dites d'avance.** Les alertes officielles ne sont pas encore une entrée (aucun ancrage d'alerte n'existe) ; les dates de chantier sont comparées à la journée près ; une panne n'a pas de fin déclarée, d'où la règle des 24 heures. Un changement de ces règles s'inscrit ici avant d'entrer en vigueur.
+
+## « Déclaré par les autorités » v1 — d'abord la fenêtre de fraîcheur (2026-10-06)
+
+Règle publiée en mots ; le code est `scripts/evenements.py` (`official_items`). Le bloc liste les communiqués officiels de la collecte qu'aucune carte affichée ne contient ni ne cite comme document officiel, au plus 6, dans cet ordre :
+
+1. **D'abord la fenêtre de fraîcheur de l'édition** : un communiqué est retenu en premier quand son heure de publication déclarée tombe dans les 72 heures qui précèdent l'heure de collecte de l'édition. C'est la même constante que la fenêtre des événements (72 h), pas un nouveau réglage. Une heure absente, invraisemblable, ou postérieure de plus de 6 heures à la collecte (le même seuil que les dates suspectes des événements) n'établit pas la fraîcheur : le communiqué est traité comme hors fenêtre, jamais deviné dedans.
+2. **Puis la portée géographique** proposée par la méthode : Québec, puis le reste du Québec, puis tout le reste (lié ou non situé), un seul groupe.
+3. **Puis la date**, du plus récent au plus ancien, puis l'identifiant, pour qu'un résultat soit toujours le même.
+
+Un communiqué **hors de la fenêtre** ne paraît que s'il reste moins de 6 communiqués dans la fenêtre, dans le même ordre ; il porte alors la mention « hors de la fenêtre de 72 h », et le bloc le dit en toutes lettres (« Trop peu de communiqués datent des 72 dernières heures pour remplir la liste… »). Quand le bloc n'affiche pas tout, il imprime l'ordre appliqué et les comptes réels : combien sont dans la fenêtre (et, parmi eux, combien la méthode situe à Québec, au Québec, ailleurs), combien sont plus anciens ou sans date établie. Il ne dit jamais « les plus récents », ce qu'il n'est pas.
+
+Pourquoi cette règle : un communiqué de la semaine dernière situé à Québec ne doit pas passer devant celui d'hier situé ailleurs ; la fraîcheur d'abord, la portée ensuite, comme pour les événements.
+
+## Journal des changements — surfaces des événements (2026-10-06)
+
+Chaque ligne est une règle calculée à partir d'entrées observables (docs/AUTONOMY.md), publiée ici avant d'entrer en vigueur. Les surfaces des événements sont branchées derrière un commutateur à trois positions (`scripts/surfaces.py` : `off`, `preview`, `live`) ; tant qu'il est sur `off`, aucune de ces règles ne touche une page servie.
+
+| Date | Changement | Où |
+|------|------------|----|
+| 2026-10-06 | **Ordre des événements v1** : critères successifs (ce qui touche le quotidien maintenant, portée géographique, origines de reportage indépendantes, fraîcheur), paliers aux quartiles de l'édition courante, au plus 12 cartes à la médiane ou au-dessus ; chaque carte explique sa place avec les valeurs réelles. | section « Ordre des événements v1 », `scripts/ranking_events.py` |
+| 2026-10-06 | **Étiquette de regroupement** : elle suit la qualité mesurée et publiée (`/qualite.json`) ; sans paires vérifiées par des personnes, elle dit « regroupé automatiquement » ; « certain » seulement quand la borne basse de Wilson à 95 % atteint 0,95 sur au moins 73 paires vérifiées par des personnes. | même section, `ranking_events.tier_chip` |
+| 2026-10-06 | **« Déclaré par les autorités »** : d'abord la fenêtre de fraîcheur de 72 h (la fenêtre des événements), puis la portée, puis la date ; un communiqué plus ancien ne complète la liste que s'il en manque, marqué comme tel. Remplace l'ordre « portée puis date » des versions de travail. | section ci-dessus, `scripts/evenements.py` |
+| 2026-10-06 | **Vocabulaire, table B** : deux portées ajoutées, `elsewhere` (« Hors Québec », sur preuve positive seulement) et `unplaced` (« Lieu non établi », jumeau de lieu de « Événement non classé ») ; l'ancien repli sur `quebec-city` sans preuve est retiré. Chaque code de lieu est affiché avec son libellé partout où il paraît (cartes, fiches, chiffres, `latest.json`). | docs/I18N.md table B, docs/EVENTS.md 17.1 |
+| 2026-10-06 | **Silence d'une voix retirée** : quand l'article d'une voix suivie est retiré à la demande de l'éditeur, la fiche dit « retiré à la demande de l'éditeur », jamais « aucun article lié » ; une voix retirée en entier n'est nommée nulle part sur les pages d'événements. | `scripts/composants.py`, `scripts/evenements.py` |
+| 2026-10-06 | **Agence QMI et autres signatures d'agence** : plus aucun drapeau décidé à la main ; une signature est une dépêche quand une copie qui la porte est vue chez au moins deux propriétaires distincts dans la fenêtre (mesuré à chaque édition) ; la liste fermée (PC/CP, AFP, Reuters, AP) reste un a priori. | `scripts/origin.py`, `scripts/events.py` |
+| 2026-10-06 | **Propriété des sources** : quand le commutateur n'est pas sur `off`, la page des sources décrit la structure de propriété (coopérative, fiducie, organisme sans but lucratif, société d'État, actionnaire unique l'État…) avec sa référence publique et sa date de lecture ; jamais le mot « indépendant ». | `scripts/method_site.py` |

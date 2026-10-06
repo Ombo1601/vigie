@@ -1,6 +1,15 @@
 # MIGRATION.md — from dossiers to events, one shippable step at a time
 
-Status: **plan, Phase 0**. Order matters: each step ships alone, behind tests,
+Status (2026-10-06): steps 0 to 8 are built (tranches A to C). Steps 9, 11
+and 12 are built and **wired behind the switch** `scripts/surfaces.py` (tranche
+D), committed `off`: `preview` is step 9 without a public link (staged,
+`noindex`), `live` is step 11 (the front door switches; the brief moves to
+`/le-point.html`) with step 12's delta-v2 published. Step 10's English record
+layer (registre, mémoire, partir, affiche, méthode in English) and step 13 are
+not started. Section 19 of `docs/EVENTS.md` describes what each position
+serves.
+
+Original plan: **Phase 0**. Order matters: each step ships alone, behind tests,
 and leaves the live brief unchanged until step 9. Every step ends with
 `python -X utf8 scripts/verify.py` green and deploys only through
 `scripts/refresh.py`. Specs: `docs/EVENTS.md`, `docs/I18N.md`, `docs/CHARTE.md`.

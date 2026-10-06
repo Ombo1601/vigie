@@ -1,8 +1,15 @@
 # EVENTS.md — the Event object
 
-Status: **engineering spec, Phase 0** (nothing here is built yet; nothing here
-changes the live pipeline). Companion specs: `docs/I18N.md` (labels, URLs),
-`docs/CHARTE.md` (the public promise), `docs/MIGRATION.md` (build order).
+Status: **built, wired behind a switch, off** (2026-10-06). The event builder
+(`scripts/events.py`) runs in every full edition as a shadow stage; the event
+chain is sealed in the private state only; the event surfaces
+(`scripts/evenements.py`) are wired into the render and the release behind
+the three-position switch of `scripts/surfaces.py`, committed `off`: until the
+founder flips it, the site serves exactly what it served before (section 19).
+Sections 1 to 16 are the original spec; section 17 records where the build
+deviates from it, and why. Companion specs: `docs/I18N.md` (labels, URLs),
+`docs/CHARTE.md` (the public promise), `docs/MIGRATION.md` (build order),
+`docs/AUTONOMY.md` (binding: no editorial choice depends on a person).
 Every example below is invented. No publisher text appears in this file.
 
 ## 1. Why an Event
@@ -587,8 +594,12 @@ span), so a future date never holds an event open.
   from its outlet's own reporting is open to the founder (it would amend
   AUTONOMY's first row).
 - Agence QMI is no longer a founder flag: events.py reads credits (codes
-  only, stored per item as `credits`) and applies the measured rule;
-  origin.py's `AGENCE_QMI_IS_WIRE` is not consulted by the event builder.
+  only, stored per item as `credits`) and applies the measured rule. The
+  flag `AGENCE_QMI_IS_WIRE` is removed from origin.py (tranche D): its
+  `origin_of(item, source, wires)` and `classify_batch(..., wires=...)` follow
+  the same measurement when the caller passes it (`events.measured_wires`),
+  and without one an agency credit outside the closed list is an organisation
+  credit (`unknown`, never own reporting), exactly the former default.
   Measured: 0 bylines credit Agence QMI in the 2,139 history items (the
   459 Journal de Québec items carry no author field), so the rule decides
   nothing today; the closed-list credits seen are cp (cn2i, le-devoir), afp
@@ -759,3 +770,53 @@ Deprecation: once delta-v2 is published, delta-v1 carries
 `deprecation: {status, since, sunset, successor, note}`. `since` is the first
 sealed edition clock at or after 2026-10-06 and `sunset` is 90 days later, so
 the date comes from the chain and does not slide with each render.
+
+"Published" follows the switch of section 19: delta-v2 is written in
+`preview` and `live`, listed in `llms.txt` and announced as delta-v1's
+successor only in `live`, and neither written nor announced while `off`.
+
+## 19. Wiring: the switch (tranche D, 2026-10-06)
+
+`scripts/surfaces.py` holds `EVENTS_SURFACES = "off" | "preview" | "live"`,
+committed `off`. Flipping it is a founder act made by a reviewed commit
+(docs/AUTONOMY.md: approving what production serves is an act, not an
+editorial choice). `VIGIE_EVENTS_SURFACES` overrides it for local runs and
+tests only, never under GitHub Actions; any value other than the three modes
+is `off`, printed as a diagnosis.
+
+| | off | preview | live |
+|---|---|---|---|
+| render (`rank_display`) | no event emitter | `evenements.emit` (noindex) | `evenements.emit` + front door |
+| `/` | the brief | the brief, untouched | the events front door (FR) |
+| `/en/` | — | — | the events front door (EN) |
+| `/le-point.html` | — | — | the brief, canonical updated, linked as the full river |
+| `/evenements.html`, `/en/evenements.html`, event pages | not staged | staged, `noindex, nofollow` | staged, indexable (`/evenements.html` serves the front door with canonical `/`) |
+| `/evenements/latest.json`, `/qualite.json` | not staged | staged | staged |
+| `/delta/v2/latest.json` | not written | written, not listed | written, listed in `llms.txt`, delta-v1 deprecated |
+| sitemap | as before | as before (omits them) | `/`, `/en/` with xhtml hreflang alternates, `/le-point.html` |
+| sources page | as before | + ownership as structure | + ownership as structure |
+| release gate (`stage_public`) | nothing new | required files, hreflang targets, noindex, `/` is the brief, front door ≤ 120 KB | required files, hreflang targets, indexable, `/` is the events door and links the river, the brief's canonical, sitemap targets, front door ≤ 120 KB |
+| `vercel.json` (staged) | the config of before (event rules left out) | full | full |
+
+- The emitter runs in the full edition and in the hourly roads-only
+  re-render alike; it reads the stored view and never runs `events.py`. The
+  roadworks block is refreshed by the lane; with the published ranking, so is
+  what the rule derives from the roadworks and their clock (criterion 1 and
+  the ages printed under "Pourquoi ici ?"); nothing else moves.
+- R10 holds in every mode: `events.apply_takedowns` re-applies the active
+  takedowns to the stored view at every render (it was handed a `Registry` in
+  place of the rules before this tranche and faulted on every takedown), then
+  the page builder's own filter; the release gate refuses a tree that still
+  references a withdrawn item. A voice whose article here was withdrawn reads
+  "retiré à la demande de l'éditeur" in the silence panel; a voice withdrawn
+  whole is named nowhere on the event pages.
+- In live mode a fault of the event emitter leaves `/` empty (the previous
+  front door is removed before it runs), so the release is refused,
+  diagnosed, and the previous production release stays up; setting the
+  switch back to `off` restores the brief at `/` on the next run.
+- Known follow-ups, not done here: the record-layer pages (registre, mémoire,
+  départ, récits, affiche, méthode) still call `/` "Le point"; in live mode it
+  is the events front door and the brief is one link away (the river link,
+  and their `/#travaux` links land on the front door's roadworks block, which
+  carries that id). The English mirror of those pages (MIGRATION step 10) is
+  not started, so English pages flag them as French-only.

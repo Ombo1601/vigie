@@ -131,6 +131,25 @@ the latest record is published in full (`latest_record`); the earlier seals
 are roots. Removed from the feed ≠ ended; the seal records presence, not
 completion.
 
+## The event chain (private until published)
+
+A third chain, `registre-evenements-v1 sha256-chain`, seals the events of each
+edition (codes and counts only: event ids, types, places, institutions,
+languages, member and origin counts, anchor types and refs; never a URL, a
+title, an excerpt, a fact value or a person's name). It lives in the same
+private state file under the key `evenements`, is idempotent per edition clock
+like the main chain, and re-applies an active takedown before it seals. Its
+newest twelve seals keep their record; older ones are compacted to their leaf
+and root, so the chain stays verifiable by hash linkage alone.
+
+**It is state only, and unpublished.** No file under `/registre/` carries it,
+the main chain's records and roots are untouched by it, and no page links it.
+That holds whatever the switch of the event surfaces says (`scripts/surfaces.py`:
+off, preview or live): the event pages show the main-chain seal of the edition
+they belong to, never an event seal. Publishing the event chain is a separate,
+announced change of this method, because a published seal can never be
+rewritten: until then a defect in it costs nothing and can be fixed.
+
 ## What it proves — and does not
 
 - **Proves** that a given edition existed before the next one was sealed, and
