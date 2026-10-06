@@ -8,7 +8,10 @@ all deterministic, all attribution-preserving:
 
   public/llms.txt          curated map for agents (llms.txt v2; rel="describedby")
   public/index.html.md     Markdown twin of the front door (rel="alternate")
-  public/delta/latest.json cursor-addressed edition delta (delta-v1.1)
+  public/delta/latest.json cursor-addressed edition delta (delta-v1.1, deprecated once v2 ships)
+  public/delta/v2/latest.json  the same cursor over events (delta-v2): codes, {fr,en} labels,
+                           counts, tier, activity, anchors, lineage; publisher, author, title and
+                           URL for current-edition members whose source is enabled
 
 House law holds for machines exactly as for people: titles verbatim, publisher
 name, author (when the publisher's feed gives one) and URL on every item, no
@@ -17,11 +20,20 @@ reported as published-outside-dossiers, as a collection gap of ours, or as not
 established. The machine files carry publisher, author, title and URL only:
 no excerpt and no summary, so a machine never receives more of a publisher's
 text than the brief shows a reader. Stdlib only; no network.
+
+Events (delta-v2) are read from stored files only (data/events/latest_events.json,
+data/normalized/latest_enriched.json, sources.yaml, takedowns.yaml), so the hourly
+roads-only lane, which re-renders without collecting, re-applies the takedown
+rules (R10) itself: a withdrawn voice is dropped from the members AND from every
+count, institution list, origin group and anchor derived from it. When the events
+data is absent or not built, delta-v2 is omitted (and a stale one removed) with a
+printed diagnosis, and every other artefact is byte-identical to a build without
+the event layer.
 """
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +53,18 @@ SITE_URL = "https://vigieqc.com"
 OUT_LLMS = ROOT / "public" / "llms.txt"
 OUT_MD = ROOT / "public" / "index.html.md"
 OUT_DELTA = ROOT / "public" / "delta" / "latest.json"
+OUT_DELTA_V2 = ROOT / "public" / "delta" / "v2" / "latest.json"
+EVENTS_VIEW = ROOT / "data" / "events" / "latest_events.json"
+ENRICHED = ROOT / "data" / "normalized" / "latest_enriched.json"
+
+# delta-v2: events. Same cursor (the registre chain root) as delta-v1.
+METHOD_V2 = "delta-v2 edition-cursor"
+EVENTS_VIEW_FORMAT = "events-latest-v1"
+# delta-v1 is deprecated for 90 days from the first sealed edition at or after
+# this instant (an edition clock, never a wall clock), so the sunset date is a
+# fact of the chain and does not slide forward with every render.
+V1_DEPRECATED_FROM = "2026-10-06T00:00:00+00:00"
+V1_SUNSET_DAYS = 90
 
 MD_STORIES_CAP = 24
 MD_DOSSIER_ITEMS_CAP = 6
@@ -335,6 +359,248 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
     }
 
 
+def v1_deprecation(state: dict) -> dict:
+    """The deprecation notice carried inside delta-v1 once delta-v2 is published.
+
+    `since` is the first sealed edition at or after V1_DEPRECATED_FROM (the
+    current edition when the chain has none yet reached it, never earlier than
+    that instant) and `sunset` is 90 days after it: both come from edition
+    clocks, so the date is the same on every render and in every replay."""
+    floor = registre.parse_ts(V1_DEPRECATED_FROM)
+    since = floor
+    for seal in state.get("seals") or []:
+        when = registre.parse_ts(seal.get("edition")) if isinstance(seal, dict) else None
+        if when is not None and when >= floor and (since == floor or when < since):
+            since = when
+    return {
+        "status": "deprecated",
+        "since": f"{since:%Y-%m-%d}",
+        "sunset": f"{since + timedelta(days=V1_SUNSET_DAYS):%Y-%m-%d}",
+        "successor": f"{SITE_URL}/delta/v2/latest.json",
+        "note": (
+            "delta-v1.1 stays unchanged until the sunset date; it describes dossiers, delta-v2 "
+            "describes events (every collected item, any outlet, any language). The cursor is "
+            "the same registre chain root in both."
+        ),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# delta/v2/latest.json — events
+# --------------------------------------------------------------------------- #
+def _events_module():
+    import events  # noqa: PLC0415 - lazy: substrate stays importable without the event layer
+
+    return events
+
+
+def load_events_input(view_path: Path = EVENTS_VIEW, enriched_path: Path = ENRICHED,
+                      reg: object = None) -> tuple[dict | None, str]:
+    """(input, diagnosis) read from stored files only. `input` is None, with the
+    reason, when delta-v2 cannot be built honestly: no events view, a view that
+    was not built, or no takedown/sources registry (R10 fails closed: events
+    carry publisher text, so they are never emitted without the withdrawal rules)."""
+    view = registre.load_json(view_path)
+    if not isinstance(view, dict) or not view:
+        return None, f"events view absent or unreadable ({Path(view_path).name})"
+    if view.get("format") != EVENTS_VIEW_FORMAT or view.get("status") != "ok" \
+            or not isinstance(view.get("events"), list):
+        return None, f"events view not built (status {str(view.get('status') or 'unknown')[:40]})"
+    if reg is None:
+        try:
+            reg = _events_module().Registry.load()
+        except Exception as exc:  # noqa: BLE001 - diagnosed, delta-v2 omitted
+            return None, f"sources/takedowns unreadable ({type(exc).__name__}); R10 cannot be applied"
+    enriched = registre.load_json(enriched_path)
+    candidates = enriched.get("candidates") if isinstance(enriched, dict) else None
+    texts: dict[str, dict] = {}
+    for c in candidates if isinstance(candidates, list) else []:
+        if isinstance(c, dict) and c.get("id"):
+            texts[str(c["id"])] = c
+    return {"view": view, "texts": texts, "reg": reg}, ""
+
+
+def _member_view(row: dict, item: dict | None, reg: object, text_ok: bool) -> dict:
+    """One member: codes always; publisher, author, title and URL only for a
+    current-edition item whose source is enabled (the R1 diet of delta-v1.1,
+    never an excerpt)."""
+    out = {
+        "item_id": str(row["item_id"]),
+        "institution": str(row.get("institution") or ""),
+        "language": str(row.get("language") or ""),
+        "origin_class": str(row.get("origin_class") or "unknown"),
+        "published_at": row.get("published_at") if isinstance(row.get("published_at"), str) else None,
+        "first_seen": str(row.get("first_seen") or ""),
+        "in_edition": False,
+    }
+    if not (text_ok and isinstance(item, dict)):
+        return out
+    url = brief.safe_url(item.get("url"))
+    title = brief.capped_title(item.get("title"))
+    if not url or not title:
+        return out   # a headline never travels without its link
+    rec = getattr(reg, "by_id", {}).get(str(row.get("source_id") or "")) or {}
+    out["in_edition"] = True
+    out["publisher"] = _plain(item.get("source_name") or rec.get("institution_name") or rec.get("name")
+                              or row.get("institution") or "", 120)
+    author = brief.author_of(item)
+    if author:
+        out["author"] = author
+    out["title"] = title
+    out["url"] = url
+    return out
+
+
+def event_v2(e: dict, texts: dict, reg: object) -> dict | None:
+    """One event for machines, or None when no member survives the takedown rules.
+
+    Every count is recomputed from the members that remain: the builder counts
+    a withdrawn member's institution, language and origin until its next full
+    run, and a withdrawn voice is never credited or counted (R10)."""
+    ev = _events_module()
+    in_edition = {str(i) for i in e.get("in_edition") or []}
+    shown: list[dict] = []
+    gone: set[str] = set()
+    for row in e.get("members") or []:
+        if not isinstance(row, dict) or not row.get("item_id"):
+            continue
+        iid = str(row["item_id"])
+        item = texts.get(iid)
+        host = ev.article_host(item.get("url")) if isinstance(item, dict) else ""
+        if reg.withdrawn(row, host) or (isinstance(item, dict) and reg.rules.match_item(item)):
+            gone.add(iid)
+            continue
+        shown.append(row)
+    if not shown:
+        return None
+    ids = [str(r["item_id"]) for r in shown]
+    rows = {str(r["item_id"]): r for r in shown}
+    copies = [p for p in e.get("copies") or [] if isinstance(p, list) and len(p) == 2 and set(p) <= set(ids)]
+    indep = ev.independence(ids, rows, copies)
+    members = [
+        _member_view(r, texts.get(str(r["item_id"])), reg,
+                     str(r["item_id"]) in in_edition and str(r.get("source_id") or "") in reg.enabled)
+        for r in shown
+    ]
+    classes: dict[str, int] = {}
+    for r in shown:
+        key = str(r.get("origin_class") or "unknown")
+        classes[key] = classes.get(key, 0) + 1
+    institutions = sorted({str(r.get("institution") or "") for r in shown} - {""})
+    languages = sorted({str(r.get("language")) for r in shown if r.get("language") in ("fr", "en")})
+    pairs = [p for p in e.get("language_pairs") or [] if isinstance(p, dict)
+             and p.get("fr") in rows and p.get("en") in rows]
+    anchors = sorted(
+        {(str(a.get("type") or ""), str(a.get("ref") or ""))
+         for a in e.get("anchors") or []
+         if isinstance(a, dict) and a.get("type") and a.get("ref")
+         and not (a["type"] in ev.ITEM_ANCHORS and str(a["ref"]) in gone)})
+    lineage = e.get("lineage") if isinstance(e.get("lineage"), dict) else {}
+    eid = str(e["event_id"])
+    label = e.get("label") if isinstance(e.get("label"), dict) else {}
+    return {
+        "event_id": eid,
+        "type": str(e.get("type") or ""),
+        "family": str(e.get("family") or ""),
+        "places": [str(p) for p in e.get("places") or []],
+        "label": {"fr": _plain(label.get("fr"), 120), "en": _plain(label.get("en"), 120)},
+        "activity": str(e.get("activity") or ""),
+        "window_state": str(e.get("window_state") or ""),
+        # The weakest matcher link that grouped the members, as the matcher
+        # measured it. A grouping is automatic: how far to trust it is the
+        # published measure (links.quality), never a word of ours.
+        "tier": (str(e["tier"]) if e.get("tier") and len(ids) > 1 else None),
+        "grouping": "automatic",
+        "born_edition": str(e.get("born_edition") or ""),
+        "last_edition": str(e.get("last_edition") or ""),
+        "counts": {
+            "members": len(ids),
+            "members_in_edition": sum(1 for m in members if m["in_edition"]),
+            "institutions": len(institutions),
+            "reporting_origins": int(indep["reporting_count"]),
+            "origins": int(indep["count"]),
+            "declarations": len(indep["declarations"]),
+            "languages": len(languages),
+            "language_pairs": len(pairs),
+        },
+        "origin_classes": {k: classes[k] for k in sorted(classes)},
+        "institutions": institutions,
+        "languages": languages,
+        "anchors": [{"type": t, "ref": r} for t, r in anchors],
+        "lineage": {
+            "merged_into": str(lineage.get("merged_into") or ""),
+            "absorbed": sorted(str(x) for x in lineage.get("absorbed") or []),
+            "detached": sorted(str(x) for x in lineage.get("detached") or []),
+        },
+        "seals": sorted(int(s) for s in e.get("seals") or [] if isinstance(s, int) and s >= 1),
+        "pages": {"fr": f"{SITE_URL}/evenements/{eid}.html", "en": f"{SITE_URL}/en/evenements/{eid}.html"},
+        "members": members,
+    }
+
+
+def build_delta_v2(view: dict, texts: dict, reg: object, state: dict, status: dict) -> dict:
+    """delta-v2: every event of the current edition, same cursor as delta-v1.
+
+    Events come in event_id order (a deterministic order, not a ranking: Vigie's
+    display order is explained on its own pages); `activity` buckets them."""
+    seals = state.get("seals") or []
+    last = seals[-1] if seals else {}
+    prev = seals[-2] if len(seals) > 1 else {}
+    out_events: list[dict] = []
+    for e in sorted((x for x in view.get("events") or [] if isinstance(x, dict) and x.get("event_id")),
+                    key=lambda x: str(x["event_id"])):
+        built = event_v2(e, texts, reg)
+        if built is not None:
+            out_events.append(built)
+    buckets = {k: [e["event_id"] for e in out_events if e["activity"] == k] for k in ("new", "developed", "quiet")}
+    events_edition = str(view.get("edition") or "")
+    return {
+        "method": METHOD_V2,
+        "site": SITE_URL,
+        "attribution": LICENCE_NOTE_EN,
+        "edition": last.get("edition") or "",
+        "previous_edition": prev.get("edition") or "",
+        "cursor": last.get("root") or "",
+        "previous_cursor": prev.get("root") or last.get("prev") or "",
+        "checkpoint": {"seq": last.get("seq"), "root": last.get("root"), "url": f"{SITE_URL}/registre/checkpoint.txt"} if last else None,
+        "collection": {
+            "at": status.get("at") or "",
+            "feeds_ok": status.get("ok"),
+            "feeds_total": status.get("total"),
+            "partial": bool(status.get("partial")),
+        },
+        # The event layer's own edition clock, stated rather than assumed: when
+        # it differs from `edition`, the events are those of the last full build.
+        "events_edition": events_edition,
+        "events_edition_is_cursor_edition": bool(events_edition) and events_edition == (last.get("edition") or ""),
+        "event_count": len(out_events),
+        "by_activity": buckets,
+        "events": out_events,
+        "links": {
+            "events": f"{SITE_URL}/evenements.html",
+            "events_en": f"{SITE_URL}/en/evenements.html",
+            "events_json": f"{SITE_URL}/evenements/latest.json",
+            "quality": f"{SITE_URL}/qualite.json",
+            "delta_v1": f"{SITE_URL}/delta/latest.json",
+            "brief": f"{SITE_URL}/",
+            "chain": f"{SITE_URL}/registre/chain.json",
+            "sources": f"{SITE_URL}/methode/sources.html",
+            "method": f"{SITE_URL}/methode/registre.html",
+            "legal": f"{SITE_URL}/methode/legal.html",
+        },
+        "rules_for_agents": [
+            "Cite the original publisher (publisher + url) and the author when `author` is present, for every member that carries a title; Vigie is an index, never the author.",
+            LICENCE_NOTE_EN,
+            "Titles are verbatim publisher titles (truncated only), never an excerpt and never translated. Members without `url` carry codes only: their text is not current or their source is no longer followed.",
+            "Events are grouped automatically by published rules. `tier` is the weakest matcher link; `links.quality` publishes how often such groupings were right. Do not read a tier as a confirmation.",
+            "`counts.origins` counts independent origins by rule (shared owner, wire credit, relayed communiqué, near-duplicate text); `counts.declarations` are official statements, never counted as corroboration (`counts.reporting_origins` excludes them).",
+            "`anchors` are pointers to official records found by a named rule; they are never a confirmation.",
+            "An event absent from a later edition has left the collection window; nothing is 'resolved' or 'ended'.",
+            "Verify this edition against registre/chain.json before treating it as a record.",
+        ],
+    }
+
+
 # --------------------------------------------------------------------------- #
 # index.html.md
 # --------------------------------------------------------------------------- #
@@ -460,10 +726,26 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
 # --------------------------------------------------------------------------- #
 # llms.txt
 # --------------------------------------------------------------------------- #
-def render_llms_txt(state: dict, status: dict) -> str:
+def llms_events_section(state: dict) -> str:
+    """The events block of llms.txt, present only when delta-v2 is published."""
+    dep = v1_deprecation(state)
+    return f"""## Events
+
+- [Événements]({SITE_URL}/evenements.html) · [Events]({SITE_URL}/en/evenements.html): one page per real-world event, with every collected article about it, whatever the outlet or language, the origin count, the official-record anchors and the reason it is shown where it is.
+- Event pages: `{SITE_URL}/evenements/<event_id>.html` (French) and `{SITE_URL}/en/evenements/<event_id>.html` (English); the ids are listed in the files below.
+- [Events JSON]({SITE_URL}/evenements/latest.json): the current-edition events, language-neutral (codes, with {{fr, en}} labels).
+- [Delta v2]({SITE_URL}/delta/v2/latest.json): machine-readable edition delta over events (delta-v2) — codes, {{fr, en}} labels, counts (members, institutions, independent origins, languages), tier, activity, anchors (type + ref), lineage, and per current member the publisher, author, title and URL (titles only, no excerpts); cursor = chain root, the same as delta-v1.
+- [Quality]({SITE_URL}/qualite.json): counts only — how many groupings were checked, by whom, and how often they were right.
+- Delta v1 ({SITE_URL}/delta/latest.json) is deprecated since {dep["since"]} and stays unchanged until {dep["sunset"]}.
+
+"""
+
+
+def render_llms_txt(state: dict, status: dict, *, events: bool = False) -> str:
     seals = state.get("seals") or []
     last = seals[-1] if seals else {}
     edition = last.get("edition") or status.get("at") or ""
+    events_block = llms_events_section(state) if events else ""
     return f"""# Vigie
 
 > Vigie is a free, non-commercial lookout for Québec City (French-first). It aggregates a finite, published list of sources, never rewrites them, groups articles into dossiers where several institutions speak, relays the City's official roadworks feed, and keeps a sealed register (sha256 chain) of every edition: what each followed institution published, and what Vigie's own collection missed. Vigie never asserts that an institution was silent — a dossier needs a named subject and two institutions, so absence from dossiers is a property of Vigie's clustering, not of the institution. Judgment stays with the reader.
@@ -478,7 +760,7 @@ Current edition: {edition or "unknown"}. Rules for agents: cite the original pub
 - [Delta]({SITE_URL}/delta/latest.json): machine-readable edition delta (delta-v1.1, additive over delta-v1) — new / developed / quiet dossiers with items, per-institution state with collected item counts, roadworks diff, cursor = chain root.
 - [Dossiers complets (HTML)]({SITE_URL}/dossiers.html): one record page per dossier of the current edition — every voice with every verbatim headline, the collection timeline, and the institutions absent from that dossier.
 
-## Registre
+{events_block}## Registre
 
 - [Checkpoint]({SITE_URL}/registre/checkpoint.txt): origin, chain size, current root, edition stamp.
 - [Chain]({SITE_URL}/registre/chain.json): the sealed editions (records + sha256 leaves and roots); verify with `scripts/registre.py --verify`.
@@ -513,19 +795,55 @@ Current edition: {edition or "unknown"}. Rules for agents: cite the original pub
 # --------------------------------------------------------------------------- #
 # Emit
 # --------------------------------------------------------------------------- #
+_AUTO = object()
+
+
 def emit(ranked: list[dict], issues: list[dict], ledger: dict | None, roadworks: dict | None,
          state: dict, generated_at: str, *, run: dict | None = None,
-         out_llms: Path = OUT_LLMS, out_md: Path = OUT_MD, out_delta: Path = OUT_DELTA) -> None:
+         out_llms: Path = OUT_LLMS, out_md: Path = OUT_MD, out_delta: Path = OUT_DELTA,
+         out_delta_v2: Path = OUT_DELTA_V2, events_input: dict | None | object = _AUTO) -> None:
+    """Write the machine files. `events_input` is {"view", "texts", "reg"} (tests),
+    None (no event layer), or left alone to read the stored files."""
     now = brief.parse_date(generated_at) or datetime.now(timezone.utc)
     run = brief.latest_run() if run is None else run
     status = brief.collection_status(run, now)
     rows = story_rows(ranked, now)
+    if events_input is _AUTO:
+        try:
+            events_input, why = load_events_input()
+        except Exception as exc:  # noqa: BLE001 - fail-soft: delta-v2 omitted, everything else unchanged
+            events_input, why = None, f"{type(exc).__name__}: {exc}"
+    else:
+        why = "no events input"
+    v2 = None
+    if isinstance(events_input, dict):
+        try:
+            v2 = build_delta_v2(events_input["view"], events_input["texts"], events_input["reg"], state, status)
+        except Exception as exc:  # noqa: BLE001 - fail-soft: delta-v2 omitted, everything else unchanged
+            why = f"build failed ({type(exc).__name__}: {exc})"
     for path in (out_llms, out_md, out_delta):
         path.parent.mkdir(parents=True, exist_ok=True)
-    store_io.write_text_atomic(out_llms, render_llms_txt(state, status))
+    store_io.write_text_atomic(out_llms, render_llms_txt(state, status, events=v2 is not None))
     store_io.write_text_atomic(out_md, render_markdown(rows, issues, ledger, roadworks, state, status))
-    store_io.write_json_atomic(out_delta, build_delta(issues, ledger, roadworks, state, status))
-    print(f"substrate: llms.txt, index.html.md ({len(rows)} stories), delta/latest.json -> {out_delta.parent}")
+    delta = build_delta(issues, ledger, roadworks, state, status)
+    if v2 is not None:
+        # delta-v1 is marked deprecated only when its successor is published.
+        delta["deprecation"] = v1_deprecation(state)
+    store_io.write_json_atomic(out_delta, delta)
+    if v2 is not None:
+        out_delta_v2.parent.mkdir(parents=True, exist_ok=True)
+        store_io.write_json_atomic(out_delta_v2, v2)
+        tail = f", delta/v2/latest.json ({v2['event_count']} events)"
+    else:
+        # A stale delta-v2 must never outlive its inputs: it may carry text a
+        # takedown has since withdrawn.
+        try:
+            Path(out_delta_v2).unlink()
+        except OSError:
+            pass
+        tail = ""
+        print(f"substrate: delta-v2 omitted ({why})")
+    print(f"substrate: llms.txt, index.html.md ({len(rows)} stories), delta/latest.json{tail} -> {out_delta.parent}")
 
 
 def main() -> int:
