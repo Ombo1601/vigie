@@ -451,28 +451,49 @@ class Chain(unittest.TestCase):
         self.assertFalse(registre.verify_event_chain(hostile)[0])
         self.assertFalse(registre.verify_event_chain(good, anchor_root="é")[0])
 
-    def test_record_retention_keeps_every_header_and_the_newest_records(self):
+    def test_the_newest_12_seals_stay_full_and_older_ones_keep_leaf_and_root(self):
         state = registre.empty_state()
         total = registre.EVENTS_RECORD_CAP + 3
         heads = []
         for n in range(total):
-            edition = f"2026-09-{1 + n // 4:02d}T{(n % 4) * 6:02d}:00:00+00:00"
+            edition = edition_at(n)
             state, action = seal_view(state, view(edition, [event(f"r{n}")]), edition)
             self.assertEqual(action, "appended")
             heads.append({k: state["evenements"]["seals"][-1][k] for k in ("seq", "edition", "prev", "leaf", "root")})
         seals = state["evenements"]["seals"]
         self.assertEqual(len(seals), total)
         self.assertEqual([("record" in s) for s in seals], [False] * 3 + [True] * registre.EVENTS_RECORD_CAP)
-        # The seal itself never changes when its record is released.
-        self.assertEqual([{k: s[k] for k in ("seq", "edition", "prev", "leaf", "root")} for s in seals], heads)
-        self.assertTrue(all(s["event_count"] == 1 for s in seals))
+        # An older seal is compacted to exactly {leaf, root}: the hashes never change.
+        for n in range(3):
+            self.assertEqual(seals[n], {"leaf": heads[n]["leaf"], "root": heads[n]["root"]})
+        self.assertEqual([{k: s[k] for k in ("seq", "edition", "prev", "leaf", "root")} for s in seals[3:]], heads[3:])
+        self.assertTrue(all(s["event_count"] == 1 for s in seals[3:]))
         ok, msg = registre.verify_event_chain(seals)
         self.assertTrue(ok, msg)
-        self.assertIn(f"{registre.EVENTS_RECORD_CAP} with their record, 3 by hash linkage", msg)
-        # A re-render of the newest edition still confirms.
+        self.assertEqual(msg, f"{total} event seals verified ({registre.EVENTS_RECORD_CAP} with their record, "
+                              f"3 by hash linkage)")
+        # A re-render of the newest edition still confirms, and the chain continues at the right seq.
         last = seals[-1]["edition"]
         state, action = seal_view(state, view(last, [event(f"r{total - 1}")]), last)
         self.assertEqual(action, "confirmed")
+        state, action = seal_view(state, view(edition_at(total), [event("next")]), edition_at(total))
+        self.assertEqual(action, "appended")
+        seals = state["evenements"]["seals"]
+        self.assertEqual((seals[-1]["seq"], seals[-1]["prev"]), (total + 1, heads[-1]["root"]))
+        self.assertEqual(seals[3], {"leaf": heads[3]["leaf"], "root": heads[3]["root"]}, "one more compacted")
+        self.assertTrue(registre.verify_event_chain(seals)[0])
+
+    def test_state_growth_is_bounded_beyond_the_full_seals(self):
+        """Past the newest twelve, each edition adds only a {leaf, root} pair."""
+        state = registre.empty_state()
+        sizes = []
+        for n in range(registre.EVENTS_RECORD_CAP + 6):
+            edition = edition_at(n)
+            state, _ = seal_view(state, view(edition, [event(f"g{n}")]), edition)
+            sizes.append(len(json.dumps(state["evenements"], indent=2)))
+        steps = {b - a for a, b in zip(sizes[registre.EVENTS_RECORD_CAP:], sizes[registre.EVENTS_RECORD_CAP + 1:])}
+        self.assertEqual(len(steps), 1, steps)
+        self.assertLess(steps.pop(), 200, "about one compacted pair of hashes per edition")
 
     def test_a_byte_budget_bounds_the_state_against_a_runaway_view(self):
         """A faulty builder listing thousands of events must not bloat the only
@@ -491,6 +512,147 @@ class Chain(unittest.TestCase):
             self.assertTrue(action.startswith("record-oversized"), action)
             self.assertEqual(snapshot(state), before)
         self.assertTrue(registre.verify_event_chain(state["evenements"]["seals"])[0])
+
+
+def compacted_state(total: int | None = None) -> dict:
+    """A state whose event chain holds compacted seals ahead of the full ones."""
+    state = registre.empty_state()
+    for n in range(total if total is not None else registre.EVENTS_RECORD_CAP + 4):
+        edition = edition_at(n)
+        rec = {"method": registre.METHOD, "edition": edition, "followed": [], "dossiers": [],
+               "ledger": {"has_previous": n > 0, "new": [], "developed": [], "quiet": []}}
+        state, _ = registre.seal_edition(state, rec)
+        state, _ = seal_view(state, view(edition, [event(f"c{n}")]), edition)
+    return state
+
+
+class CompactedChain(unittest.TestCase):
+    """A compacted seal is verified by hash linkage alone; tampering shows."""
+
+    def setUp(self):
+        self.state = compacted_state()
+        self.seals = self.state["evenements"]["seals"]
+        self.assertEqual(sum(1 for s in self.seals if set(s) == {"leaf", "root"}), 4)
+
+    def test_a_compacted_chain_verifies_from_genesis(self):
+        ok, msg = registre.verify_event_chain(self.seals)
+        self.assertTrue(ok, msg)
+        self.assertIn("4 by hash linkage", msg)
+        # The roots are the roots minted at the time: recompute the linkage by hand.
+        prev = ""
+        for s in self.seals:
+            prev = hashlib.sha256((prev + s["leaf"]).encode("ascii")).hexdigest()
+            self.assertEqual(s["root"], prev)
+
+    def test_tampering_with_a_compacted_seal_is_detected(self):
+        cases = {
+            "root mismatch": lambda s: s[1].update(leaf="0" * 64),
+            "malformed leaf": lambda s: s[2].update(leaf="not-hex"),
+            "prev mismatch": lambda s: s[4].update(prev="f" * 64),          # the first full seal
+            "out of order": lambda s: s[4].update(seq=99),
+        }
+        for why, tamper in cases.items():
+            seals = json.loads(json.dumps(self.seals))
+            tamper(seals)
+            ok, msg = registre.verify_event_chain(seals)
+            self.assertFalse(ok, why)
+            self.assertIn(why, msg)
+        dropped = json.loads(json.dumps(self.seals))
+        del dropped[1]                                   # a missing seal breaks the linkage
+        self.assertFalse(registre.verify_event_chain(dropped)[0])
+        extra = json.loads(json.dumps(self.seals))
+        extra[0]["edition"] = E1                          # neither compacted nor a full seal
+        self.assertFalse(registre.verify_event_chain(extra)[0])
+
+    def test_a_chain_cut_at_a_compacted_seal_verifies_from_its_anchor(self):
+        anchor = self.seals[1]["root"]
+        self.assertTrue(registre.verify_event_chain(self.seals[2:], anchor_root=anchor)[0])
+        self.assertFalse(registre.verify_event_chain(self.seals[2:])[0], "without its anchor, no genesis")
+
+    def test_load_state_keeps_compacted_seals_and_the_cli_verifies_them(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "registre.json"
+            registre.store_io.write_json_atomic(path, self.state)
+            loaded = registre.load_state(path)
+            self.assertEqual(loaded["evenements"]["seals"], self.seals)
+            export = Path(tmp) / "export.json"
+            registre.store_io.write_json_atomic(export, registre.evenements_export(loaded))
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(registre.verify_events_cli(export), 0)
+            self.assertIn("OK", out.getvalue())
+
+    def test_legacy_headers_without_records_are_compacted_at_the_next_seal(self):
+        state = compacted_state(3)
+        seals = state["evenements"]["seals"]
+        legacy = [{k: v for k, v in s.items() if k != "record"} for s in seals[:2]] + seals[2:]
+        state["evenements"]["seals"] = legacy
+        self.assertTrue(registre.verify_event_chain(legacy)[0])
+        state, action = seal_view(state, view(edition_at(3), [event("c3")]), edition_at(3))
+        self.assertEqual(action, "appended")
+        self.assertEqual(state["evenements"]["seals"][-1]["seq"], 4)
+        self.assertTrue(registre.verify_event_chain(state["evenements"]["seals"])[0])
+
+    def test_wave_1_witnesses_see_the_same_chains_compacted_or_not(self):
+        """The restore and persist witnesses judge the edition and travaux
+        chains only: compaction of the shadow event chain changes none of
+        their facts, and never trips the persist guard."""
+        full = json.loads(json.dumps(self.state))
+        total = len(self.seals)
+        with mock.patch.object(registre, "EVENTS_RECORD_CAP", total + 1):
+            uncompacted = compacted_state(total)
+        self.assertEqual(len(uncompacted["evenements"]["seals"]), total)
+        self.assertFalse(any(set(s) == {"leaf", "root"} for s in uncompacted["evenements"]["seals"]))
+        with tempfile.TemporaryDirectory() as tmp:
+            a = state_sync.inspect_archive(StateWitnesses.archive(None, Path(tmp) / "a.tar.gz", uncompacted))
+            b = state_sync.inspect_archive(StateWitnesses.archive(None, Path(tmp) / "b.tar.gz", full))
+        for key in ("registre", "seals", "seal_count", "head_seq", "head_root", "travaux", "travaux_seq",
+                    "travaux_root"):
+            self.assertEqual(a[key], b[key], key)
+        witnesses = [state_sync.Witness(state_sync.EDITION, len(full["seals"]), full["seals"][-1]["root"],
+                                        state_sync.ANCHORED)]
+        self.assertEqual(state_sync.judge(b, witnesses).kind, "")
+        baseline = {"seal_count": a["seal_count"], "head_seq": a["head_seq"], "head_root": a["head_root"],
+                    "travaux_seq": a["travaux_seq"], "travaux_root": a["travaux_root"],
+                    "durable_members": a["durable_members"], "durable_bytes": a["durable_bytes"]}
+        self.assertEqual(state_sync.persist_refusals(baseline, b, allow_shrink=False), ([], []),
+                         "compacting the event chain never reads as a shrink of the state")
+        self.assertEqual(registre.checkpoint_text(full), registre.checkpoint_text(uncompacted))
+        self.assertNotIn("evenements", state_sync.sidecar_text("c" * 64, "", witnesses=state_sync.heads(b)))
+
+
+class MemberCountR10(unittest.TestCase):
+    def test_member_count_is_the_rows_present_and_origin_adds_up_to_it(self):
+        ev = rich_view()["events"][2]                    # the fire: four rows
+        gone = ev["members"][1]["item_id"]
+        ev = dict(ev, withdrawn=[gone])
+        ev["members"] = [dict(ev["members"][0], withdrawn=True)] + ev["members"][1:]
+        entry = registre.event_entry(ev)
+        self.assertEqual(entry["member_count"], 2, "a withdrawn member is never counted")
+        self.assertEqual(sum(entry["origin"].values()), entry["member_count"])
+        self.assertLessEqual(entry["independent_count"], entry["member_count"])
+        lean = registre.event_entry({"event_id": ev_id("lean"), "member_count": 4, "independence": {"count": 3}})
+        self.assertEqual((lean["member_count"], lean["origin"]), (4, {"unknown": 4}))
+        nobody = registre.event_entry(dict(ev, members=[], withdrawn=[]))
+        self.assertEqual((nobody["member_count"], nobody["independent_count"], nobody["origin"]), (0, 0, {}))
+
+    def test_an_active_takedown_is_applied_before_sealing(self):
+        import takedown
+        doc = rich_view(E1)
+        url = next(m["url"] for m in doc["events"][2]["members"] if m["institution"] == "cbc")
+        rules = takedown.Rules([{"id": "td-t", "kind": "url", "value": takedown._canon(url) or url,
+                                 "requested_at": "2026-09-10", "by": "CBC", "status": "active"}])
+        with mock.patch.object(takedown, "load_rules", return_value=rules):
+            state, action = registre.seal_events_soft(registre.empty_state(), E1, doc)
+        self.assertEqual(action, "appended")
+        fire = next(e for e in state["evenements"]["seals"][0]["record"]["events"] if e["event_id"] == ev_id("fire"))
+        self.assertNotIn("cbc", fire["institutions"])
+        self.assertEqual(fire["member_count"], 3)
+        self.assertEqual(sum(fire["origin"].values()), 3)
+        # Without an active takedown the view is sealed as it is.
+        state, _ = registre.seal_events_soft(registre.empty_state(), E1, rich_view(E1))
+        fire = next(e for e in state["evenements"]["seals"][0]["record"]["events"] if e["event_id"] == ev_id("fire"))
+        self.assertEqual(fire["member_count"], 4)
 
 
 # --------------------------------------------------------------------------- #

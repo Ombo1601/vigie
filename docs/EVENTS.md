@@ -590,6 +590,28 @@ corridor code, or any atom stored before the guard, never reaches a view.
 Measured on the history: 178 road atoms → 105, with every function word gone
 ("a", "au", "après", "entre", "est", ...).
 
+### 17.6 Event chain (section 12)
+
+- `member_count` is the rows present (withdrawn excluded) and the `origin`
+  counts are counted over the same rows, so they add up to it; a lean view
+  without rows counts its members as `unknown`; `independent_count` above
+  `member_count` is sealed as 0 (not established). `independent_count` keeps
+  this section's meaning (every origin, declarations included); the
+  media-only `reporting_origin_count` is a view field, not sealed, so the
+  record's shape is unchanged.
+- The registre re-applies an active takedown to the stored view before it
+  seals (`events.apply_takedowns`), so a seal minted from a view older than
+  the request never credits the withdrawn voice; a seal already recorded is
+  never rewritten.
+- State growth is bounded: the newest 12 seals stay FULL (header, `dropped`
+  diagnosis and record); every older seal is compacted to `{leaf, root}`. The
+  chain stays verifiable from genesis by hash linkage alone (prev = the root
+  before it, seq = its position, root = sha256(prev || leaf)); the record
+  behind an old leaf is no longer in the private state. Past the newest
+  twelve, an edition adds one pair of hashes (about 170 stored bytes).
+  Compaction changes nothing the restore and persist witnesses judge (they
+  read the edition and travaux chains only).
+
 ### 17.7 Shadow fields
 
 Store and view: `place_votes`, `reporting_origin_count`, `declared_by`,
