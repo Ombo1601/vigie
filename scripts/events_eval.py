@@ -288,16 +288,21 @@ def item_gram_index(items: dict[str, dict]) -> dict[str, set[str]]:
     return index
 
 
-def vigie_grams(root: Path) -> set[str]:
-    """Vigie's own words, which may legitimately appear in sealed records and pages:
-    the subject-label questions sealed in the registre and the vocabulary labels."""
+def vigie_grams() -> set[str]:
+    """Vigie's own words, which a sealed record or permanent page may legitimately
+    print: the scar-locked subject-label questions (code, cluster_issues.SCAR_QUESTIONS)
+    and the vocabulary labels. Built ONLY from code, never from a file this gate
+    scans: a publisher headline frozen into a sealed record as a "label" would
+    otherwise whitelist itself. The set is informational (it names the overlap);
+    it is never subtracted from the hit count."""
     out: set[str] = set()
-    state = _read_json(root / "data" / "registre" / "registre.json")
-    for seal in (state.get("seals") if isinstance(state, dict) else None) or []:
-        rec = seal.get("record") if isinstance(seal, dict) else None
-        for d in (rec.get("dossiers") if isinstance(rec, dict) else None) or []:
-            if isinstance(d, dict) and d.get("label_kind", "subject_label") != "attributed_headline":
-                out |= grams_of(d.get("question"))
+    try:
+        import cluster_issues
+
+        for q in cluster_issues.SCAR_QUESTIONS.values():
+            out |= grams_of(q)
+    except Exception:  # noqa: BLE001  (an unreadable label table only shrinks the overlap report)
+        pass
     try:
         import vocabulaire as voc
 
@@ -308,9 +313,12 @@ def vigie_grams(root: Path) -> set[str]:
         for p in v.get("places", []):
             for lang in ("fr", "en"):
                 out |= grams_of(voc.place_label(p["code"], lang))
-    except Exception:  # noqa: BLE001  (an unreadable vocabulary only shrinks the allow-list)
+    except Exception:  # noqa: BLE001
         pass
     return out
+
+
+MAX_NAME_WORDS = 6
 
 
 def vigie_names(root: Path, items: dict[str, dict]) -> tuple[str, ...]:
@@ -324,7 +332,11 @@ def vigie_names(root: Path, items: dict[str, dict]) -> tuple[str, ...]:
     for it in items.values():
         for key in ("institution_name", "source_name"):
             names.add(folded_text(it.get(key)))
-    return tuple(sorted((n for n in names if len(n) >= 4), key=lambda n: (-len(n), n)))
+    # a name is a few words; a longer "name" in the registre is not an institution
+    # and must not blank publisher text out of the scan (the mask must not be a
+    # way for a scanned file to excuse itself)
+    return tuple(sorted((n for n in names if len(n) >= 4 and len(n.split()) <= MAX_NAME_WORDS),
+                        key=lambda n: (-len(n), n)))
 
 
 def leak_targets(root: Path) -> dict[str, list[Path]]:
@@ -349,18 +361,18 @@ def gate_leak(root: Path, data_dir: Path, targets: dict[str, list[Path]] | None 
     targets = leak_targets(root) if targets is None else targets
     index = item_gram_index(history)
     cur_ids = set(current)
-    allowed = vigie_grams(root)
+    vigie_words = vigie_grams()
     mask = vigie_names(root, history)
     out: dict = {"status": "measured", "gram_words": GRAM_WORDS, "min_gram_chars": MIN_GRAM_CHARS,
                  "min_content_words": MIN_CONTENT_WORDS,
                  "history_items": len(history), "current_items": len(current),
-                 "distinct_item_grams": len(index), "vigie_allowed_grams": len(allowed),
+                 "distinct_item_grams": len(index), "vigie_label_grams": len(vigie_words),
                  "categories": {}}
     scanned_total = hits_total = 0
     for cat in sorted(targets):
         files = [p for p in dict.fromkeys(targets[cat]) if p.is_file()]
         row = {"files_scanned": 0, "files_with_hits": 0, "grams_matched": 0, "items_matched": 0,
-               "items_matched_current": 0, "explained_by_vigie_label": 0}
+               "items_matched_current": 0, "overlap_with_vigie_label": 0}
         matched_items: set[str] = set()
         for path in files:
             try:
@@ -369,9 +381,9 @@ def gate_leak(root: Path, data_dir: Path, targets: dict[str, list[Path]] | None 
                 continue
             row["files_scanned"] += 1
             tg = grams_of(text, mask=mask) & index.keys()
-            explained = tg & allowed
-            tg -= explained
-            row["explained_by_vigie_label"] += len(explained)
+            # nothing is subtracted: a gram that is both a Vigie label and a
+            # publisher 4-gram is a hit, reported with its overlap, never excused
+            row["overlap_with_vigie_label"] += len(tg & vigie_words)
             if tg:
                 row["files_with_hits"] += 1
                 row["grams_matched"] += len(tg)
@@ -390,8 +402,11 @@ def gate_leak(root: Path, data_dir: Path, targets: dict[str, list[Path]] | None 
         out["verdict"] = "not_measurable"
     else:
         out["verdict"] = "met" if hits_total == 0 else "not_met"
+        overlap = sum(r["overlap_with_vigie_label"] for r in out["categories"].values())
+        out["overlap_with_vigie_label"] = overlap
         out["reason"] = ("no publisher 4-gram found in any scanned file" if hits_total == 0
-                         else f"{hits_total} publisher 4-grams found: a record or page carries publisher text")
+                         else f"{hits_total} publisher 4-grams found ({overlap} also a Vigie label word-for-word):"
+                              " a record or page carries publisher text")
     return out
 
 

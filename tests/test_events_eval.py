@@ -194,6 +194,64 @@ class Gate2(unittest.TestCase):
         self.assertEqual(out["categories"]["sealed_records"]["files_with_hits"], 1)
         self.assertEqual(out["verdict"], "not_met")
 
+    def test_a_title_sealed_as_a_subject_label_is_still_a_leak(self):
+        # the allow-list must never come from a scanned record: a publisher
+        # headline frozen into a sealed subject_label question, and printed in a
+        # memoire page, is exactly the regression gate 2 exists to catch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.make(tmp)
+            state = json.loads((root / "data" / "registre" / "registre.json").read_text(encoding="utf-8"))
+            state["seals"] = [{"seq": 1, "record": {"dossiers": [
+                {"label_kind": "subject_label", "question": self.TITLE}]}}]
+            write_json(root / "data" / "registre" / "registre.json", state)
+            sealed_only = self.run_gate(root)
+            (root / "public" / "memoire").mkdir(parents=True)
+            (root / "public" / "memoire" / "1.html").write_text(
+                f"<li>{self.TITLE}</li>", encoding="utf-8")
+            both = self.run_gate(root)
+        self.assertEqual(sealed_only["verdict"], "not_met")
+        self.assertGreater(sealed_only["categories"]["sealed_records"]["grams_matched"], 0)
+        self.assertEqual(both["verdict"], "not_met")
+        self.assertGreater(both["categories"]["permanent_pages"]["grams_matched"], 0)
+        self.assertNotIn("Zorblax", json.dumps(both))
+
+    def test_a_vigie_label_that_is_also_a_publisher_gram_is_surfaced_not_subtracted(self):
+        import cluster_issues
+
+        label = cluster_issues.SCAR_QUESTIONS["tramway"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_store(root, [item("a1", label, "2026-09-20T08:00:00+00:00")])
+            write_json(root / "data" / "registre" / "registre.json", {
+                "method": registre.METHOD, "seals": [], "voice": [], "names": {}})
+            (root / "public" / "memoire").mkdir(parents=True)
+            (root / "public" / "memoire" / "1.html").write_text(f"<h1>{label}</h1>", encoding="utf-8")
+            out = self.run_gate(root)
+        cat = out["categories"]["permanent_pages"]
+        self.assertEqual(out["verdict"], "not_met")
+        self.assertGreater(cat["grams_matched"], 0)
+        self.assertEqual(cat["overlap_with_vigie_label"], cat["grams_matched"])
+
+    def test_a_title_planted_as_an_institution_name_does_not_mask_itself(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.make(tmp)
+            state = json.loads((root / "data" / "registre" / "registre.json").read_text(encoding="utf-8"))
+            state["names"]["x"] = {"name": self.TITLE}
+            write_json(root / "data" / "registre" / "registre.json", state)
+            (root / "public" / "memoire").mkdir(parents=True)
+            (root / "public" / "memoire" / "1.html").write_text(self.TITLE, encoding="utf-8")
+            out = self.run_gate(root)
+        self.assertEqual(out["verdict"], "not_met")
+
+    def test_the_allow_list_is_code_only(self):
+        import cluster_issues
+
+        label_grams = set()
+        for q in cluster_issues.SCAR_QUESTIONS.values():
+            label_grams |= ev.grams_of(q)
+        self.assertTrue(label_grams)
+        self.assertTrue(label_grams <= ev.vigie_grams())
+
     def test_urls_are_not_scanned_and_names_are_masked(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = self.make(tmp)
