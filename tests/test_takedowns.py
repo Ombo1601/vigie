@@ -212,6 +212,52 @@ class Matching(TempRoot):
         self.assertEqual(kept["streets"]["s"]["matched_issue_ids"], ["a"])
         self.assertEqual((list(kept["issues"]), kept["matched_issue_count"]), (["a"], 1))
 
+    def test_a_voice_withdrawn_whole_leaves_the_silence_of_dossiers_clustered_before(self) -> None:
+        """The render-only lanes show dossiers clustered before the request:
+        their silence map listed the voice as absent ("absente de ce
+        dossier"). After the takedown it is neither silent nor followed; it
+        is listed under `withdrawn`, exactly as a full edition lists it."""
+        rules = self.withdraw(entry("s1", "source", "gone", by="Retiré Média"))
+
+        def tension(iid, url):
+            return {"institution_id": iid, "source_kind": "media", "items": [{"source_id": iid, "url": url}]}
+
+        def silent(iid, name):
+            return {"institution_id": iid, "institution_name": name, "source_id": iid, "source_kind": "media"}
+
+        quiet = {"issue_id": "q", "tensions": [tension("keep", "https://news.example/1"),
+                                               tension("sisters", "https://sisters.example/a/1")],
+                 "silence": {"spoke_count": 2, "silent_count": 1, "enabled_count": 3,
+                             "silent": [silent("gone-inst", "Retiré Média")]}}
+        spoke = {"issue_id": "s", "tensions": [tension("keep", "https://news.example/2"),
+                                               tension("sisters", "https://sisters.example/a/2"),
+                                               {"institution_id": "gone-inst", "source_kind": "media",
+                                                "items": [{"source_id": "gone", "url": "https://gone.example/x"}]}],
+                 "silence": {"spoke_count": 3, "silent_count": 0, "enabled_count": 3, "silent": []}}
+        out = takedown.filter_issues([quiet, spoke], rules)
+        self.assertEqual([i["issue_id"] for i in out], ["q", "s"])
+        for iss in out:
+            sil = iss["silence"]
+            self.assertEqual(sil["silent"], [])
+            self.assertEqual(sil["silent_count"], 0)
+            self.assertEqual(sil["enabled_count"], 2)
+            self.assertEqual([w["institution_id"] for w in sil["withdrawn"]], ["gone-inst"])
+            self.assertEqual(sil["withdrawn"][0]["label"], takedown.WITHDRAWN_LABEL_FR)
+            self.assertEqual(sil["withdrawn"][0]["feed_ids"], ["gone"])
+        self.assertEqual(out[1]["silence"]["spoke_count"], 2)
+        self.assertNotIn("gone.example", json.dumps(out))
+        # a dossier stored by a full edition already says so: returned as is
+        again = takedown.filter_issues(out, rules)
+        self.assertIs(again[0], out[0])
+        # an article takedown withdraws no voice: the silence map is untouched
+        article = self.withdraw(entry("u1", "url", "https://news.example/1"))
+        self.assertIs(takedown.filter_issues([spoke], article)[0], spoke)
+        # one sister feed withdrawn does not withdraw the voice
+        sister = self.withdraw(entry("s2", "source", "sister-a"))
+        kept = takedown.filter_issues([quiet], sister)[0]
+        self.assertEqual(kept["silence"]["silent"], quiet["silence"]["silent"])
+        self.assertNotIn("withdrawn", kept["silence"])
+
     def test_withdrawing_the_only_official_voice_recomputes_the_derived_counts(self) -> None:
         rules = self.withdraw(entry("u1", "url", "https://news.example/official"))
 

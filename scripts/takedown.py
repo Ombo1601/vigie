@@ -310,12 +310,54 @@ def filter_items(items: list, rules: Rules | None = None) -> tuple[list, int]:
     return kept, len(items) - len(kept)
 
 
-def filter_issues(issues: list, rules: Rules | None = None) -> list:
+WITHDRAWN_ROW_KEYS = ("institution_id", "institution_name", "source_kind", "feed_ids", "requested_at",
+                      "status", "label")
+
+
+def withdraw_from_silence(iss: dict, withdrawn: dict[str, dict], *, clustered: dict | None = None) -> dict:
+    """The dossier's silence map as a full edition computes it once a whole
+    voice is withdrawn (cluster_issues.silence_map): the withdrawn institution
+    is neither followed nor silent, it is listed under `withdrawn`. The
+    render-only lanes (the hourly roads lane, a re-render) show dossiers
+    clustered BEFORE the request, whose map still counted that voice among the
+    silent ("absente de ce dossier"): a withdrawn voice is never counted, so
+    the map is corrected here. `clustered` is the dossier as stored (default
+    `iss`): a withdrawn voice that spoke there was followed, so it leaves the
+    followed count too. Returns `iss` itself when nothing changes."""
+    silence = iss.get("silence") if isinstance(iss, dict) else None
+    if not withdrawn or not isinstance(silence, dict):
+        return iss
+    raw = silence.get("silent") if isinstance(silence.get("silent"), list) else []
+
+    def gone(row: object) -> bool:
+        return isinstance(row, dict) and str(row.get("institution_id") or row.get("source_id") or "") in withdrawn
+
+    kept = [row for row in raw if not gone(row)]
+    rows = [{k: info.get(k) for k in WITHDRAWN_ROW_KEYS} for _iid, info in sorted(withdrawn.items())]
+    if len(kept) == len(raw) and silence.get("withdrawn") == rows:
+        return iss
+    source = clustered if isinstance(clustered, dict) else iss
+    spoke = {str(t.get("institution_id")) for t in source.get("tensions") or []
+             if isinstance(t, dict) and t.get("institution_id")}
+    counted = (len(raw) - len(kept)) + len(spoke & set(withdrawn))
+    fixed = {**silence, "silent": kept, "silent_count": len(kept), "withdrawn": rows}
+    if isinstance(silence.get("enabled_count"), int) and not isinstance(silence.get("enabled_count"), bool):
+        fixed["enabled_count"] = max(0, silence["enabled_count"] - counted)
+    return {**iss, "silence": fixed}
+
+
+def filter_issues(issues: list, rules: Rules | None = None, *,
+                  withdrawn: dict[str, dict] | None = None) -> list:
     """Dossiers without withdrawn articles. A dossier labelled by a withdrawn
-    headline, or left with fewer than two institutions, is dropped whole."""
+    headline, or left with fewer than two institutions, is dropped whole.
+    A voice withdrawn whole (`withdrawn`: withdrawn_institutions(rules) when
+    None) leaves every silence map (withdraw_from_silence)."""
     rules = rules if rules is not None else load_rules()
     if not rules or not isinstance(issues, list):
         return issues
+    if withdrawn is None:
+        # only a source or a domain entry can withdraw a whole voice
+        withdrawn = withdrawn_institutions(rules) if (rules.sources or rules.hosts) else {}
     out: list = []
     for iss in issues:
         if not isinstance(iss, dict):
@@ -335,7 +377,7 @@ def filter_issues(issues: list, rules: Rules | None = None) -> list:
         if len(voices) < 2:
             continue
         if tensions == [t for t in iss.get("tensions") or [] if isinstance(t, dict)]:
-            out.append(iss)
+            out.append(withdraw_from_silence(iss, withdrawn))
             continue
         feeds = sorted({str(it.get("source_id")) for t in tensions for it in t["items"]
                         if isinstance(it, dict) and it.get("source_id")})
@@ -346,7 +388,9 @@ def filter_issues(issues: list, rules: Rules | None = None) -> list:
                    "official_voice_count": official, "media_remix": official == 0}
         if silence is not None:
             rebuilt["silence"] = {**silence, "spoke_count": len(voices)}
-        out.append(rebuilt)
+        # judged against the dossier as clustered, so a withdrawn voice that
+        # spoke there leaves the followed count too
+        out.append(withdraw_from_silence(rebuilt, withdrawn, clustered=iss))
     return out
 
 
