@@ -1339,6 +1339,11 @@ def _rw_sketch(rw: dict, events: list[dict]) -> str:
     )
 
 
+def _stale_phrase(age: float) -> str:
+    """Why a collection stamp is flagged: genuinely old, or a stamp from the future."""
+    return "plus de six heures" if age > 6 * 3600 else "horodatage incohérent"
+
+
 def roadworks_section(rw: dict | None, now: datetime, anomalies: dict | None = None,
                       edges: dict | None = None) -> str:
     """Official road obstructions — structured change data, never articles.
@@ -1361,7 +1366,8 @@ def roadworks_section(rw: dict | None, now: datetime, anomalies: dict | None = N
     events = [e for e in events if isinstance(e, dict) and e.get("event_id")]
     diff = rw.get("diff") if isinstance(rw.get("diff"), dict) else {}
     has_previous = bool(diff.get("has_previous"))
-    stale = (now - fetched).total_seconds() > 6 * 3600 or (now - fetched).total_seconds() < -300
+    rw_age = (now - fetched).total_seconds()
+    stale = rw_age > 6 * 3600 or rw_age < -300
     # Stable three-pass sort: severity first, then most recently updated, then id.
     ordered = sorted(events, key=lambda e: str(e.get("event_id")))
     ordered.sort(key=lambda e: str(e.get("update_date") or ""), reverse=True)
@@ -1442,8 +1448,9 @@ def roadworks_section(rw: dict | None, now: datetime, anomalies: dict | None = N
                 "pas une vérification sur le terrain.</span></p>"
             )
     stale_html = (
-        '<p class="rw-stale warning">Collecte à actualiser : ces données ont plus de six '
-        "heures. Vérifiez la carte officielle avant de partir.</p>" if stale else ""
+        '<p class="rw-stale warning">Collecte à actualiser : ces données ont '
+        f"{'plus de six heures' if rw_age > 6 * 3600 else 'un horodatage incohérent'}. "
+        "Vérifiez la carte officielle avant de partir.</p>" if stale else ""
     )
     institution = esc(str(rw.get("institution_name") or "Ville de Québec").strip())
     dataset = safe_url(rw.get("dataset_url"))
@@ -1491,7 +1498,7 @@ def civic_section(store: dict | None, now: datetime) -> str:
         count_note = "Aucune consultation<br>listée cette collecte."
     age = (now - fetched).total_seconds()
     stale_html = (
-        '<p class="fine">Collecte à actualiser : plus de six heures se sont écoulées ; la Ville a pu modifier le calendrier depuis.</p>'
+        f'<p class="fine">Collecte à actualiser : {_stale_phrase(age)} ; la Ville a pu modifier le calendrier depuis.</p>'
         if age > 6 * 3600 or age < -300 else ""
     )
     diff = store.get("diff") if isinstance(store.get("diff"), dict) else {}
@@ -1686,7 +1693,7 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
             if active or stale:
                 text = (f"<strong>{active}</strong> entrave{'s' if active != 1 else ''} "
                         f"déclarée{'s' if active != 1 else ''} par la Ville"
-                        + (", collecte de plus de six heures." if stale else " dans la dernière collecte."))
+                        + (f", collecte : {_stale_phrase(age)}." if stale else " dans la dernière collecte."))
                 items.append(_glance_item("Travaux", text, "#travaux"))
     civic_fetched = parse_date(civic.get("fetched_at")) if isinstance(civic, dict) else None
     if (isinstance(civic, dict) and civic.get("method") == "civic-html-v1"
@@ -1702,12 +1709,12 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
             text = (
                 f"<strong>{civic_n}</strong> consultation{'s' if civic_n != 1 else ''} "
                 f"listée{'s' if civic_n != 1 else ''} par la Ville"
-                + (", collecte de plus de six heures." if civic_stale else " dans la dernière collecte.")
+                + (f", collecte : {_stale_phrase(civic_age)}." if civic_stale else " dans la dernière collecte.")
             )
         else:
             text = (
                 "Aucune consultation listée par la Ville"
-                + (", collecte de plus de six heures." if civic_stale else " dans cette collecte.")
+                + (f", collecte : {_stale_phrase(civic_age)}." if civic_stale else " dans cette collecte.")
             )
         items.append(_glance_item("Consultations", text, "#participation"))
     if has_changes and isinstance(ledger, dict) and ledger.get("has_previous"):

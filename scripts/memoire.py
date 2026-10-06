@@ -235,9 +235,8 @@ def render_edition(seal: dict, names: dict, *, prev_seq: int | None, next_seq: i
     )
 
 
-def _correction_note(seals: list[dict]) -> str:
-    """The affected seal range, derived from the chain shown here, never hard-coded."""
-    c = registre.correction_notice({"seals": seals})
+def _correction_note(c: dict | None) -> str:
+    """The affected seal range, as derived from the FULL chain (never the public window)."""
     if not c:
         return ""
     lo, hi, first = c["affects_seal_min"], c["affects_seal_max"], c.get("first_seal_with_facts")
@@ -249,7 +248,8 @@ def _correction_note(seals: list[dict]) -> str:
     )
 
 
-def render_index(seals: list[dict], names: dict, *, total: int | None = None) -> str:
+def render_index(seals: list[dict], names: dict, *, total: int | None = None,
+                correction: dict | None = None) -> str:
     items = []
     for seal in sorted(seals, key=lambda s: _safe_int(s.get("seq")), reverse=True):
         record = seal.get("record") if isinstance(seal.get("record"), dict) else {}
@@ -307,7 +307,7 @@ def render_index(seals: list[dict], names: dict, *, total: int | None = None) ->
         "texte d’éditeur, aucun verdict — la chaîne des éditions, édition par édition.</p></header>"
         f'<p class="section-note">{note}</p>'
         f"{listing}"
-        f'{_correction_note(seals)}'
+        f'{_correction_note(correction)}'
         '<p class="fine">La vérification reste dans <a href="/registre.html">le registre</a> : '
         'chaque racine se recalcule avec sha256, sans compte ni clé.</p>'
     )
@@ -325,6 +325,7 @@ def emit(state: dict, issues: list[dict] | None = None, *, out_index: Path = OUT
         if isinstance(s, dict) and isinstance(s.get("record"), dict) and s.get("record")
     ]
     published = seals[-PUBLIC_CAP:]
+    correction = registre.correction_notice(state if isinstance(state, dict) else {})
     names = (state or {}).get("names") if isinstance(state, dict) else {}
     names = names if isinstance(names, dict) else {}
     current_routes: dict[str, str] = {}
@@ -350,7 +351,7 @@ def emit(state: dict, issues: list[dict] | None = None, *, out_index: Path = OUT
                 stale.unlink()
             except OSError:
                 pass
-    store_io.write_text_atomic(out_index, render_index(published, names, total=len(seals)))
+    store_io.write_text_atomic(out_index, render_index(published, names, total=len(seals), correction=correction))
     print(f"memoire: {len(written)} edition(s) lisibles -> {out_index}")
     return {"method": METHOD, "editions": len(written)}
 

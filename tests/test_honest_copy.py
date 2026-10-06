@@ -5,6 +5,8 @@ cannot keep.
 from __future__ import annotations
 
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -19,8 +21,23 @@ ROOT = Path(__file__).resolve().parent.parent
 SEAL_RANGE = re.compile(r"(?:seals?|sceaux|sceau)\s+(?:n°\s*)?\d+\s*(?:–|-|à|to)\s*\d+", re.I)
 
 
+CADENCE = re.compile(r"\b(?:runs?|refresh(?:es)?)\s+(?:\*\*)?(?:every|hourly)|\bevery 6 h\)|\ban hourly `\.github|, hourly\)", re.I)
+
+
+def _tracked_markdown():
+    try:
+        out = subprocess.run(["git", "ls-files", "*.md"], cwd=ROOT, capture_output=True,
+                             text=True, check=True, timeout=30).stdout.split()
+        paths = [ROOT / n for n in out if (ROOT / n).is_file()]
+        if paths:
+            return sorted(paths)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return sorted(ROOT.glob("*.md"))  # fallback: the published root list
+
+
 def _prose_files():
-    yield from sorted(ROOT.glob("*.md"))
+    yield from _tracked_markdown()
     yield from sorted((ROOT / "scripts").glob("*.py"))
 
 
@@ -42,9 +59,22 @@ class SealRangeIsDerived(unittest.TestCase):
         state = {"seals": [seal(1, False), seal(2, False), seal(3, True), seal(4, True)]}
         c = registre.correction_notice(state)
         self.assertEqual((c["affects_seal_min"], c["affects_seal_max"], c["first_seal_with_facts"]), (1, 2, 3))
-        self.assertIn("n° 1 à 2", memoire._correction_note(state["seals"]))
-        self.assertIn("n° 3", memoire._correction_note(state["seals"]))
+        self.assertIn("n° 1 à 2", memoire._correction_note(c))
+        self.assertIn("n° 3", memoire._correction_note(c))
         self.assertIsNone(registre.correction_notice({"seals": [seal(3, True)]}))
+
+    def test_index_range_comes_from_full_chain_not_public_window(self):
+        def seal(seq):
+            record = {"collection": {"x": {"items": 1}}} if seq > 48 else {"dossiers": []}
+            return {"seq": seq, "edition": "2026-10-01T12:00:00+00:00", "record": record}
+
+        state = {"seals": [seal(n) for n in range(1, 206)]}
+        row = {"spoke": [], "published": [], "no_items": [], "collection_gap": [], "not_established": []}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(registre, "voice_row", return_value=row):
+            tmp = Path(tmp)
+            memoire.emit(state, [], out_index=tmp / "index.html", out_dir=tmp / "m")
+            page = (tmp / "index.html").read_text(encoding="utf-8")
+        self.assertIn("n° 1 à 48", page)
 
 
 class NoItemsIsNotAGap(unittest.TestCase):
@@ -87,8 +117,8 @@ class CadenceIsNotPromised(unittest.TestCase):
     def test_docs_do_not_state_a_fixed_cadence(self):
         for name in ("README.md", "AGENTS.md", "TECHNICAL_PROCESS.md"):
             text = (ROOT / name).read_text(encoding="utf-8")
-            for bad in ("every 6 h)", "runs every\n6 hours", "runs **hourly**", "an hourly `.github", "(`vigie-roads.yml`, hourly)"):
-                self.assertNotIn(bad, text, f"{name}: unqualified cadence {bad!r}")
+            for m in CADENCE.finditer(re.sub(r"\s+", " ", text)):
+                self.fail(f"{name}: unqualified cadence {m.group(0)!r}")
             self.assertIn("scheduled about", text, name)
 
 

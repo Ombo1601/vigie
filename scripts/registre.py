@@ -962,6 +962,8 @@ def render_registre_html(state: dict) -> str:
             f'<p>{esc(correction["now"])}</p>'
             f'<p class="fine">{esc(correction["chain"])} Correction du {_date(correction["corrected_at"])} · '
             f'{correction["affects_count"]} sceau{"s" if correction["affects_count"] != 1 else ""} concerné{"s" if correction["affects_count"] != 1 else ""} · '
+            + (f'premier sceau avec mesure de collecte : n° {correction["first_seal_with_facts"]} · '
+               if correction.get("first_seal_with_facts") else "") +
             'méthode : <a href="/methode/registre.html">la méthode du registre</a>.</p>'
             '</section>'
         )
