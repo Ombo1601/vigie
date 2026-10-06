@@ -190,6 +190,12 @@ def institution_collection(source_status: object, sources_path: Path = SOURCES_P
     definition in the codebase — a register that collapsed feeds differently
     from the clustering would be wrong in a new way.
 
+    The feeds measured are the ones this edition's own collection followed (the
+    keys of its source_status); the registry only maps them to institutions.
+    A later cut (enabled: false) or takedown therefore never changes the facts
+    of an edition collected before it, so re-rendering that edition reproduces
+    its published seal byte for byte instead of diverging.
+
     Fail-soft: any problem yields {} and the register reports the state as not
     established rather than guessing.
     """
@@ -199,7 +205,11 @@ def institution_collection(source_status: object, sources_path: Path = SOURCES_P
         import cluster_issues  # noqa: PLC0415 - lazy: keeps the module import cheap
         import ingest_rss  # noqa: PLC0415
 
-        chancellery = ingest_rss.load_enabled_rss(Path(sources_path))
+        followed = {str(fid) for fid in source_status}
+        chancellery = [
+            rec for rec in ingest_rss.load_sources(Path(sources_path))
+            if rec.get("type") == "rss" and str(rec.get("id")) in followed
+        ]
         institutions = cluster_issues.collapse_institutions(chancellery)
     except Exception:  # noqa: BLE001 - a missing mapping must never fake a silence
         return {}

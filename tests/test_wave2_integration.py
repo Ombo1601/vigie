@@ -14,7 +14,9 @@ records stay byte-identical. Hermetic: no network, no data/ directory.
 from __future__ import annotations
 
 import copy
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import harness  # noqa: F401 - puts scripts/ on sys.path
@@ -134,6 +136,27 @@ CUT_REASON = "Ne répond pas à l'identité honnête de Vigie (R9) ; hors zone."
 
 
 class CbcCutIsLoggedNeverSilent(unittest.TestCase):
+    def test_a_cut_never_changes_the_facts_of_an_edition_collected_before_it(self):
+        """Re-rendering the current edition after the cut (the hourly roads lane
+        does exactly that) must reproduce its published leaf: the collection
+        facts follow the feeds that edition measured, not today's registry."""
+        with tempfile.TemporaryDirectory() as tmp:
+            live = harness.sources_with_reenabled(Path(tmp), *harness.CBC_DESKS)
+            status = {sid: {"status": "ok", "candidate_count": 3}
+                      for sid in [s["id"] for s in ingest_rss.load_enabled_rss(live)]}
+            before = registre.institution_collection(status, live)
+            self.assertEqual(before["cbc"], {"items": 6, "feeds_ok": 2, "feeds_total": 2})
+            after_cut = registre.institution_collection(status, harness.SOURCES)
+            self.assertEqual(after_cut, before)
+            payload = reg_payload([reg_issue("d1")])
+            edition = "2026-10-05T12:00:00+00:00"
+            self.assertEqual(registre.leaf_of(registre.edition_record(payload, edition, before)),
+                             registre.leaf_of(registre.edition_record(payload, edition, after_cut)))
+        # The next edition, collected under the cut, no longer measures CBC.
+        fresh = {s["id"]: {"status": "ok", "candidate_count": 1}
+                 for s in ingest_rss.load_enabled_rss(harness.SOURCES)}
+        self.assertNotIn("cbc", registre.institution_collection(fresh, harness.SOURCES))
+
     def test_sources_page_lists_both_cbc_desks_with_reason_and_date(self):
         page = method_site._sources_html()
         cuts = page[page.index('id="coupes"'):page.index('id="retraits"')]
