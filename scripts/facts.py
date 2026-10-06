@@ -604,6 +604,41 @@ def _date_atoms(text: str, pub: date | None) -> list[dict]:
 
 # --- places ---------------------------------------------------------------
 _NOT_A_ROAD = re.compile(r"-(?:t-)?(?:il|elle|ils|elles|on)$")
+# cluster_issues._LOCATION takes the word after rue/route/pont/école/... as a
+# road name, so "en route à", "le pont entre", "la route est" yield "a",
+# "entre", "est". A road token is kept only when it has the shape of a name:
+# a route number (1 to 3 digits), or a word of at least 3 letters that is not
+# a function word, a generic place noun or an adjective of "école"/"hôpital"
+# (folded forms). A hyphenated name may not end on a dangling particle
+# ("samuel-de", "marie-de-l": a name cut by an apostrophe or a space).
+_ROAD_STOPWORDS = frozenset("""
+a au aux apres avant avec chez contre dans de des du d elle en entre est et etre il ils
+l la le les leur leurs lors mais ne ni ou par pas pendant pour qu que qui sa se ses son
+sont sous sur un une vers y depuis ainsi aussi comme donc encore ici tres plus moins
+met mis fait faire peut doit sera ont ete etait devront demande portant menant
+the of and to in on at for from with by is are was were be been this that its it as an
+around into over after before between near
+rue route pont autoroute boulevard avenue chemin quartier ville ecole hopital lac parc place
+quebec quebecois quebecoise canada canadien canadienne
+primaire secondaire superieure publique privee privees publiques psychiatrique general generale
+universitaire regional regionale municipal municipale provincial provinciale federal federale
+national nationale internationale principale urbain urbaine
+""".split())
+_ROAD_TOKEN = re.compile(r"(?:\d{1,3}|[a-z][a-z0-9]*(?:-[a-z0-9]+)*)")
+_DANGLING = frozenset({"de", "du", "des", "la", "le", "l", "d", "en", "et", "a"})
+
+
+def road_token_ok(token: str) -> bool:
+    """True when a road-name token has the shape of a name (see above)."""
+    if not isinstance(token, str) or not _ROAD_TOKEN.fullmatch(token):
+        return False
+    if token.isdigit():
+        return token != "0" and not token.startswith("0")
+    parts = token.split("-")
+    if parts[-1] in _DANGLING or token in _ROAD_STOPWORDS:
+        return False
+    letters = sum(ch.isalpha() for ch in token)
+    return letters >= 3
 
 
 def _place_atoms(title: str, summary: str) -> list[dict]:
@@ -612,8 +647,9 @@ def _place_atoms(title: str, summary: str) -> list[dict]:
     areas = cluster_issues.place_hints(probe)
     for token in sorted(cluster_issues.road_places(probe)):
         # "quartier Saint-Roch" is an area, not a road; "route est-il" is a
-        # verb inversion, not a road name (both are vocabulary-reuse scars).
-        if token in areas or _NOT_A_ROAD.search(token):
+        # verb inversion, not a road name (both are vocabulary-reuse scars);
+        # "en route à" is a preposition, not a road (shape guard).
+        if token in areas or _NOT_A_ROAD.search(token) or not road_token_ok(token):
             continue
         out.append({"kind": "place", "unit": "road", "subject": None, "value": token, "qualifier": "exact"})
     for token in sorted(areas):
