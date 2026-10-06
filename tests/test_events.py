@@ -14,7 +14,7 @@ import sys
 import tempfile
 import types
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -23,7 +23,6 @@ import event_match as em
 import events
 import facts
 import normalize
-import ownership
 import takedown
 import vocabulaire
 
@@ -896,6 +895,18 @@ class FailSoft(unittest.TestCase):
             self.assertEqual(ops["status"], "store_unreadable")
             self.assertTrue(ops["diagnosis"])
 
+    def test_a_bare_member_row_is_completed_not_lost(self):
+        stores, _, _ = build_all(EDITIONS[:1])
+        doc = json.loads(json.dumps(stores[0]))
+        x_event = by_id(doc)[em.event_id_for(X1["id"])]
+        x_event["members"] = [{"item_id": X1["id"], "published_at": X1["published_at"],
+                               "first_seen": E1["normalized_at"], "source_id": "delta"}]
+        store, _, _ = events.build(events.check_store(doc), E2, registry())
+        row = by_id(store)[em.event_id_for(X1["id"])]["members"][0]
+        self.assertEqual(row["first_seen"], E1["normalized_at"])
+        self.assertEqual((row["institution"], row["ownership_class"]), ("delta", "independent"))
+        self.assertEqual(check_v1(events.to_v1(by_id(store)[em.event_id_for(X1["id"])])), [])
+
     def test_an_item_owned_twice_is_a_corrupt_store(self):
         stores, _, _ = build_all(EDITIONS[:1])
         doc = json.loads(json.dumps(stores[0]))
@@ -943,10 +954,10 @@ class Wiring(unittest.TestCase):
         self.assertNotIn("events.py", pipeline.RENDER_ONLY)
         self.assertNotIn("events.py", pipeline.OFFLINE_SKIP)
         self.assertIn("events.py", pipeline.SHADOW)
-        with mock.patch.object(pipeline, "run") as run, mock.patch("sys.argv", ["pipeline.py", "--render-only"]):
+        with mock.patch.object(pipeline, "run") as run, mock.patch("sys.argv", ["pipeline.py", "--render-only"]),                 mock.patch("sys.stdout"):
             pipeline.main()
         self.assertNotIn("events.py", [c.args[0] for c in run.call_args_list])
-        with mock.patch.object(pipeline, "run") as run, mock.patch("sys.argv", ["pipeline.py", "--offline"]):
+        with mock.patch.object(pipeline, "run") as run, mock.patch("sys.argv", ["pipeline.py", "--offline"]),                 mock.patch("sys.stdout"):
             pipeline.main()
         self.assertIn("events.py", [c.args[0] for c in run.call_args_list])
 

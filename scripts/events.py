@@ -329,7 +329,7 @@ def published_fields(raw: object, first_seen: str) -> tuple[str | None, bool]:
 
 def member_row(item: dict, joined: dict, origin_result: tuple[str, str], reg: Registry) -> dict:
     sid = _str(item.get("source_id"))
-    first_seen = _str(joined.get("first_seen"))
+    first_seen = _str(joined.get("first_seen")) or _str(item.get("first_seen"))
     published, suspect = published_fields(item.get("published_at"), first_seen)
     row = {
         "item_id": _str(item.get("id")),
@@ -786,9 +786,12 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
             if isinstance(m, dict) and "origin_class" in m:
                 row = {k: m[k] for k in MEMBER_KEYS if k in m}
                 _refresh_ownership(row, reg)
-            else:  # joined this edition
-                it = texts.get(iid, {"id": iid})
-                row = member_row(it, m if isinstance(m, dict) else {}, origins.get(iid, (origin.UNKNOWN, "unknown.no_signal")), reg)
+            else:  # joined this edition (a bare stored row is completed from what it carries)
+                joined = m if isinstance(m, dict) else {}
+                it = texts.get(iid) or {"id": iid, "first_seen": edition,
+                                        **{k: joined[k] for k in ("published_at", "source_id", "institution",
+                                                                  "language", "url") if joined.get(k)}}
+                row = member_row(it, joined, origins.get(iid, (origin.UNKNOWN, "unknown.no_signal")), reg)
             current = texts.get(iid)
             if current is not None and _str(current.get("url")):
                 row["url"] = current["url"]
