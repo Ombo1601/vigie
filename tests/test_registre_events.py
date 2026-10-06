@@ -4,10 +4,14 @@ Law under test (docs/EVENTS.md section 12, docs/MIGRATION.md step 7): one seal
 per edition, keyed by the collection clock, built with the registre's own
 primitives; a re-render of the same edition never mints or alters a seal; a
 seal is immutable once recorded; the record carries codes and counts only,
-never a URL, a title, an excerpt, a quote, a fact value or a person's name; a
-missing, corrupt, foreign or hostile event view mints nothing and leaves the
-edition seal and every public artefact byte-identical; the chain survives a
-state pack/unpack round trip and leaves the state witnesses untouched.
+never a URL, a title, an excerpt, a quote, a fact value or a person's name
+(every code must belong to its closed list: a slug-shaped name is refused,
+and every value left out is counted); the City's roadwork ids are sealed
+verbatim, as the travaux chain seals them; a missing, corrupt, foreign,
+unbuilt or hostile event view mints nothing and leaves the edition seal and
+every public artefact byte-identical; a record can never grow, then collapse,
+the private state past the persist guard; the chain survives a state
+pack/unpack round trip and leaves the state witnesses untouched.
 
 Every fixture is invented. No publisher text appears in this file.
 """
@@ -24,6 +28,7 @@ import tarfile
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -128,6 +133,53 @@ def snapshot(state: dict) -> bytes:
     return json.dumps(state, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
 
+# The institution ids a record may carry come from sources.yaml. These tests
+# run against an invented registry (one cut source included), never the live one.
+SOURCES_FIXTURE = """\
+sources:
+  - id: radio-canada-inventee
+    institution: radio-canada
+    type: rss
+    enabled: true
+  - id: cbc-inventee
+    institution: cbc
+    type: rss
+    enabled: false
+  - id: le-soleil
+    type: rss
+    enabled: true
+  - id: ville-quebec
+    type: rss
+    source_kind: official
+    enabled: true
+  - id: wzdx-inventee
+    institution: ville-quebec
+    type: wzdx
+    enabled: true
+"""
+FIXTURE_INSTITUTIONS = {"cbc", "le-soleil", "radio-canada", "ville-quebec"}
+_MODULE_PATCHES: list = []
+
+
+def setUpModule() -> None:  # noqa: N802 - unittest hook
+    tmp = tempfile.TemporaryDirectory()
+    _MODULE_PATCHES.append(tmp)
+    path = Path(tmp.name) / "sources.yaml"
+    path.write_text(SOURCES_FIXTURE, encoding="utf-8")
+    patch = mock.patch.object(registre, "SOURCES_PATH", path)
+    patch.start()
+    _MODULE_PATCHES.append(patch)
+
+
+def tearDownModule() -> None:  # noqa: N802 - unittest hook
+    while _MODULE_PATCHES:
+        handle = _MODULE_PATCHES.pop()
+        if hasattr(handle, "stop"):
+            handle.stop()
+        else:
+            handle.cleanup()
+
+
 # --------------------------------------------------------------------------- #
 # The record: codes and counts only
 # --------------------------------------------------------------------------- #
@@ -176,7 +228,7 @@ class Record(unittest.TestCase):
                         lineage={"merged_into": PERSON},
                         anchors=[{"type": "official_item", "ref": URL},
                                  {"type": "official_item", "ref": "not-hex"},
-                                 {"type": "roadwork", "ref": "rue Saint-Jean / côte"},
+                                 {"type": "roadwork", "ref": URL},
                                  {"type": "roadwork", "ref": "R-1"},
                                  {"type": "consultation", "ref": 767},
                                  {"type": "edition_seal", "ref": True},
@@ -184,7 +236,8 @@ class Record(unittest.TestCase):
                                  {"type": "verdict", "ref": "R-2"},
                                  {"type": ["roadwork"], "ref": "R-3"},
                                  "R-4"])
-        record, why = registre.events_record(view(E1, [hostile]), E1, "")
+        dropped: dict = {}
+        record, why = registre.events_record(view(E1, [hostile]), E1, "", dropped=dropped)
         self.assertEqual(why, "")
         entry = record["events"][0]
         self.assertEqual(entry["type"], "")            # not established, never rewritten
@@ -196,6 +249,9 @@ class Record(unittest.TestCase):
         self.assertEqual(entry["anchors"], [{"type": "consultation", "ref": "767"},
                                             {"type": "roadwork", "ref": "R-1"}])
         self.assertNotIn("Limoilou", registre.canonical(record).decode())
+        # every stated value left out is counted (a duplicate is the same value)
+        self.assertEqual(dropped, {"type": 1, "activity": 1, "places": 5, "institutions": 3,
+                                   "languages": 2, "merged_into": 1, "anchors": 8})
 
     def test_counts_are_read_never_invented(self):
         bare = event("bare", members=[item_id("bare-1"), item_id("bare-1"), "not-an-id", 42,
@@ -420,17 +476,20 @@ class Chain(unittest.TestCase):
 
     def test_a_byte_budget_bounds_the_state_against_a_runaway_view(self):
         """A faulty builder listing thousands of events must not bloat the only
-        copy of the registre: older records go first, the newest always stays."""
+        copy of the registre: older records go first, and a record over the
+        budget is not minted at all (no record is kept "whatever its size")."""
         state = registre.empty_state()
         big = [event(f"big{n}") for n in range(40)]
-        size = len(registre.canonical(registre.events_record(view(E1, big), E1, "")[0]))
+        size = registre.record_stored_bytes(registre.events_record(view(E1, big), E1, "")[0])
         with mock.patch.object(registre, "EVENTS_RECORD_BYTES", size * 2 + 10):
             for edition in (E1, E2, E3):
                 state, _ = seal_view(state, view(edition, big), edition)
             self.assertEqual([("record" in s) for s in state["evenements"]["seals"]], [False, True, True])
-            with mock.patch.object(registre, "EVENTS_RECORD_BYTES", 1):
-                state, _ = seal_view(state, view("2026-09-11T06:00:00+00:00", big), "2026-09-11T06:00:00+00:00")
-            self.assertEqual([("record" in s) for s in state["evenements"]["seals"]], [False, False, False, True])
+            before = snapshot(state)
+            with mock.patch.object(registre, "EVENTS_RECORD_BYTES", size - 1):
+                state, action = seal_view(state, view("2026-09-11T06:00:00+00:00", big), "2026-09-11T06:00:00+00:00")
+            self.assertTrue(action.startswith("record-oversized"), action)
+            self.assertEqual(snapshot(state), before)
         self.assertTrue(registre.verify_event_chain(state["evenements"]["seals"])[0])
 
 
@@ -598,7 +657,9 @@ def history(edition: str) -> dict:
 PUBLIC = ("chain.json", "checkpoint.txt", "institutions.json", "travaux.json")
 
 
-class EmitHook(unittest.TestCase):
+class EmitRunner:
+    """registre.emit into a temporary root, output captured (a mixin for TestCase)."""
+
     def run_emit(self, root: Path, edition: str, *, events=None, events_path=None, quiet=True):
         kwargs = {"events": events}
         kwargs["events_path"] = events_path if events_path is not None else root / "no-such" / "latest_events.json"
@@ -616,6 +677,8 @@ class EmitHook(unittest.TestCase):
         files["registre.html"] = (root / "registre.html").read_bytes()
         return files
 
+
+class EmitHook(EmitRunner, unittest.TestCase):
     def test_events_are_sealed_after_the_edition_and_bound_to_its_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -721,6 +784,344 @@ class EmitHook(unittest.TestCase):
             self.assertEqual(state["seals"][1]["prev"], old["seals"][0]["root"])
             self.assertEqual(len(state["evenements"]["seals"]), 1)
             self.assertEqual(state["evenements"]["seals"][0]["record"]["edition_root"], state["seals"][1]["root"])
+
+
+# --------------------------------------------------------------------------- #
+# Closed lists: a code must belong to its list, a shape is not enough
+# --------------------------------------------------------------------------- #
+# Invented slugs with the exact shape of a code: a person's name and headlines.
+SLUG_PERSON = "gaston-invente-personne"
+SLUG_HEADLINE = "un-incendie-majeur-invente-dans-un-immeuble"
+SLUG_TITLE = "manchette-inventee-en-slug"
+
+
+class ClosedLists(unittest.TestCase):
+    def test_slug_shaped_person_names_and_headlines_are_never_sealed(self):
+        named = event("slug-a", type=SLUG_PERSON, places=[SLUG_TITLE, "limoilou", SLUG_PERSON],
+                      institutions=[SLUG_PERSON, "le-soleil"])
+        derived = event("slug-b", type=SLUG_HEADLINE, places=["saint-roch"], institutions=None,
+                        members=[member("slug-b1", institution=SLUG_PERSON), member("slug-b2")])
+        dropped: dict = {}
+        record, why = registre.events_record(view(E1, [named, derived]), E1, "", dropped=dropped)
+        self.assertEqual(why, "")
+        by_id = {e["event_id"]: e for e in record["events"]}
+        a, b = by_id[ev_id("slug-a")], by_id[ev_id("slug-b")]
+        self.assertEqual((a["type"], b["type"]), ("", ""))          # not established
+        self.assertEqual(a["places"], ["limoilou"])
+        self.assertEqual(b["places"], ["saint-roch"])
+        self.assertEqual(a["institutions"], ["le-soleil"])
+        self.assertEqual(b["institutions"], ["le-soleil"])
+        sealed = registre.canonical(record).decode("utf-8")
+        for needle in ("gaston", "personne", "incendie-majeur", "manchette", "invente"):
+            self.assertNotIn(needle, sealed, needle)
+        self.assertEqual(dropped, {"type": 2, "places": 2, "institutions": 2})
+
+    def test_every_code_of_the_closed_lists_is_sealed(self):
+        import vocabulaire
+        types = vocabulaire.type_codes()
+        places = vocabulaire.place_codes()
+        self.assertIn("unclassified", types)
+        events = [event(f"type-{code}", type=code) for code in types]
+        events.append(event("all-places", places=list(places),
+                            members=[member(f"inst-{i}", institution=i) for i in sorted(FIXTURE_INSTITUTIONS)]))
+        dropped: dict = {}
+        record, why = registre.events_record(view(E1, events), E1, "", dropped=dropped)
+        self.assertEqual(why, "")
+        self.assertEqual(dropped, {})
+        by_id = {e["event_id"]: e for e in record["events"]}
+        self.assertEqual([by_id[ev_id(f"type-{code}")]["type"] for code in types], types)
+        self.assertEqual(by_id[ev_id("all-places")]["places"], places)     # order kept
+        self.assertEqual(by_id[ev_id("all-places")]["institutions"], sorted(FIXTURE_INSTITUTIONS))
+
+    def test_the_lists_are_the_vocabulary_and_every_registry_institution(self):
+        import vocabulaire
+        closed, why = registre.closed_codes()
+        self.assertEqual(why, "")
+        self.assertEqual(closed["type"], frozenset(vocabulaire.type_codes()))
+        self.assertEqual(closed["places"], frozenset(vocabulaire.place_codes()))
+        # a cut source (enabled: false) keeps its institution: sticky members stay sealable
+        self.assertEqual(closed["institutions"], frozenset(FIXTURE_INSTITUTIONS))
+
+    def test_without_the_closed_lists_nothing_is_sealed(self):
+        import vocabulaire
+        doc = view(E1, [event("a")])
+        with mock.patch.object(vocabulaire, "type_codes", return_value=[]):
+            self.assertEqual(registre.events_record(doc, E1, ""), (None, "no-vocabulary (empty tables)"))
+        with mock.patch.object(vocabulaire, "place_codes", side_effect=OSError("gone")):
+            self.assertEqual(registre.events_record(doc, E1, ""), (None, "no-vocabulary (OSError)"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            no_block = root / "no-block.yaml"
+            no_block.write_text("autre: 1\n", encoding="utf-8")
+            empty = root / "empty.yaml"
+            empty.write_text("sources:\n", encoding="utf-8")
+            for path, why in ((root / "missing.yaml", "no-institutions (FileNotFoundError)"),
+                              (no_block, "no-institutions (SystemExit)"),
+                              (empty, "no-institutions (empty registry)")):
+                with mock.patch.object(registre, "SOURCES_PATH", path):
+                    self.assertEqual(registre.events_record(doc, E1, ""), (None, why))
+            with self.assertRaises(ValueError), mock.patch.object(registre, "SOURCES_PATH", empty):
+                registre.event_entry(event("a"))
+            # The SystemExit of load_sources never escapes the shadow chain.
+            with mock.patch.object(registre, "SOURCES_PATH", no_block):
+                state, action = registre.seal_events_soft(registre.empty_state(), E1, doc)
+            self.assertEqual((state["evenements"]["seals"], action), ([], "no-institutions (SystemExit)"))
+            # The render goes on: the edition is sealed, the event chain is left as it was.
+            with mock.patch.object(registre, "SOURCES_PATH", root / "missing.yaml"):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    state = registre.emit(payload(), {"fetched_at": E1, "events": []}, history=history(E1),
+                                          collection={}, state_path=root / "state.json",
+                                          out_dir=root / "registre", out_html=root / "registre.html",
+                                          events=doc, events_path=root / "absent.json")
+            self.assertEqual(len(state["seals"]), 1)
+            self.assertEqual(state["evenements"]["seals"], [])
+            self.assertIn("registre: evenements no-institutions (FileNotFoundError)", out.getvalue())
+
+
+# --------------------------------------------------------------------------- #
+# Anchors: the City's own ids, verbatim; every drop counted
+# --------------------------------------------------------------------------- #
+# Invented ids in the shapes the WZDX feed really uses (spaces, slashes,
+# accents, parentheses, an embedded newline).
+WZDX_IDS = ("XYZ-20990101-AB-Phase 2", "QRS-20990101-007-ABC / DEF", "Chantier inventé (Phase 3)",
+            "LMN-20990101-XY-01\n_1", "Rue Inventée-de l'Exemple", "20990231406-1")
+UNSAFE_REFS = ("https://exemple.test/chantier", "x" * 129, "", "   ", "a‮b", "a\x00b", "a\x85b",
+               "a​b", "\ud800")
+
+
+def anchor(kind: str, ref) -> dict:
+    return {"type": kind, "ref": ref, "rule": "invented-rule", "status": "linked_by_rule"}
+
+
+class Anchors(unittest.TestCase):
+    def test_wzdx_style_ids_are_sealed_verbatim(self):
+        ev = event("wzdx", anchors=[anchor("roadwork", ref) for ref in WZDX_IDS])
+        dropped: dict = {}
+        record, why = registre.events_record(view(E1, [ev]), E1, "", dropped=dropped)
+        self.assertEqual(why, "")
+        self.assertEqual(dropped, {})
+        self.assertEqual(record["events"][0]["anchors"],
+                         [{"type": "roadwork", "ref": ref} for ref in sorted(WZDX_IDS)])
+        # the same strings the travaux chain seals from the same feed
+        state, _ = registre.seal_roadworks(registre.empty_state(),
+                                           {"fetched_at": E1, "events": [{"event_id": r} for r in WZDX_IDS]})
+        self.assertEqual(state["travaux"]["latest_record"]["active"],
+                         [a["ref"] for a in record["events"][0]["anchors"]])
+        # and the record still seals and verifies
+        state, action = registre.seal_events(registre.empty_state(), record, dropped)
+        self.assertEqual(action, "appended")
+        self.assertTrue(registre.verify_event_chain(state["evenements"]["seals"])[0])
+
+    def test_unsafe_refs_are_dropped_and_counted(self):
+        rows = [anchor("roadwork", ref) for ref in UNSAFE_REFS]
+        rows += [anchor("consultation", "www.exemple.test"), anchor("consultation", 1011),
+                 anchor("consultation", "767"), anchor("outage", "not-an-item-id"),
+                 anchor("outage", item_id("panne")), anchor("edition_seal", 0), anchor("edition_seal", 58)]
+        dropped: dict = {}
+        record, _ = registre.events_record(view(E1, [event("unsafe", anchors=rows)]), E1, "", dropped=dropped)
+        self.assertEqual(record["events"][0]["anchors"], [
+            {"type": "consultation", "ref": "1011"}, {"type": "consultation", "ref": "767"},
+            {"type": "edition_seal", "ref": "58"}, {"type": "outage", "ref": item_id("panne")}])
+        self.assertEqual(dropped, {"anchors": len(UNSAFE_REFS) + 3})
+        self.assertNotIn("exemple.test", registre.canonical(record).decode("utf-8"))
+
+    def test_an_event_keeps_at_most_the_anchor_cap_official_pointers_first(self):
+        rows = [anchor("edition_seal", n) for n in range(1, 101)]
+        rows += [anchor("roadwork", ref) for ref in WZDX_IDS[:3]]
+        rows += [anchor("official_item", item_id("officiel")), anchor("consultation", 767)]
+        dropped: dict = {}
+        record, _ = registre.events_record(view(E1, [event("cap", anchors=rows)]), E1, "", dropped=dropped)
+        kept = record["events"][0]["anchors"]
+        self.assertEqual(len(kept), registre.EVENT_ANCHORS_MAX)
+        self.assertEqual(kept, sorted(kept, key=lambda a: (a["type"], a["ref"])))
+        seals = sorted(int(a["ref"]) for a in kept if a["type"] == "edition_seal")
+        self.assertEqual(seals, list(range(101 - (registre.EVENT_ANCHORS_MAX - 5), 101)))   # the newest
+        self.assertEqual({a["type"] for a in kept if a["type"] != "edition_seal"},
+                         {"roadwork", "official_item", "consultation"})
+        self.assertEqual(dropped, {"anchors": 105 - registre.EVENT_ANCHORS_MAX})
+
+    def test_a_runaway_anchor_list_is_bounded_not_sealed_whole(self):
+        """The review's shape (50 events x thousands of distinct anchors), scaled down."""
+        events = [event(f"runaway{n}", anchors=[anchor("roadwork", f"W{n}-{k}") for k in range(600)])
+                  for n in range(50)]
+        dropped: dict = {}
+        record, _ = registre.events_record(view(E1, events), E1, "", dropped=dropped)
+        self.assertTrue(all(len(e["anchors"]) == registre.EVENT_ANCHORS_MAX for e in record["events"]))
+        self.assertEqual(dropped, {"anchors": 50 * (600 - registre.EVENT_ANCHORS_MAX)})
+        self.assertLess(registre.record_stored_bytes(record), registre.EVENTS_RECORD_MAX)
+
+    def test_drops_are_kept_in_the_seal_header_and_printed_on_every_render(self):
+        doc = view(E1, [event("drop", type=SLUG_PERSON,
+                              anchors=[anchor("roadwork", UNSAFE_REFS[0]), anchor("roadwork", "a‮b"),
+                                       anchor("roadwork", WZDX_IDS[0])])])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kwargs = dict(history=history(E1), collection={}, state_path=root / "state.json",
+                          out_dir=root / "registre", out_html=root / "registre.html", events=doc,
+                          events_path=root / "absent.json")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                state = registre.emit(payload(), {"fetched_at": E1, "events": []}, **kwargs)
+            seal = state["evenements"]["seals"][0]
+            self.assertEqual(seal["dropped"], {"anchors": 2, "type": 1})
+            self.assertNotIn("dropped", seal["record"])                       # outside the leaf
+            self.assertEqual(seal["leaf"], registre.leaf_of(seal["record"]))
+            self.assertIn("registre: evenements appended; left out of the record: anchors 2, type 1",
+                          out.getvalue())
+            before = (root / "state.json").read_bytes()
+            out = io.StringIO()
+            with redirect_stdout(out):
+                registre.emit(payload(), {"fetched_at": E1, "events": []}, **kwargs)
+            self.assertIn("registre: evenements confirmed; left out of the record: anchors 2, type 1",
+                          out.getvalue())
+            self.assertEqual((root / "state.json").read_bytes(), before)
+            self.assertTrue(registre.verify_event_chain(registre.load_state(root / "state.json")
+                                                        ["evenements"]["seals"])[0])
+
+
+class ViewStatus(unittest.TestCase):
+    def test_a_view_its_builder_did_not_build_is_not_sealed(self):
+        """events.py writes an empty view with a non-ok status when it refuses an
+        edition or cannot read its store: sealing it would be a false 'no event'."""
+        for status, shown in (("edition_refused", "edition_refused"), ("store_unreadable", "store_unreadable"),
+                              (None, "unrecognised"), (5, "unrecognised"), ("<b>x</b>", "unrecognised")):
+            doc = dict(view(E1, []), status=status)
+            self.assertEqual(registre.events_record(doc, E1, ""),
+                             (None, f"not-built (the view's status is {shown})"), status)
+        record, why = registre.events_record(dict(view(E1, [event("ok")]), status="ok"), E1, "")
+        self.assertEqual((why, len(record["events"])), ("", 1))
+        record, why = registre.events_record(view(E1, []), E1, "")      # section 3: no status at all
+        self.assertEqual((why, record["events"]), ("", []))
+
+
+# --------------------------------------------------------------------------- #
+# Size: the record can never grow, then collapse, the private state
+# --------------------------------------------------------------------------- #
+def roadwork_ref(n: int, k: int) -> str:
+    """An invented WZDX-style id of about 100 characters."""
+    return f"CHANTIER-INVENTE-{n:05d}-{k:02d} - Phase {k} - " + "x" * 60
+
+
+def heavy_event(n: int) -> dict:
+    return event(f"heavy{n}", anchors=[anchor("roadwork", roadwork_ref(n, k))
+                                       for k in range(registre.EVENT_ANCHORS_MAX)])
+
+
+def sized_view(edition: str, stored_bytes: int) -> dict:
+    """An invented view whose record is close to `stored_bytes` stored bytes."""
+    empty = registre.record_stored_bytes(registre.events_record(view(edition, []), edition, "")[0])
+    one = registre.record_stored_bytes(registre.events_record(view(edition, [heavy_event(0)]), edition, "")[0])
+    count = max(1, round((stored_bytes - empty) / (one - empty)))
+    return view(edition, [heavy_event(k) for k in range(count)])
+
+
+def edition_at(n: int) -> str:
+    return f"2026-09-{1 + n // 4:02d}T{(n % 4) * 6:02d}:00:00+00:00"
+
+
+class RecordSize(EmitRunner, unittest.TestCase):
+    def test_stored_bytes_are_what_store_io_writes(self):
+        record, _ = registre.events_record(rich_view(), E1, "ab" * 32)
+        state, _ = registre.seal_events(registre.empty_state(), record, {"anchors": 1})
+        bare = json.loads(json.dumps(state))
+        del bare["evenements"]["seals"][0]["record"]
+        with tempfile.TemporaryDirectory() as tmp:
+            sizes = []
+            for n, doc in enumerate((state, bare)):
+                path = Path(tmp) / f"{n}.json"
+                registre.store_io.write_json_atomic(path, doc)
+                sizes.append(len(path.read_bytes().replace(b"\r\n", b"\n")))   # LF, as on the runner
+        # the key `"record": `, its comma, newline and indent are the only bytes not in the record
+        self.assertEqual(sizes[0] - sizes[1], registre.record_stored_bytes(record) + len(',\n') + 8 + len('"record": '))
+        self.assertGreater(registre.record_stored_bytes(record), 2 * len(registre.canonical(record)))
+
+    def test_an_oversized_record_is_never_minted(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            ra, rb = Path(a), Path(b)
+            self.run_emit(ra, E1, events=rich_view(E1))
+            self.run_emit(rb, E1, events=rich_view(E1))
+            before = registre.load_state(ra / "state.json")["evenements"]
+            # same length as the edition root the emit binds the record to
+            size = registre.record_stored_bytes(registre.events_record(view(E2, [event("x")]), E2, "0" * 64)[0])
+            with mock.patch.object(registre, "EVENTS_RECORD_MAX", size - 1):
+                state = self.run_emit(ra, E2, events=view(E2, [event("x")]))
+            self.assertIn(f"registre: evenements record-oversized ({size} stored bytes, cap {size - 1}); "
+                          f"nothing minted", self.last_output)
+            self.assertEqual(state["evenements"], before)
+            self.assertEqual(len(state["seals"]), 2)                 # the edition seal is unaffected
+            self.run_emit(rb, E2)
+            self.assertEqual(self.public_bytes(ra), self.public_bytes(rb))
+
+    def test_one_edition_releases_less_than_one_record(self):
+        """Whatever the sizes, the records kept shrink by less than EVENTS_RECORD_MAX
+        from one edition to the next, stay within the budget, and the newest seal
+        always keeps its record."""
+        rng = random.Random(20261006)
+        cap = 6000
+        with mock.patch.multiple(registre, EVENTS_RECORD_MAX=cap, EVENTS_RECORD_BYTES=4 * cap,
+                                 EVENTS_RECORD_CAP=5):
+            state = registre.empty_state()
+            kept_before = 0
+            minted = refused = 0
+            for n in range(300):
+                pad = rng.choice((0, 1, 5, rng.randrange(0, 150), rng.randrange(100, 140)))
+                edition = (datetime(2027, 1, 1, tzinfo=timezone.utc) + timedelta(hours=n)).isoformat()
+                record = {"method": registre.EVENTS_METHOD, "edition": edition, "edition_root": "",
+                          "events": [{"event_id": f"ev-{n:016x}", "pad": ["x" * 30] * pad}]}
+                state, action = registre.seal_events(state, record)
+                seals = state["evenements"]["seals"]
+                kept = [registre.record_stored_bytes(s["record"]) for s in seals if "record" in s]
+                if action == "appended":
+                    minted += 1
+                    self.assertIn("record", seals[-1])
+                    self.assertLess(kept_before - sum(kept), cap, n)
+                else:
+                    refused += 1
+                    self.assertTrue(action.startswith("record-oversized"), action)
+                self.assertLessEqual(sum(kept), 4 * cap)
+                self.assertLessEqual(len(kept), 5)
+                kept_before = sum(kept)
+            self.assertGreater(minted, 100)
+            self.assertGreater(refused, 10)
+            self.assertTrue(registre.verify_event_chain(state["evenements"]["seals"])[0])
+
+    def test_big_then_small_editions_never_trip_the_persist_guard(self):
+        """The review's scenario: a runaway edition, then normal ones. Every
+        persist of the sequence must pass state_sync.persist_refusals over a
+        durable state of the documented floor (2 x EVENTS_RECORD_MAX)."""
+        cap = registre.EVENTS_RECORD_MAX
+        plan = [int(1.6 * cap)] + [int(0.95 * cap)] * 5 + [0] * 6
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(registre, "EVENTS_RECORD_CAP", 4):
+            root = Path(tmp)
+            filler = root / "data" / "normalized" / "latest_enriched.json"
+            filler.parent.mkdir(parents=True)
+            filler.write_bytes(b" " * (2 * cap))
+            previous = None
+            outcomes = []
+            for n, size in enumerate(plan):
+                edition = edition_at(n)
+                doc = sized_view(edition, size) if size else view(edition, [event(f"small{n}")])
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    registre.emit(payload(), {"fetched_at": edition, "events": [{"event_id": "R-1"}]},
+                                  history=history(edition), collection={},
+                                  state_path=root / "data" / "registre" / "registre.json",
+                                  out_dir=root / "public" / "registre", out_html=root / "public" / "r.html",
+                                  events=doc, events_path=root / "absent.json")
+                outcomes.append(out.getvalue().split("registre: evenements ")[-1].split(" ")[0])
+                archive = root / f"state-{n}.tar.gz"
+                with mock.patch.multiple(state_pack, ROOT=root, DATA=root / "data"):
+                    state_pack.pack(archive)
+                facts = state_sync.inspect_archive(archive)
+                if previous is not None:
+                    self.assertEqual(state_sync.persist_refusals(previous, facts, allow_shrink=False), ([], []),
+                                     f"edition {n}: {previous['durable_bytes']} -> {facts['durable_bytes']}")
+                previous = facts
+            self.assertEqual(outcomes, ["record-oversized"] + ["appended"] * 11)
+            seals = registre.load_state(root / "data" / "registre" / "registre.json")["evenements"]["seals"]
+            self.assertEqual([("record" in s) for s in seals], [False] * 7 + [True] * 4)
+            self.assertTrue(registre.verify_event_chain(seals)[0])
 
 
 # --------------------------------------------------------------------------- #

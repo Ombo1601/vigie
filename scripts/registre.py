@@ -21,9 +21,11 @@ missing or corrupt store yields no seal and exit 0; the brief renders anyway.
 
 A third chain, `registre-evenements-v1` (key `evenements` of the same state),
 seals the event view of each edition (docs/EVENTS.md section 12): one seal per
-edition, keyed by the same collection clock, codes and counts only. It is a
-SHADOW chain: state only, nothing published, and it can never block, alter or
-delay the edition seal (a missing or corrupt event view mints nothing).
+edition, keyed by the same collection clock, codes and counts only, every code
+checked against its closed list (vocabulary, sources.yaml) and every value
+left out counted. It is a SHADOW chain: state only, nothing published, and it
+can never block, alter or delay the edition seal (a missing or corrupt event
+view mints nothing), nor grow the private state past a bounded size.
 
 Usage:
   python scripts/registre.py                 # emit from the stores
@@ -76,18 +78,32 @@ EVENTS = ROOT / "data" / "events" / "latest_events.json"
 # events; the caps leave an order of magnitude of room and refuse the rest.
 EVENTS_MAX_BYTES = 32 * 1024 * 1024   # a larger event view is not read at all
 EVENTS_MAX = 5000                     # a view listing more events is not sealed
+EVENT_ANCHORS_MAX = 64                # anchors one event can carry into the record
 # Every event seal keeps its header (seq, edition, prev, leaf, root,
 # event_count) forever, so the hash chain stays whole from genesis. Only the
 # newest EVENTS_RECORD_CAP seals keep their record (the leaf preimage) in the
-# private state: a record lists every event of an edition (268 events, about
-# 69 KB of canonical JSON on the real 2026-10-06 edition) and every render
-# reads this state file several times. Twelve records are about three days of
-# editions, like the dated state copies; a byte budget bounds the state even
-# when a faulty builder lists thousands of events (the newest record is always
-# kept). Older seals verify by hash linkage only (a founder decision before
-# the chain is published: EVENTS.md sections 12-13).
+# private state: a record lists every event of an edition and every render
+# reads this state file several times. Older seals verify by hash linkage only
+# (a founder decision before the chain is published: EVENTS.md sections 12-13).
+#
+# Sizes are counted in STORED bytes: what the record adds to registre.json as
+# store_io writes it (indent=2, nested in the state), i.e. what the persist
+# guard of state_sync measures. The real 2026-10-06 edition is 65,716
+# canonical bytes and 155,290 stored bytes; twelve such records are 1.9 MB.
+#
+# The persist guard refuses a packed state below half of the restored one, and
+# a refused persist after the deploy halts the next restore. A record larger
+# than EVENTS_RECORD_MAX is therefore never minted ("record-oversized"), and
+# releasing records can then shrink registre.json by at most one record per
+# edition: when the newest record pushes older ones over the byte budget, the
+# newest itself takes their place, so the net drop stays below one record.
+# The event chain alone can thus never trip the guard of a durable state of
+# at least 2 x EVENTS_RECORD_MAX (2 MiB; production on 2026-10-06: 6.6 MB).
 EVENTS_RECORD_CAP = 12
-EVENTS_RECORD_BYTES = 4 * 1024 * 1024   # canonical bytes of the retained records
+EVENTS_RECORD_MAX = 1024 * 1024         # stored bytes of one record (about 6.7x a real edition)
+EVENTS_RECORD_BYTES = 4 * 1024 * 1024   # stored bytes of all retained records
+# Depth of a record inside the state: state > evenements > seals[] > seal > record.
+_RECORD_DEPTH = 4
 
 # Sealed records gained collection facts at schema 2. Schema-1 seals (the ones
 # published before the correction) carry no `collection` key, so their voice
@@ -625,26 +641,111 @@ def _roads_seal(seq: int, prev: str, record: dict, signal: str) -> dict:
 # --------------------------------------------------------------------------- #
 # Event chain (shadow): docs/EVENTS.md section 12
 # --------------------------------------------------------------------------- #
-# Only codes, ids and counts can pass these patterns: no space, no slash, no
-# non-ASCII letter, so no title, excerpt, quote, URL or person's name can be
-# sealed by accident. Anything else is dropped or sealed as "" (not established).
+# A record carries codes, ids and counts only. A shape is not enough: a
+# person's name or a headline turned into a slug has the shape of a code. So
+# every code must belong to its CLOSED list (event types and places: docs/I18N.md
+# tables A and B through scripts/vocabulaire.py; institutions: the ids of
+# sources.yaml) and every id must have the exact shape of its kind. Anything
+# else stays out of the record (a code is sealed as "", not established) and is
+# COUNTED in the seal's `dropped` header and in the emit line, so a value the
+# record could not carry is a diagnosed fact, never a silent absence.
 _EVENT_ID = re.compile(r"ev-[0-9a-f]{16}")
 _CODE = re.compile(r"[a-z0-9-]{2,48}")
 _ITEM_ID = re.compile(r"[0-9a-f]{16,64}")
-_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _SEQ_REF = re.compile(r"[1-9][0-9]{0,8}")
+_CIVIC_REF = re.compile(r"[0-9]{1,12}")      # ingest_civic: the IdProjet digits
 _HEX64 = re.compile(r"[0-9a-f]{64}")
+_STATUS = re.compile(r"[a-z0-9_-]{1,40}")
+_C1 = re.compile("[\x80-\x9f]")
+ROADWORK_REF_MAX = 128
 EVENT_ACTIVITIES = ("new", "developed", "quiet")
 EVENT_LANGUAGES = ("en", "fr")
 ORIGIN_CLASSES = ("official", "wire", "press_release", "own_reporting", "unknown")
-ANCHOR_REF = {
-    "official_item": _ITEM_ID,   # a member item id
-    "outage": _ITEM_ID,          # a Hydro-Québec item id
-    "roadwork": _REF,            # a WZDX feature id
-    "consultation": _REF,        # a civic store id
-    "edition_seal": _SEQ_REF,    # a main-chain seq
-}
 EVENT_CLOCK_KEYS = ("edition", "normalized_at", "edition_clock")
+
+
+def _shaped(pattern: re.Pattern):
+    """A ref check: the ref itself when it has exactly this shape, else ""."""
+    return lambda ref: ref if isinstance(ref, str) and pattern.fullmatch(ref) else ""
+
+
+def _roadwork_ref(ref: object) -> str:
+    """A WZDX feature id, verbatim, or "" when it cannot be sealed safely.
+
+    The City's ids are free-form (measured 2026-10-06: 42 of 767 carry spaces,
+    slashes, accents, parentheses or a newline, such as "<code> - Phase 1") and
+    the travaux chain seals them verbatim, so the event record takes them
+    verbatim too and the two chains join on the same string. The rule is the
+    registre's own display-safety rule: at most 128 characters, not blank, no
+    display-spoofing or control character (TAB, LF and CR excepted, as in
+    plain()), no C1 control, no lone surrogate, and no "://": a URL is never
+    sealed, R10 must be able to remove it.
+    """
+    if not isinstance(ref, str) or not ref.strip() or len(ref) > ROADWORK_REF_MAX or "://" in ref:
+        return ""
+    return "" if _SPOOF.search(ref) or _C1.search(ref) else ref
+
+
+ANCHOR_REF = {
+    "official_item": _shaped(_ITEM_ID),   # a member item id
+    "outage": _shaped(_ITEM_ID),          # a Hydro-Québec item id
+    "roadwork": _roadwork_ref,            # a WZDX feature id
+    "consultation": _shaped(_CIVIC_REF),  # a civic store id
+    "edition_seal": _shaped(_SEQ_REF),    # a main-chain seq
+}
+# Over EVENT_ANCHORS_MAX, the official-record pointers are kept before the
+# edition_seal back-references, and the newest seals before older ones.
+_ANCHOR_KEEP_ORDER = ("official_item", "outage", "consultation", "roadwork", "edition_seal")
+
+
+def closed_codes(sources_path: Path | None = None) -> tuple[dict | None, str]:
+    """The closed lists a record's codes must belong to: ({type, places, institutions}, "")
+    or (None, why they are unavailable).
+
+    type: docs/I18N.md table A (scripts/vocabulaire.py), `unclassified`
+    included; places: table B; institutions: every institution id of
+    sources.yaml, enabled or cut, collapsed exactly as cluster_issues and
+    institution_collection collapse them (a source cut after an edition keeps
+    that edition's record reproducible). Fail-soft: without a list nothing is
+    sealed, because sealing every code as "not established" would be a false
+    record, not an absence.
+    """
+    try:
+        import vocabulaire  # noqa: PLC0415 - lazy: the edition chain never needs it
+
+        types = {c for c in vocabulaire.type_codes() if isinstance(c, str) and _CODE.fullmatch(c)}
+        places = {c for c in vocabulaire.place_codes() if isinstance(c, str) and _CODE.fullmatch(c)}
+    except Exception as exc:  # noqa: BLE001 - diagnosed: nothing is sealed
+        return None, f"no-vocabulary ({type(exc).__name__})"
+    if not types or not places:
+        return None, "no-vocabulary (empty tables)"
+    types.add(vocabulaire.UNCLASSIFIED)
+    try:
+        import cluster_issues  # noqa: PLC0415
+        import ingest_rss  # noqa: PLC0415
+
+        records = ingest_rss.load_sources(Path(sources_path or SOURCES_PATH))
+        institutions = {str(inst.get("institution_id") or "")
+                        for inst in cluster_issues.collapse_institutions(records)}
+    except (Exception, SystemExit) as exc:  # noqa: BLE001 - load_sources exits on a file without sources:
+        return None, f"no-institutions ({type(exc).__name__})"
+    institutions = {i for i in institutions if _CODE.fullmatch(i)}
+    if not institutions:
+        return None, "no-institutions (empty registry)"
+    return {"type": frozenset(types), "places": frozenset(places),
+            "institutions": frozenset(institutions)}, ""
+
+
+def record_stored_bytes(record: object) -> int:
+    """Bytes this record adds to registre.json as store_io writes it.
+
+    store_io writes the state with indent=2, and the record sits _RECORD_DEPTH
+    levels deep, so every line of its own indent=2 dump gains 2 x depth spaces.
+    This is the size the state_sync persist guard measures (LF line endings,
+    as on the Linux runner), not the canonical size of the leaf preimage.
+    """
+    text = json.dumps(record, ensure_ascii=False, indent=2)
+    return len(text.encode("utf-8", "surrogatepass")) + 2 * _RECORD_DEPTH * text.count("\n")
 
 
 def read_json_capped(path: Path, max_bytes: int | None = None) -> tuple[object, str]:
@@ -666,19 +767,39 @@ def read_json_capped(path: Path, max_bytes: int | None = None) -> tuple[object, 
         return None, f"unreadable ({type(exc).__name__})"
 
 
-def _code(value: object) -> str:
-    return value if isinstance(value, str) and _CODE.fullmatch(value) else ""
+def _drop(dropped: dict | None, field: str, n: int = 1) -> None:
+    """Count values of `field` the view stated but the record cannot carry."""
+    if dropped is not None and n > 0:
+        dropped[field] = dropped.get(field, 0) + n
 
 
-def _codes(values: object, *, allowed: tuple[str, ...] | None = None, keep_order: bool = False) -> list[str]:
-    """Valid codes of a list, once each: sorted, or in the given order (places)."""
+def _stated(value: object) -> bool:
+    """The view stated something (an absent or empty value is absence, not a drop)."""
+    return value is not None and not (isinstance(value, (str, list, dict)) and not value)
+
+
+def _code(value: object, allowed, dropped: dict | None = None, field: str = "") -> str:
+    """The value when it belongs to the closed list `allowed`, else "" (counted)."""
+    code = value if isinstance(value, str) and value in allowed else ""
+    if not code and _stated(value):
+        _drop(dropped, field)
+    return code
+
+
+def _codes(values: object, allowed, dropped: dict | None = None, field: str = "", *,
+           keep_order: bool = False) -> list[str]:
+    """Codes of a list that belong to the closed list, once each: sorted, or in
+    the given order (places, most specific first). Every other stated value is
+    counted, never sealed."""
     if not isinstance(values, list):
+        if _stated(values):
+            _drop(dropped, field)
         return []
     seen: set[str] = set()
     out: list[str] = []
     for value in values:
-        code = _code(value)
-        if code and code not in seen and (allowed is None or code in allowed):
+        code = _code(value, allowed, dropped, field)
+        if code and code not in seen:
             seen.add(code)
             out.append(code)
     return out if keep_order else sorted(out)
@@ -700,23 +821,38 @@ def _event_members(members: object) -> dict[str, dict]:
     return rows
 
 
-def _event_anchors(anchors: object) -> list[dict]:
-    """{type, ref} only (rule and status are the method's, not the record's), sorted."""
+def _anchor_priority(anchor: tuple[str, str]) -> tuple:
+    kind, ref = anchor
+    return (_ANCHOR_KEEP_ORDER.index(kind), -int(ref) if kind == "edition_seal" else 0, ref)
+
+
+def _event_anchors(anchors: object, dropped: dict | None = None) -> list[dict]:
+    """{type, ref} only (rule and status are the method's, not the record's),
+    sorted by (type, ref), at most EVENT_ANCHORS_MAX. Every anchor row the view
+    stated but the record cannot carry (unknown type, unsafe or malformed ref,
+    over the cap) is counted, so a dropped anchor never reads as "no anchor"."""
+    if not isinstance(anchors, list):
+        if _stated(anchors):
+            _drop(dropped, "anchors")
+        return []
     found: set[tuple[str, str]] = set()
-    for row in anchors if isinstance(anchors, list) else []:
-        if not isinstance(row, dict):
-            continue
-        kind, ref = row.get("type"), row.get("ref")
-        if not isinstance(kind, str) or kind not in ANCHOR_REF:
-            continue
+    for row in anchors:
+        kind = row.get("type") if isinstance(row, dict) else None
+        ref = row.get("ref") if isinstance(row, dict) else None
+        check = ANCHOR_REF.get(kind) if isinstance(kind, str) else None
         if isinstance(ref, int) and not isinstance(ref, bool) and 0 < ref < 10**12:
             ref = str(ref)       # a numeric id (main seq, civic id) is the same id
-        if isinstance(ref, str) and ANCHOR_REF[kind].fullmatch(ref):
-            found.add((kind, ref))
-    return [{"type": kind, "ref": ref} for kind, ref in sorted(found)]
+        ref = check(ref) if check is not None else ""
+        if not ref:
+            _drop(dropped, "anchors")
+            continue
+        found.add((kind, ref))
+    kept = sorted(found, key=_anchor_priority)[:EVENT_ANCHORS_MAX]
+    _drop(dropped, "anchors", len(found) - len(kept))
+    return [{"type": kind, "ref": ref} for kind, ref in sorted(kept)]
 
 
-def event_entry(event: dict) -> dict:
+def event_entry(event: dict, closed: dict | None = None, dropped: dict | None = None) -> dict:
     """The sealed shape of one event: exactly the section-12 keys, codes and counts.
 
     Counts are taken from the view, never re-derived by a second brain, except
@@ -725,7 +861,14 @@ def event_entry(event: dict) -> dict:
     independence.count, else the number of its groups). A count that cannot be
     established is sealed as 0, which the schema never uses for a real event
     (independence.count >= 1, members >= 1), so absence stays readable.
+
+    Codes are kept only when they belong to the closed lists (`closed_codes`,
+    loaded when not given); every value left out is counted in `dropped`.
     """
+    if closed is None:
+        closed, why = closed_codes()
+        if closed is None:
+            raise ValueError(why)
     members = _event_members(event.get("members"))
     # A lean view may state the count without the rows; rows win when present.
     member_count = len(members) if isinstance(event.get("members"), list) else (_count(event.get("member_count")) or 0)
@@ -735,13 +878,15 @@ def event_entry(event: dict) -> dict:
         cls = cls if isinstance(cls, str) and cls in ORIGIN_CLASSES else "unknown"
         origin[cls] = origin.get(cls, 0) + 1
     if isinstance(event.get("institutions"), list):
-        institutions = _codes(event["institutions"])
+        institutions = _codes(event["institutions"], closed["institutions"], dropped, "institutions")
     else:
-        institutions = _codes([row.get("institution") for row in members.values()])
+        institutions = _codes([row.get("institution") for row in members.values()],
+                              closed["institutions"], dropped, "institutions")
     if isinstance(event.get("languages"), list):
-        languages = _codes(event["languages"], allowed=EVENT_LANGUAGES)
+        languages = _codes(event["languages"], EVENT_LANGUAGES, dropped, "languages")
     else:
-        languages = _codes([row.get("language") for row in members.values()], allowed=EVENT_LANGUAGES)
+        languages = _codes([row.get("language") for row in members.values()], EVENT_LANGUAGES,
+                           dropped, "languages")
     independence = event.get("independence") if isinstance(event.get("independence"), dict) else {}
     independent = _count(independence.get("count"))
     if independent is None:
@@ -751,20 +896,22 @@ def event_entry(event: dict) -> dict:
         independent = 0          # more independent groups than members: not established
     lineage = event.get("lineage") if isinstance(event.get("lineage"), dict) else {}
     merged = lineage.get("merged_into")
-    activity = event.get("activity")
+    merged_into = (merged if isinstance(merged, str) and _EVENT_ID.fullmatch(merged)
+                   and merged != event["event_id"] else "")
+    if not merged_into and _stated(merged):
+        _drop(dropped, "merged_into")
     return {
         "event_id": event["event_id"],
-        "type": _code(event.get("type")),
-        "places": _codes(event.get("places"), keep_order=True),
-        "activity": activity if isinstance(activity, str) and activity in EVENT_ACTIVITIES else "",
+        "type": _code(event.get("type"), closed["type"], dropped, "type"),
+        "places": _codes(event.get("places"), closed["places"], dropped, "places", keep_order=True),
+        "activity": _code(event.get("activity"), EVENT_ACTIVITIES, dropped, "activity"),
         "institutions": institutions,
         "languages": languages,
         "member_count": member_count,
         "independent_count": independent,
         "origin": dict(sorted(origin.items())),
-        "anchors": _event_anchors(event.get("anchors")),
-        "merged_into": (merged if isinstance(merged, str) and _EVENT_ID.fullmatch(merged)
-                        and merged != event["event_id"] else ""),
+        "anchors": _event_anchors(event.get("anchors"), dropped),
+        "merged_into": merged_into,
     }
 
 
@@ -796,16 +943,25 @@ def edition_root_for(state: dict, edition: str) -> str:
     return ""
 
 
-def events_record(doc: object, edition: str, edition_root: str = "") -> tuple[dict | None, str]:
+def events_record(doc: object, edition: str, edition_root: str = "", *,
+                  closed: dict | None = None, dropped: dict | None = None) -> tuple[dict | None, str]:
     """(record, "") for one edition's event view, or (None, why it is not sealed).
 
     The view must declare the same collection clock as the edition being
     sealed: attaching another edition's events would make the seal look
     measured while being false (the rule collection_for_edition applies to the
-    main record). A malformed view is not sealed at all rather than sealed
-    with holes: identity (event_id) is checked for every entry, and an event
-    listed twice must be listed identically. Events marked out_of_window are
-    not part of the edition's view and are left out.
+    main record). A view whose builder declares it did not build this edition
+    (`status` other than "ok", e.g. a refused edition or an unreadable store,
+    written with an empty events list) is not sealed: an empty record would be
+    a false "no event", not a measured absence. A view without `status` (the
+    section-3 shape) is read as built. A malformed view is not sealed at all
+    rather than sealed with holes: identity (event_id) is checked for every
+    entry, and an event listed twice must be listed identically. Events marked
+    out_of_window are not part of the edition's view and are left out.
+
+    `closed` are the closed code lists (loaded when not given; unavailable
+    lists seal nothing). `dropped` receives, per field, the number of stated
+    values the record could not carry.
     """
     if not edition or _ts(edition) is None:
         return None, "no-edition"
@@ -816,23 +972,40 @@ def events_record(doc: object, edition: str, edition_root: str = "") -> tuple[di
         return None, "malformed (no edition clock)"
     if declared != _ts(edition):
         return None, f"edition-mismatch (view {declared.isoformat()}, edition {edition})"
+    status = doc.get("status", "ok")
+    if status != "ok":
+        shown = status if isinstance(status, str) and _STATUS.fullmatch(status) else "unrecognised"
+        return None, f"not-built (the view's status is {shown})"
     events = doc.get("events")
     if not isinstance(events, list):
         return None, "malformed (no events list)"
     if len(events) > EVENTS_MAX:
         return None, f"too-many ({len(events)} events, cap {EVENTS_MAX})"
+    if closed is None:
+        closed, why = closed_codes()
+        if closed is None:
+            return None, why
     entries: dict[str, dict] = {}
+    counted: dict[str, int] = {}
     for n, event in enumerate(events):
         if not isinstance(event, dict) or not isinstance(event.get("event_id"), str) \
                 or not _EVENT_ID.fullmatch(event["event_id"]):
             return None, f"malformed (entry {n} has no valid event_id)"
         if event.get("window_state") == "out_of_window":
             continue
-        entry = event_entry(event)
+        local: dict[str, int] = {}
+        entry = event_entry(event, closed, local)
         known = entries.get(entry["event_id"])
-        if known is not None and canonical(known) != canonical(entry):
-            return None, f"malformed ({entry['event_id']} listed twice, differently)"
+        if known is not None:
+            if canonical(known) != canonical(entry):
+                return None, f"malformed ({entry['event_id']} listed twice, differently)"
+            continue             # the same event listed twice: counted once
         entries[entry["event_id"]] = entry
+        for field, n_dropped in local.items():
+            _drop(counted, field, n_dropped)
+    if dropped is not None:
+        for field, n_dropped in sorted(counted.items()):
+            _drop(dropped, field, n_dropped)
     record = {
         "method": EVENTS_METHOD,
         "edition": edition,
@@ -842,7 +1015,7 @@ def events_record(doc: object, edition: str, edition_root: str = "") -> tuple[di
     return record, ""
 
 
-def seal_events(state: dict, record: dict) -> tuple[dict, str]:
+def seal_events(state: dict, record: dict, dropped: dict | None = None) -> tuple[dict, str]:
     """Append an event seal, or confirm the existing one. Returns (state, action).
 
     Same law as seal_edition: keyed by the collection clock, so a re-render of
@@ -850,6 +1023,12 @@ def seal_events(state: dict, record: dict) -> tuple[dict, str]:
     differs, keeps the recorded seal and prints the divergence; an older
     edition is ignored. The state is replaced only once the new chain is built,
     so a fault on the way leaves it exactly as it was.
+
+    A record larger than EVENTS_RECORD_MAX stored bytes is never minted
+    ("record-oversized", nothing changes): one runaway view must not be able
+    to grow, then collapse, the only copy of the registre (see the constants).
+    `dropped` (values the record could not carry, per field) is kept in the new
+    seal's header, outside the leaf, as the diagnosis of that edition.
     """
     chain_in = state.get("evenements") if isinstance(state.get("evenements"), dict) else {}
     seals = list(chain_in.get("seals") or [])
@@ -869,16 +1048,23 @@ def seal_events(state: dict, record: dict) -> tuple[dict, str]:
         prev, seq = str(last.get("root") or ""), _int(last.get("seq")) + 1
     else:
         prev, seq = "", 1
+    size, cap = record_stored_bytes(record), min(EVENTS_RECORD_MAX, EVENTS_RECORD_BYTES)
+    if size > cap:
+        return state, f"record-oversized ({size} stored bytes, cap {cap}); nothing minted"
     leaf = leaf_of(record)
-    seals.append({
+    seal = {
         "seq": seq,
         "edition": edition,
         "prev": prev,
         "leaf": leaf,
         "root": chain_hash(prev, leaf),
         "event_count": len(record.get("events") or []),
-        "record": record,
-    })
+    }
+    counts = {k: v for k, v in sorted((dropped or {}).items()) if isinstance(v, int) and v > 0}
+    if counts:
+        seal["dropped"] = counts
+    seal["record"] = record
+    seals.append(seal)
     state["evenements"] = {"method": EVENTS_METHOD, "seals": _retain_records(seals)}
     return state, "appended"
 
@@ -887,16 +1073,20 @@ def _retain_records(seals: list[dict]) -> list[dict]:
     """Release the records of older seals; every header stays, byte for byte.
 
     The newest seals keep their record while they fit EVENTS_RECORD_CAP and
-    EVENTS_RECORD_BYTES (the newest one always does), so the records present
-    are always one contiguous newest run. The seal itself (seq, edition,
-    prev, leaf, root) never changes: only its preimage leaves the private state.
+    EVENTS_RECORD_BYTES (stored bytes), so the records present are always one
+    contiguous newest run. No record is kept "whatever its size": the mint
+    refuses a record over min(EVENTS_RECORD_MAX, EVENTS_RECORD_BYTES), so the
+    newest fits, and when it pushes older records out it replaces them, which
+    bounds the shrink of one edition to less than one record. The seal itself
+    (seq, edition, prev, leaf, root) never changes: only its preimage leaves
+    the private state.
     """
     kept = spent = 0
     for seal in reversed(seals):
         if "record" not in seal:
             break
-        size = len(canonical(seal["record"]))
-        if kept and (kept >= EVENTS_RECORD_CAP or spent + size > EVENTS_RECORD_BYTES):
+        size = record_stored_bytes(seal["record"])
+        if kept >= EVENTS_RECORD_CAP or spent + size > EVENTS_RECORD_BYTES:
             break
         kept += 1
         spent += size
@@ -911,18 +1101,24 @@ def seal_events_soft(state: dict, edition: str, doc: object = None,
 
     Whatever happens here, the edition seal and every public artefact are
     already decided: an absent, corrupt, foreign or hostile view mints nothing
-    and leaves the event chain as it was.
+    and leaves the event chain as it was. Values the record could not carry
+    are counted in the action ("left out of the record: anchors 2, ..."), on
+    every render of the edition, so a drop is never read as an absence.
     """
     try:
         if doc is None:
             doc, why = read_json_capped(path)
             if doc is None:
                 return state, why
-        record, why = events_record(doc, edition, edition_root_for(state, edition))
+        dropped: dict[str, int] = {}
+        record, why = events_record(doc, edition, edition_root_for(state, edition), dropped=dropped)
         if record is None:
             return state, why
-        return seal_events(state, record)
-    except Exception as exc:  # noqa: BLE001 - the shadow chain must never break the render
+        state, action = seal_events(state, record, dropped)
+        if dropped:
+            action += "; left out of the record: " + ", ".join(f"{k} {v}" for k, v in sorted(dropped.items()))
+        return state, action
+    except (Exception, SystemExit) as exc:  # noqa: BLE001 - the shadow chain must never break the render
         return state, f"fault ({type(exc).__name__}: {str(exc)[:80]})"
 
 
