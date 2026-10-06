@@ -36,6 +36,7 @@ enrich.RE_NUM and enrich._parse_number (number grammar), cluster_issues
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 import unicodedata
@@ -108,7 +109,7 @@ def _int_count(raw: str) -> int | None:
     if token in WORD_NUMBERS:
         return WORD_NUMBERS[token]
     value = enrich._parse_number(token)
-    if value is None or value != value or value in (float("inf"), float("-inf")):
+    if value is None or not math.isfinite(value):
         return None
     if value != int(value) or not 0 <= value <= MAX_COUNT:
         return None
@@ -213,7 +214,7 @@ def _count_atoms(text: str) -> list[dict]:
             return
         if (unit.startswith("persons_") and re.fullmatch(r"(?:19|20)\d{2}", m.group(group))
                 and _YEAR_PREFIX.search(text[max(0, m.start(group) - 12):m.start(group)])):
-            return  # "in 2024 death of ..." names a year, not a toll
+            return  # "in 2031 death of ..." names a year, not a toll
         out.append({
             "kind": "count", "unit": unit, "subject": None, "value": value,
             "qualifier": _qualifier(text, m.start(group)),
@@ -334,7 +335,7 @@ def _subject(text: str, start: int, end: int) -> str | None:
         # which only affects tie-breaking between cues, never the cue set.
         s = min(s, len(folded))
         e = min(e, len(folded))
-    # A cue that precedes the number ("bénéfice net de 2 020 M$") labels it
+    # A cue that precedes the number ("résultat net de 7 777 M$") labels it
     # before a cue that follows it; nearest wins inside each side, ties go to
     # the alphabetically first code. No wall clock, no dict-order dependence.
     before: tuple[int, str] | None = None
@@ -369,12 +370,15 @@ def _cents(raw: str, mult: str | None) -> int | None:
         # comma whatever its width (enrich._parse_number would read 1 151).
         token = str(raw).replace(",", ".")
     value = enrich._parse_number(token)
-    if value is None or value != value:
+    if value is None or not math.isfinite(value):
         return None
     factor = _MULT.get((mult or "").lower(), 1) if mult else 1
     # Round the dollar figure to the cent first (one decimal source only), then
     # scale, so 1.005 cannot drift through a float multiply.
-    cents = round(round(value * factor, 2) * 100)
+    scaled = value * factor
+    if not math.isfinite(scaled):
+        return None  # a 400-digit run times a multiplier overflows to inf
+    cents = round(round(scaled, 2) * 100)
     if not 0 <= cents <= MAX_ABS_CENTS:
         return None
     return int(cents)
@@ -392,7 +396,7 @@ def _amount_unit(text: str, start: int, end: int) -> str | None:
     if _PER_OTHER.match(tail) or _PER_THE.match(tail) or re.match(r"^\s*/\s*(?:kWh|L|h|km)\b", tail, re.I):
         return None  # a rate per something else is not a "total": left out, not relabelled
     if _ANNUAL_BEFORE.search(text[max(0, start - 44):start]):
-        return "per_year"  # "économies annuelles d'environ 350 000 $"
+        return "per_year"  # "économies annuelles de près de 900 000 $"
     return "total"
 
 
@@ -420,7 +424,7 @@ def _amount_atoms(text: str) -> list[dict]:
                 })
     for m in _PCT.finditer(text):
         value = enrich._parse_number(m.group("n"))
-        if value is None or not 0 <= value <= 100000:
+        if value is None or not math.isfinite(value) or not 0 <= value <= 100000:
             continue
         subject = _subject(text, m.start(), m.end())
         if subject is None:
@@ -458,10 +462,18 @@ def _enrich_atoms(title: str, summary: str) -> list[dict]:
             n = _int_count(str(value))
             if n is not None:
                 out.append({"kind": "count", "unit": "housing_units", "subject": None, "value": n, "qualifier": qual})
-        elif kind == "price" and isinstance(value, (int, float)):
+        elif kind == "price" and isinstance(value, (int, float)) and not isinstance(value, bool):
+            try:
+                finite = math.isfinite(float(value))
+            except OverflowError:  # an int too large for a float
+                finite = False
+            if not finite:
+                continue  # inf/huge: not a figure we can hold as an integer
             subject = _subject(text, *span) if span else None
             unit = str(u.get("unit") or "")
             if unit == "percent":
+                if not 0 <= value <= 100000:
+                    continue  # same bound as the direct percent path
                 out.append({"kind": "amount", "unit": "percent_bp", "subject": subject or "price",
                             "value": int(round(float(value) * 100)), "qualifier": qual})
             elif unit in ("CAD", "dollars", "CAD_per_month"):
@@ -489,8 +501,8 @@ _MONTHS = {
     "decembre": 12, "dec": 12, "december": 12, "decem": 12,
 }
 _MONTH_ALT = (
-    "janvier|janv|january|jan|f[eé]vrier|f[eé]vr|f[eé]v|february|feb|mars|march|"
-    "avril|avr|april|apr|mai|may|juin|june|juillet|juil|july|jul|ao[uû]t|august|aug|"
+    "janvier|janv|january|jan|f[eé]vrier|f[eé]vr|f[eé]v|february|feb|mars|(?-i:March)|"
+    "avril|avr|april|apr|mai|(?-i:May)|juin|june|juillet|juil|july|jul|ao[uû]t|august|aug|"
     "septembre|sept|september|sep|octobre|oct|october|novembre|nov|november|"
     "d[eé]cembre|d[eé]c|december|dec"
 )
@@ -552,7 +564,7 @@ def _date_atoms(text: str, pub: date | None) -> list[dict]:
         return not any(m.start() < b and a < m.end() for a, b in consumed)
 
     def dateline(m: re.Match) -> bool:
-        # "Québec, le 2 octobre 2026 –" is the publication stamp, not the
+        # "Lévis, le 14 novembre 2026 –" is the publication stamp, not the
         # date the source states for the event.
         return bool(_DATELINE_AFTER.match(text[m.end():m.end() + 14])) and bool(_DATELINE_BEFORE.match(text[:m.start()]))
 
@@ -860,8 +872,9 @@ def summarize(items: list[dict]) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    src = Path(argv[argv.index("--in") + 1]) if "--in" in argv else IN_PATH
     try:
+        i = argv.index("--in") if "--in" in argv else -1
+        src = Path(argv[i + 1]) if 0 <= i < len(argv) - 1 else IN_PATH
         doc = json.loads(src.read_text(encoding="utf-8"))
         items = doc.get("candidates") if isinstance(doc, dict) else doc
         summary = summarize(items if isinstance(items, list) else [])
