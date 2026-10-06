@@ -127,6 +127,12 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
     if len(withdrawn) > SILENT_NAMES_CAP:
         rest = len(withdrawn) - SILENT_NAMES_CAP
         withdrawn_names += f" et {rest} autre" + ("s" if rest != 1 else "")
+    # A source Vigie cut itself (sources.yaml) is our decision, never a silence.
+    cut = [r for r in register if r["current"] == registre.STATE_CUT]
+    cut_names = ", ".join(esc(r["institution_name"]) for r in cut[:SILENT_NAMES_CAP])
+    if len(cut) > SILENT_NAMES_CAP:
+        rest = len(cut) - SILENT_NAMES_CAP
+        cut_names += f" et {rest} autre" + ("s" if rest != 1 else "")
     missed_names = ", ".join(esc(r["institution_name"]) for r in missed[:SILENT_NAMES_CAP])
     if len(missed) > SILENT_NAMES_CAP:
         rest = len(missed) - SILENT_NAMES_CAP
@@ -143,6 +149,8 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
            if no_items else "")
         + (f' {esc(registre.state_heading_fr(registre.STATE_WITHDRAWN))} : {withdrawn_names}.'
            if withdrawn else "")
+        + (f' {esc(registre.state_heading_fr(registre.STATE_CUT))} : {cut_names}.'
+           if cut else "")
         + "</p>"
         if register else "<p>Registre des voix : pas encore d’édition scellée.</p>"
     )

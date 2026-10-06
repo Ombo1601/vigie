@@ -240,16 +240,23 @@ def _deferred_sources() -> list[dict]:
 
 
 def _rules_scalars() -> dict:
+    """The one-line scalars of the `rules:` block (keys indented two spaces).
+
+    Folded (`>`) values and their deeper-indented continuation lines are
+    skipped: only single-line facts such as the RSS ceiling are rendered."""
     text = (ROOT / "sources.yaml").read_text(encoding="utf-8")
     m = re.search(r"(?ms)^rules:\n(.*?)\Z", text)
     out: dict = {}
     if not m:
         return out
     for raw_line in m.group(1).splitlines():
-        if not raw_line or raw_line.startswith(("#", " ", ">")) or ":" not in raw_line:
+        if not raw_line.startswith("  ") or raw_line.startswith("   ") or ":" not in raw_line:
             continue
-        key, _, val = raw_line.partition(":")
-        out[key.strip()] = brief.plain(val)
+        key, _, val = raw_line.strip().partition(":")
+        val = val.strip()
+        if not key or key.startswith("#") or val in ("", ">", "|"):
+            continue
+        out[key] = brief.plain(val)
     return out
 
 
@@ -316,7 +323,9 @@ def _sources_html() -> str:
             )
         elif src.get("enabled") is not True:
             reason = str(src.get("cut_reason") or "coupé, raison consignée")
-            cut_rows.append(f'<li><strong>{name}</strong> — {brief.esc(brief.plain(reason))}</li>')
+            cut_at = brief.plain(src.get("cut_at")) if src.get("cut_at") else ""
+            when = f" (coupé le {brief.esc(cut_at)})" if cut_at else ""
+            cut_rows.append(f'<li><strong>{name}</strong> — {brief.esc(brief.plain(reason))}{when}</li>')
     cuts = (
         f'<h3 id="coupes">Coupées ou reportées</h3><ul class="methode-cuts">{"".join(cut_rows)}</ul>'
         if cut_rows else ""
@@ -342,9 +351,11 @@ def _sources_html() -> str:
     )
     fine = []
     if rules.get("max_enabled_rss_v0"):
-        fine.append(f"Plafond : {brief.esc(rules['max_enabled_rss_v0'])} flux RSS actifs.")
-    if rules.get("coverage_note"):
-        fine.append(brief.esc(str(rules["coverage_note"])))
+        rss_now = len([src for src in sources if src.get("type") == "rss"])
+        fine.append(f"Plafond : au plus {brief.esc(rules['max_enabled_rss_v0'])} flux RSS actifs "
+                    f"({rss_now} aujourd’hui).")
+    # rules.coverage_note is an English working note of the registry (served as
+    # /sources.yaml); this French page states the ceiling only.
     return (
         f'<p>Vigie suit une liste <strong>finie et publiée</strong> de sources : '
         f"<strong>{len(sources)}</strong> actives, <strong>{len(cut_rows)}</strong> coupées ou "

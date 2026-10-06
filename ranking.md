@@ -434,6 +434,8 @@ PDCA: sister desks are one house. Fight gate and silence seat use `institution`,
 Chancellery: every enabled RSS carries `institution` + `institution_name`.
 Collapse: CBC Montreal+Politics → `cbc`; Radio-Canada Québec/National/Ottawa → `radio-canada`.
 12 feeds → **9** institutions.
+(2026-10-06: both CBC desks were cut — `cut_reason` in sources.yaml — so the live
+registry follows 10 RSS feeds → 8 institutions; the ceiling stays `max_enabled_rss_v0`.)
 
 Schema delta (`silence` v0.2):
 `scope: enabled_institutions`, `enabled_feed_count`, `silent[].institution_id` + `feed_ids`.

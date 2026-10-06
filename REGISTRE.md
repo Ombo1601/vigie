@@ -76,6 +76,13 @@ five states:
 | `collection_gap` | at least one of its feeds failed — **Vigie's** outage |
 | `not_established` | sealed before collection facts existed; no claim is made |
 
+Two more states are **derived at render time and never sealed**: `withdrawn`
+(the publisher asked for removal — `takedowns.yaml`, R10) and `cut` (Vigie itself
+stopped following the institution: every one of its feeds is `enabled: false`
+with `cut_reason` and `cut_at` in `sources.yaml`; it applies only once an edition
+no longer follows the institution, so a measured state always wins). Neither is
+a silence, and neither changes a sealed record.
+
 Only `collection_gap` accumulates a streak (`collection_gap_streak`), and it
 accumulates against Vigie. `collection` is sealed only when the enriched store's
 own collection clock equals the edition key, so a mismatched edition can never
@@ -102,7 +109,7 @@ Published files (all static, all CORS‑open, no key needed):
 |------|---------|
 | `/registre/checkpoint.txt` | origin, chain size, current root, edition stamp, latest roadworks root |
 | `/registre/chain.json` | the last 200 seals with their records, plus `anchor_root` (the root before the first published seal) |
-| `/registre/institutions.json` | per followed institution: state this edition (`spoke` / `published` / `no_items` / `collection_gap` / `not_established`), collected item counts, per-state edition counters, last time it entered a dossier, and Vigie's own `collection_gap_streak` |
+| `/registre/institutions.json` | per followed institution: state this edition (`spoke` / `published` / `no_items` / `collection_gap` / `not_established`, or the derived `withdrawn` / `cut`), collected item counts, per-state edition counters, last time it entered a dossier, and Vigie's own `collection_gap_streak` |
 | `/registre/travaux.json` | the roadworks chain: one root per *change* of the City's active obstruction set |
 | `/registre.html` | the human view |
 
@@ -157,7 +164,8 @@ titles, `author` (when the publisher's feed gave one) and publisher URLs — nev
 an excerpt or a summary: the machine files carry publisher, author, title and
 URL only — the per-institution state (`spoke`, `published`,
 `no_items_collected`, `collection_gap`, `not_established`, with collected item
-counts), and the roadworks diff. `/llms.txt` maps these files; the front door
+counts, plus `withdrawn_on_request` and `cut_by_vigie` only when they apply),
+and the roadworks diff. `/llms.txt` maps these files; the front door
 advertises `/index.html.md` as its Markdown twin (`rel="alternate"`).
 `delta-v1.1` is `delta-v1` plus an `author` on items (empty string when the feed gave none) and on
 `label_source`, and a top-level `attribution` notice; every v1 key keeps its

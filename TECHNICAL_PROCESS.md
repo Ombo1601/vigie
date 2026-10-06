@@ -80,6 +80,7 @@ form of the edition itself).
 - Status always `proposed`
 - Same-language event buckets: complete-link, ≥3 shared headline tokens, Jaccard ≥0.55, 72h, road-name intersection
 - FR/EN event buckets: same complete-link plus a shared place or proper name, then bilingual-canonical tokens (≥2 shared, Jaccard ≥0.40). Precision over recall. Lévis is not télévision.
+  Since the CBC cut (2026-10-06) no English feed is followed; the rule stays for any future one.
 
 ## Ranking (see ranking.md)
 

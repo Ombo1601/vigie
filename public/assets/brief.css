@@ -615,7 +615,7 @@ footer .surfaces a small{display:block;font-family:var(--sans);font-size:var(--s
 .reg-spoke .reg-inst-state{color:var(--accent)}
 .reg-published .reg-inst-state{color:var(--body)}
 .reg-gap .reg-inst-state{color:#7a2e1d;font-weight:600}
-.reg-noitems .reg-inst-state,.reg-unknown .reg-inst-state{color:var(--muted)}
+.reg-noitems .reg-inst-state,.reg-unknown .reg-inst-state,.reg-withdrawn .reg-inst-state,.reg-cut .reg-inst-state{color:var(--muted)}
 .reg-gap{border-left:3px solid #7a2e1d;padding-left:12px}
 .reg-correction{margin:26px 0 0;padding:22px 24px;border:1px solid #7a2e1d;border-left:5px solid #7a2e1d;background:#fbf3f1}
 .reg-correction .eyebrow{color:#7a2e1d;margin-bottom:10px}
@@ -650,7 +650,7 @@ img{opacity:.94}
 .depart-item.rw-sev-0{border-left-color:#e0906f}
 .depart-item.rw-sev-1{border-left-color:#e0b072}
 .reg-gap .reg-inst-state{color:#e0906f}
-.reg-noitems .reg-inst-state,.reg-unknown .reg-inst-state{color:var(--muted)}
+.reg-noitems .reg-inst-state,.reg-unknown .reg-inst-state,.reg-withdrawn .reg-inst-state,.reg-cut .reg-inst-state{color:var(--muted)}
 .reg-gap{border-left-color:#e0906f}
 .sb-missed .sb-row-label,.sb-missed .sb-name{color:#e0906f}
 .rw-sketch svg{background:#131e22}

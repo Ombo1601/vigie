@@ -1800,6 +1800,7 @@ def silence_bar(issues: list[dict], register: list[dict] | None = None) -> str:
         no_items = by(_registre.STATE_NO_ITEMS)
         undetermined = by(_registre.STATE_NOT_ESTABLISHED)
         withdrawn = by(_registre.STATE_WITHDRAWN)
+        cut = by(_registre.STATE_CUT)
         if len(spoke) + len(published) + len(missed) + len(no_items) + len(undetermined) < 2:
             return ""
         items = sum(safe_int(r.get("items_collected")) for r in published)
@@ -1821,6 +1822,7 @@ def silence_bar(issues: list[dict], register: list[dict] | None = None) -> str:
             + _row(_registre.state_heading_fr(_registre.STATE_COLLECTION_GAP), missed, "sb-missed")
             + _row(_registre.state_heading_fr(_registre.STATE_NOT_ESTABLISHED), undetermined, "sb-unknown")
             + _row(_registre.state_heading_fr(_registre.STATE_WITHDRAWN), withdrawn, "sb-withdrawn")
+            + _row(_registre.state_heading_fr(_registre.STATE_CUT), cut, "sb-cut")
         )
         note = ("« Publié, hors dossier » n’est pas un silence : un dossier exige un sujet nommé et deux "
                 "institutions. Une collecte manquée est notre lacune, jamais l’absence d’une institution ; "

@@ -79,6 +79,10 @@ STATE_NOT_ESTABLISHED = "not_established"  # sealed before collection facts exis
 # Derived at render time from takedowns.yaml, never sealed: a publisher's
 # removal applies to the views, the published seals stay byte-identical.
 STATE_WITHDRAWN = "withdrawn"            # withdrawn on the publisher's request (R10)
+# Derived at render time from sources.yaml, never sealed: Vigie itself stopped
+# following the institution (every RSS feed enabled: false + cut_reason/cut_at).
+# Only applies once an edition no longer follows it; a measured state wins.
+STATE_CUT = "cut"                        # cut by Vigie (its own decision, logged)
 
 # The correction is a constant, never a wall clock: ledgers stay reproducible.
 CORRECTION_DATE = "2026-09-30"
@@ -574,6 +578,7 @@ _STATE_RANK = {
     STATE_PUBLISHED: 3,
     STATE_SPOKE: 4,
     STATE_WITHDRAWN: 5,
+    STATE_CUT: 6,
 }
 
 
@@ -584,12 +589,13 @@ STATE_LABEL_FR = {
     STATE_COLLECTION_GAP: "collecte en échec — lacune de Vigie, pas un silence",
     STATE_NOT_ESTABLISHED: "état non établi",
     STATE_WITHDRAWN: "retirée à la demande de l’éditeur",
+    STATE_CUT: "plus suivie : source coupée par Vigie, raison consignée",
 }
 
 # Short column / counter headings, same single source. "no_items" is its own
 # fact (feeds answered, nothing in the window): it is NOT a collection gap.
-# "withdrawn" is derived at render time (R10), never sealed: it is neither a
-# gap nor a silence, and has its own heading.
+# "withdrawn" (R10) and "cut" are derived at render time, never sealed: neither
+# is a gap nor a silence, and each has its own heading.
 STATE_HEADING_FR = {
     STATE_SPOKE: "Dans un dossier",
     STATE_PUBLISHED: "Publié, hors dossier",
@@ -597,6 +603,7 @@ STATE_HEADING_FR = {
     STATE_COLLECTION_GAP: "Collecte manquée par Vigie",
     STATE_NOT_ESTABLISHED: "Non établi",
     STATE_WITHDRAWN: "Retirée à la demande de l’éditeur",
+    STATE_CUT: "Plus suivie (coupée par Vigie)",
 }
 
 
@@ -617,6 +624,8 @@ def state_label_fr(row: dict) -> str:
         label += f" ({n} article{'s' if n != 1 else ''} collecté{'s' if n != 1 else ''})"
     if stt == STATE_COLLECTION_GAP and _int(row.get("collection_gap_streak")) > 1:
         label += f" depuis {row['collection_gap_streak']} éditions"
+    if stt == STATE_CUT and isinstance(row.get("cut_at"), str) and row["cut_at"]:
+        label += f" (coupe du {row['cut_at']})"
     return label
 
 
@@ -641,7 +650,44 @@ def withdrawn_institutions(sources_path: Path | None = None) -> dict[str, dict]:
         return {}
 
 
-def institution_register(state: dict, withdrawn: dict[str, dict] | None = None) -> list[dict]:
+def cut_institutions(sources_path: Path | None = None) -> dict[str, dict]:
+    """Institutions Vigie itself stopped following: every RSS feed of the
+    institution is `enabled: false` in sources.yaml (with cut_reason/cut_at).
+
+    One cut sister feed does not cut the voice; the last one does. Derived from
+    the published registry, never sealed. Fail-soft: a problem yields {}.
+    """
+    try:
+        import ingest_rss  # noqa: PLC0415 - lazy: keeps the module import cheap
+
+        records = ingest_rss.load_sources(Path(sources_path or SOURCES_PATH))
+    except Exception:  # noqa: BLE001 - a missing registry must never fake a state
+        return {}
+    by_inst: dict[str, list[dict]] = {}
+    for rec in records:
+        if rec.get("type") != "rss":
+            continue
+        iid = str(rec.get("institution") or rec.get("id") or "")
+        if iid:
+            by_inst.setdefault(iid, []).append(rec)
+    out: dict[str, dict] = {}
+    for iid, feeds in sorted(by_inst.items()):
+        if any(f.get("enabled") is True for f in feeds):
+            continue
+        first = feeds[0]
+        dates = sorted(str(f["cut_at"]) for f in feeds if f.get("cut_at"))
+        out[iid] = {
+            "institution_id": iid,
+            "institution_name": str(first.get("institution_name") or first.get("name") or iid),
+            "source_kind": "official" if str(first.get("source_kind") or "") == "official" else "media",
+            "feed_ids": sorted(str(f.get("id")) for f in feeds),
+            "cut_at": dates[-1] if dates else None,
+        }
+    return out
+
+
+def institution_register(state: dict, withdrawn: dict[str, dict] | None = None,
+                         cut: dict[str, dict] | None = None) -> list[dict]:
     """Per-institution voice facts derived from the per-edition voice rows.
 
     Only one streak is ever accumulated, and it counts *Vigie's* failure to
@@ -652,12 +698,15 @@ def institution_register(state: dict, withdrawn: dict[str, dict] | None = None) 
 
     An institution withdrawn on its publisher's request is reported as such
     (STATE_WITHDRAWN) instead of drifting to "not established" or vanishing.
+    An institution Vigie cut itself (sources.yaml) and that the newest edition
+    no longer follows is reported as STATE_CUT, never as "not established".
     This is a derived view: the sealed records are never touched.
     """
     rows = sorted((v for v in state.get("voice") or [] if v.get("edition")), key=lambda v: str(v["edition"]))
     names = state.get("names") or {}
     collection = latest_collection(state)
     withdrawn = withdrawn if isinstance(withdrawn, dict) else withdrawn_institutions()
+    cut = cut if isinstance(cut, dict) else cut_institutions()
     ids: set[str] = set(names) | set(withdrawn)
     for v in rows:
         for key in (*VOICE_KEYS, "absent_from_dossiers"):
@@ -681,22 +730,29 @@ def institution_register(state: dict, withdrawn: dict[str, dict] | None = None) 
             else:
                 break
         current = STATE_NOT_ESTABLISHED
+        followed_now = False
         if rows:
             newest = rows[-1]
             for key in VOICE_KEYS:
                 if iid in (newest.get(key) or []):
                     current = key
+                    followed_now = True
                     break
         pulled = withdrawn.get(iid) if isinstance(withdrawn.get(iid), dict) else {}
+        dropped = cut.get(iid) if isinstance(cut.get(iid), dict) and not followed_now else {}
         if pulled:
             current = STATE_WITHDRAWN
+        elif dropped:
+            current = STATE_CUT
         facts = collection.get(iid) if isinstance(collection.get(iid), dict) else {}
         measured = counts["spoke"] + counts["published"] + counts["no_items"] + counts["collection_gap"]
         meta = names.get(iid) if isinstance(names.get(iid), dict) else {}
         row = {
             "institution_id": iid,
-            "institution_name": str(meta.get("name") or pulled.get("institution_name") or iid),
-            "source_kind": str(meta.get("kind") or pulled.get("source_kind") or "media"),
+            "institution_name": str(meta.get("name") or pulled.get("institution_name")
+                                    or dropped.get("institution_name") or iid),
+            "source_kind": str(meta.get("kind") or pulled.get("source_kind")
+                               or dropped.get("source_kind") or "media"),
             "current": current,
             "items_collected": _int(facts.get("items")) if facts else None,
             "feeds_ok": _int(facts.get("feeds_ok")) if facts else None,
@@ -712,6 +768,8 @@ def institution_register(state: dict, withdrawn: dict[str, dict] | None = None) 
         }
         if pulled:
             row["withdrawn_requested_at"] = pulled.get("requested_at")
+        elif dropped:
+            row["cut_at"] = dropped.get("cut_at")
         out.append(row)
     out.sort(key=lambda r: (
         0 if r["source_kind"] == "official" else 1,
@@ -816,6 +874,7 @@ def public_institutions(state: dict) -> dict:
             STATE_COLLECTION_GAP: "au moins un de ses flux a échoué : lacune de collecte de Vigie, jamais un silence institutionnel",
             STATE_NOT_ESTABLISHED: "édition scellée avant que les faits de collecte existent : aucune affirmation",
             STATE_WITHDRAWN: "retirée à la demande de l'éditeur (takedowns.yaml) : plus collectée ni relayée ; les sceaux déjà publiés restent intacts",
+            STATE_CUT: "plus suivie : tous ses flux sont coupés par Vigie dans sources.yaml (cut_reason, cut_at) ; décision de Vigie, jamais un silence de l'institution ; les sceaux déjà publiés restent intacts",
         },
         "note": (
             "Aucun compteur ne s'accumule contre une institution du fait des règles de rapprochement "
@@ -891,6 +950,11 @@ def render_registre_html(state: dict) -> str:
             state_txt, cls = "aucun article collecté dans la fenêtre — flux répondus", "noitems"
         elif r["current"] == STATE_WITHDRAWN:
             state_txt, cls = "retirée à la demande de l’éditeur — plus collectée ni relayée", "withdrawn"
+        elif r["current"] == STATE_CUT:
+            when = f" le {esc(r['cut_at'])}" if isinstance(r.get("cut_at"), str) and r["cut_at"] else ""
+            state_txt, cls = (
+                f'plus suivie — source coupée par Vigie{when} '
+                '(<a href="/methode/sources.html#coupes">raison consignée</a>)', "cut")
         else:
             state_txt, cls = "état non établi (édition antérieure à la correction)", "unknown"
         last_spoke = (f"dernière parole en dossier : {_date(r['last_spoke'])}" if r.get("last_spoke")

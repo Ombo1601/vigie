@@ -52,7 +52,8 @@ def history(ts):
     return {"method": "dossier-history-v1", "updated_at": ts, "edition_count": 1, "dossiers": {}}
 
 
-# The nine institutions Vigie actually follows, with their real kinds.
+# The nine institutions Vigie followed in the 2026-09-24 production edition
+# (the CBC desks were cut on 2026-10-06), with their real kinds.
 NAMES9 = {
     "ville-quebec": ("Ville de Québec", "official"),
     "gouv-quebec": ("Gouvernement du Québec", "official"),

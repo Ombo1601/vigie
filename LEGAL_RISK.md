@@ -111,7 +111,9 @@ A lawsuit is unlikely; a **cease-and-desist is the realistic scenario** if tract
 - **CBC** (terms on file): feeds "for personal, noncommercial use"; display/excerpt/link
   allowed on "personal web site… for personal, noncommercial purposes", links must redirect,
   no distortion, attribution « CBC », removal on request. Vigie is non-commercial but not
-  *personal* → strictly, permission needed (permissions@cbc.ca).
+  *personal* → strictly, permission needed (permissions@cbc.ca). (Both CBC feeds were cut on
+  2026-10-06 — see below and `cut_reason` in sources.yaml; from the next edition on, no CBC
+  item is collected or relayed.)
 - **Radio-Canada**: same posture ("contact them before commercial reuse" — already logged in
   sources.yaml license_note).
 - **Quebecor (JdQ)** — the most aggressive house in Quebec (blocked Google over C-18,
@@ -180,7 +182,9 @@ TECHNICAL_PROCESS.md. Tests: `tests/test_legal_remediations.py`.
 identity is `Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)`,
 with no Referer. A 4xx refusal stops a feed for the run (no alternate URL), and robots.txt
 gates every article-page and image fetch. Hosts that stall the honest identity (CBC on
-2026-10-05) become recorded collection gaps, never a spoof.
+2026-10-05) become recorded collection gaps, never a spoof. The two CBC feeds, which also lie
+outside the City's area, were then cut on 2026-10-06 (`enabled: false` + `cut_reason`), so a
+permanent gap is not carried edition after edition.
 
 - **R1 — Author attribution (s. 29.2(b))**: capture `<dc:creator>` / `<media:credit>` /
   byline when the feed provides it and render it (« Par {author} — {source} »). Cedrom and

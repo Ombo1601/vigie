@@ -25,3 +25,59 @@ def robots_absent(url: str) -> bytes:
 
 
 ingest_rss.ROBOTS_FETCHER = robots_absent
+
+
+# --------------------------------------------------------------------------- #
+# The registry as fixture
+# --------------------------------------------------------------------------- #
+# The clustering tests were written against the chancellery of 2026-10-05,
+# when the two CBC desks were still followed. Their subject is a mechanism
+# (sister feeds share one seat; an English desk can open a bilingual dossier),
+# not which feeds are live today, so they run against that registry as a
+# fixture: the real sources.yaml with the named cut feeds re-enabled. The live
+# registry is checked by its own tests (ceiling from its rules, cuts logged).
+CBC_DESKS = ("cbc-montreal", "cbc-politics")
+SOURCES = ROOT / "sources.yaml"
+
+
+def rss_ceiling(path: Path = SOURCES) -> int:
+    """The documented RSS ceiling (`rules: max_enabled_rss_v0`) of a registry."""
+    import re
+
+    m = re.search(r"(?m)^  max_enabled_rss_v0:\s*(\d+)\s*$", path.read_text(encoding="utf-8"))
+    if not m:
+        raise AssertionError(f"no max_enabled_rss_v0 rule in {path}")
+    return int(m.group(1))
+
+
+def sources_with_reenabled(directory: Path, *source_ids: str) -> Path:
+    """A copy of sources.yaml in `directory` with the named cut feeds enabled again."""
+    text = SOURCES.read_text(encoding="utf-8")
+    for sid in source_ids:
+        start = text.index(f"\n  - id: {sid}\n")
+        end = text.find("\n  - id:", start + 1)
+        end = len(text) if end == -1 else end
+        block = text[start:end]
+        if "\n    enabled: false\n" not in block:
+            raise AssertionError(f"{sid} is not cut in {SOURCES}; the fixture is stale")
+        text = text[:start] + block.replace("\n    enabled: false\n", "\n    enabled: true\n", 1) + text[end:]
+    out = Path(directory) / "sources.yaml"
+    out.write_text(text, encoding="utf-8", newline="\n")
+    return out
+
+
+def use_cbc_chancellery(case) -> Path:
+    """Run `case` (a TestCase, from setUp) against the registry with both CBC
+    desks followed: patches cluster_issues.SOURCES_PATH for the test."""
+    import tempfile
+    from unittest import mock
+
+    import cluster_issues
+
+    tmp = tempfile.TemporaryDirectory()
+    case.addCleanup(tmp.cleanup)
+    path = sources_with_reenabled(Path(tmp.name), *CBC_DESKS)
+    patcher = mock.patch.object(cluster_issues, "SOURCES_PATH", path)
+    patcher.start()
+    case.addCleanup(patcher.stop)
+    return path

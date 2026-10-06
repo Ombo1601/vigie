@@ -89,6 +89,10 @@ class BilingualJoin(unittest.TestCase):
 
 
 class SisterDesksStayOneSeat(unittest.TestCase):
+    def setUp(self) -> None:
+        # The mechanism under test needs both CBC desks followed (fixture registry).
+        harness.use_cbc_chancellery(self)
+
     def test_two_cbc_feeds_remain_one_voice_and_are_dropped(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             inp = Path(raw) / "in.json"

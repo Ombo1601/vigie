@@ -92,9 +92,9 @@ Les journaux internes ne contiennent aucune donnée de lecteur.
 ## Retrait et contact
 
 Un éditeur ou un ayant droit qui souhaite que Vigie cesse de relayer son flux,
-son domaine, un article ou une image obtient le retrait **le jour même** : la
-demande est inscrite au registre public des retraits (`takedowns.yaml`) et
-appliquée au plus tard à l'édition suivante (environ 6 heures). Dès lors,
+son domaine, un article ou une image obtient le retrait **le jour même, au plus
+tard à l'édition suivante (environ 6 h)** : la demande est inscrite au registre
+public des retraits (`takedowns.yaml`) et appliquée dans ce délai. Dès lors,
 l'élément n'entre plus dans aucune édition ni aucune page ; un flux ou un
 domaine retiré n'est plus collecté ; les images d'aperçu concernées sont
 supprimées de ce site et ne sont plus récupérées ; une mise en ligne qui

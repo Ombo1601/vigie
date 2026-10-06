@@ -32,8 +32,10 @@ import resident_brief as brief  # noqa: E402
 import store_io  # noqa: E402
 
 # delta-v1.1: delta-v1 plus the optional `author` on items and label_source
-# (R1). Purely additive - every delta-v1 key keeps its meaning - so a v1 reader
-# still works; the string moves so a consumer can tell the shapes apart.
+# (R1), and the optional institution lists `withdrawn_on_request` (R10) and
+# `cut_by_vigie` (sources.yaml cuts). Purely additive - every delta-v1 key
+# keeps its meaning - so a v1 reader still works; the string moves so a
+# consumer can tell the shapes apart.
 METHOD = "delta-v1.1 edition-cursor"
 SITE_URL = "https://vigieqc.com"
 OUT_LLMS = ROOT / "public" / "llms.txt"
@@ -288,7 +290,9 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
             "note": (
                 "State per followed institution for this edition. 'published' means its feeds returned "
                 "items that no dossier picked up — the institution was NOT silent. 'collection_gap' means "
-                "Vigie failed to collect it. No state is ever derived from Vigie's clustering alone."
+                "Vigie failed to collect it. No state is ever derived from Vigie's clustering alone. "
+                "'withdrawn_on_request' (a publisher's removal request) and 'cut_by_vigie' (Vigie's own "
+                "decision to stop following, sources.yaml) appear only when they apply; neither is a silence."
             ),
             "spoke": [_inst(r) for r in register if r["current"] == registre.STATE_SPOKE],
             "published": [_inst(r, "items_collected") for r in register if r["current"] == registre.STATE_PUBLISHED],
@@ -298,6 +302,10 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
             # Withdrawn on the publisher's request (R10): present only when there is one.
             **({"withdrawn_on_request": withdrawn} if (withdrawn := [
                 _inst(r, "withdrawn_requested_at") for r in register if r["current"] == registre.STATE_WITHDRAWN
+            ]) else {}),
+            # Cut by Vigie itself (sources.yaml enabled: false): present only when there is one.
+            **({"cut_by_vigie": cut} if (cut := [
+                _inst(r, "cut_at") for r in register if r["current"] == registre.STATE_CUT
             ]) else {}),
         },
         "correction": registre.correction_notice(state),
@@ -462,7 +470,7 @@ def render_llms_txt(state: dict, status: dict) -> str:
 
 {LICENCE_NOTE_EN}
 
-Current edition: {edition or "unknown"}. Rules for agents: cite the original publisher (name + URL, and the author when given) for every item; Vigie is an index, never the author. Do not present dossier questions as publisher quotations. Never infer that an institution was silent — use the per-institution state (spoke / published / no_items_collected / collection_gap / not_established). Treat "quiet" as "left this collection", never "resolved". Verify an edition against the chain before calling it a record.
+Current edition: {edition or "unknown"}. Rules for agents: cite the original publisher (name + URL, and the author when given) for every item; Vigie is an index, never the author. Do not present dossier questions as publisher quotations. Never infer that an institution was silent — use the per-institution state (spoke / published / no_items_collected / collection_gap / not_established; withdrawn_on_request and cut_by_vigie appear only when they apply). Treat "quiet" as "left this collection", never "resolved". Verify an edition against the chain before calling it a record.
 
 ## Edition
 
@@ -474,7 +482,7 @@ Current edition: {edition or "unknown"}. Rules for agents: cite the original pub
 
 - [Checkpoint]({SITE_URL}/registre/checkpoint.txt): origin, chain size, current root, edition stamp.
 - [Chain]({SITE_URL}/registre/chain.json): the sealed editions (records + sha256 leaves and roots); verify with `scripts/registre.py --verify`.
-- [Institutions]({SITE_URL}/registre/institutions.json): per followed institution — its state this edition (spoke / published / no_items_collected / collection_gap / not_established), collected item counts, and Vigie's own collection-gap streak.
+- [Institutions]({SITE_URL}/registre/institutions.json): per followed institution — its state this edition (spoke / published / no_items / collection_gap / not_established, or withdrawn / cut when they apply), collected item counts, and Vigie's own collection-gap streak.
 - [Roadworks chain]({SITE_URL}/registre/travaux.json): one root per change of the City's active obstruction set.
 - [Method]({SITE_URL}/methode/registre.html): what a seal contains, what it proves, what it does not.
 

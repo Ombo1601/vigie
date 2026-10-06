@@ -6,20 +6,28 @@ exists once they are merged: a withdrawn institution, an institution whose
 feeds answered with nothing, and a collection gap of ours are three distinct,
 neutral facts on every surface that lists the voices; and a takedown that
 removes one article from a dossier leaves every other relayed title with its
-author. Hermetic: no network, no data/ directory.
+author. It also locks the CBC cut (2026-10-06): a source Vigie cuts itself is
+listed with its reason on the public sources page and reported as "plus
+suivie" in the register views, never as "not established", while the sealed
+records stay byte-identical. Hermetic: no network, no data/ directory.
 """
 from __future__ import annotations
 
+import copy
 import unittest
 from unittest import mock
 
 import harness  # noqa: F401 - puts scripts/ on sys.path
 
 import affiche
+import ingest_rss
+import method_site
 import registre
 import resident_brief as brief
+import substrate
 import takedown
 from test_author_attribution import ALPHA, BRAVO, RANKED, STAMP, dossier_issue, item
+from test_registre import issue as reg_issue, payload as reg_payload
 from test_substrate import run as feed_run, state_with_edition
 
 
@@ -120,6 +128,89 @@ class BylinesSurviveTakedownFiltering(unittest.TestCase):
         rules = takedown.Rules([{"id": "t1", "kind": "url", "value": takedown._canon(ALPHA["url"]),
                                  "requested_at": "2026-10-05", "by": "Le Soleil", "status": "active"}])
         self.assertEqual(takedown.filter_issues([iss], rules), [])
+
+
+CUT_REASON = "Ne répond pas à l'identité honnête de Vigie (R9) ; hors zone."
+
+
+class CbcCutIsLoggedNeverSilent(unittest.TestCase):
+    def test_sources_page_lists_both_cbc_desks_with_reason_and_date(self):
+        page = method_site._sources_html()
+        cuts = page[page.index('id="coupes"'):page.index('id="retraits"')]
+        for name in ("CBC News — Montreal", "CBC News — Politics"):
+            self.assertIn(f"<strong>{brief.esc(name)}</strong> — {brief.esc(CUT_REASON)} (coupé le 2026-10-06)", cuts)
+        # Neither desk is in the active table any more, and the counter says so.
+        table = page[:page.index('id="coupes"')]
+        self.assertNotIn("CBC News", table)
+        active = len(ingest_rss.load_enabled_by_type(harness.SOURCES, "rss")
+                     + ingest_rss.load_enabled_by_type(harness.SOURCES, "wzdx")
+                     + ingest_rss.load_enabled_by_type(harness.SOURCES, "civic-html"))
+        self.assertIn(f"<strong>{active}</strong> actives", page)
+        rss_now = len(ingest_rss.load_enabled_rss(harness.SOURCES))
+        self.assertLessEqual(rss_now, harness.rss_ceiling())
+        self.assertIn(f"Plafond : au plus {harness.rss_ceiling()} flux RSS actifs ({rss_now} aujourd’hui).", page)
+
+    def test_cut_institutions_are_derived_from_the_registry(self):
+        cut = registre.cut_institutions()
+        self.assertEqual(sorted(cut), ["cbc"])
+        self.assertEqual(cut["cbc"]["feed_ids"], list(harness.CBC_DESKS))
+        self.assertEqual(cut["cbc"]["cut_at"], "2026-10-06")
+        self.assertEqual(cut["cbc"]["institution_name"], "CBC")
+
+    def _two_editions(self, *, cbc_followed_in_newest: bool) -> dict:
+        state = registre.empty_state()
+        older = reg_payload([reg_issue("d1")])
+        for iid, meta in registre.institution_names(older).items():
+            state["names"][iid] = meta
+        state, _ = registre.seal_edition(state, registre.edition_record(older, "2026-10-05T12:00:00+00:00"))
+        followed = ("ville-quebec", "le-soleil", "gouv-quebec") + (("cbc",) if cbc_followed_in_newest else ())
+        newer = reg_payload([reg_issue("d1")], followed=followed)
+        newer["clustered_at"] = "2026-10-06T06:00:00+00:00"
+        state, action = registre.seal_edition(state, registre.edition_record(newer, "2026-10-06T06:00:00+00:00"))
+        self.assertEqual(action, "appended")
+        return state
+
+    def test_register_reports_the_cut_never_not_established_and_seals_stay(self):
+        state = self._two_editions(cbc_followed_in_newest=False)
+        before = copy.deepcopy(state)
+        register = registre.institution_register(state, {})
+        row = {r["institution_id"]: r for r in register}["cbc"]
+        self.assertEqual(row["current"], registre.STATE_CUT)
+        self.assertEqual(row["cut_at"], "2026-10-06")
+        self.assertEqual(registre.state_label_fr(row),
+                         "plus suivie : source coupée par Vigie, raison consignée (coupe du 2026-10-06)")
+        page = registre.render_registre_html(state)
+        self.assertIn("plus suivie — source coupée par Vigie le 2026-10-06", page)
+        self.assertIn('href="/methode/sources.html#coupes"', page)
+        self.assertIn(registre.STATE_CUT, registre.public_institutions(state)["states"])
+        # Views only: the chain still verifies and no leaf moved.
+        self.assertEqual(state, before)
+        self.assertTrue(registre.verify_chain(state["seals"])[0])
+        for seal in state["seals"]:
+            self.assertEqual(seal["leaf"], registre.leaf_of(seal["record"]))
+        # Every surface lists it under its own heading, apart from gaps and silences.
+        strip = brief.silence_bar([], register)
+        heading = brief.esc(registre.state_heading_fr(registre.STATE_CUT))
+        self.assertIn(heading, strip)
+        self.assertIn("CBC", strip[strip.index(heading):])
+        delta = substrate.build_delta([], None, None, state, {})
+        self.assertEqual([r["institution_id"] for r in delta["institutions"]["cut_by_vigie"]], ["cbc"])
+        self.assertNotIn("cbc", [r["institution_id"] for r in delta["institutions"]["not_established"]])
+        with mock.patch.object(registre, "institution_register", return_value=register):
+            sheet = affiche.render_affiche(RANKED, [], None, state, STAMP, feed_run())
+        self.assertIn(f"{registre.state_heading_fr(registre.STATE_CUT)} : CBC.", sheet)
+
+    def test_a_measured_state_wins_while_an_edition_still_follows_it(self):
+        state = self._two_editions(cbc_followed_in_newest=True)
+        row = {r["institution_id"]: r for r in registre.institution_register(state, {})}["cbc"]
+        self.assertNotEqual(row["current"], registre.STATE_CUT)
+        self.assertNotIn("cut_at", row)
+
+    def test_a_publisher_takedown_outranks_vigies_own_cut(self):
+        state = self._two_editions(cbc_followed_in_newest=False)
+        withdrawn = {"cbc": {"institution_name": "CBC", "requested_at": "2026-10-07"}}
+        row = {r["institution_id"]: r for r in registre.institution_register(state, withdrawn)}["cbc"]
+        self.assertEqual(row["current"], registre.STATE_WITHDRAWN)
 
 
 if __name__ == "__main__":
