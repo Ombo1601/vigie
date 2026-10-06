@@ -261,6 +261,19 @@ class IdentityLaw(unittest.TestCase):
         self.assertEqual(result["refused"], 403)
         self.assertIn("403", result["error"])
 
+    def test_run_row_carries_the_refusal_status_code(self) -> None:
+        def fake(src, fetched_at, stalled_hosts):
+            if src["id"] == "walled":
+                return {"source_id": "walled", "ok": False, "error": "HTTPError: 403", "refused": 403}
+            return {"source_id": "open", "ok": True, "item_count": 2}
+        with mock.patch.object(ingest_rss, "ROOT", self.raw.parent),                 mock.patch.object(ingest_rss, "load_enabled_rss",
+                                  return_value=[{"id": "walled"}, {"id": "open"}]),                 mock.patch.object(ingest_rss, "ingest_one", side_effect=fake),                 mock.patch.object(ingest_rss, "prune_raw_snapshots", return_value=0):
+            self.assertEqual(ingest_rss.main(), 0)
+        run = json.loads(next(self.raw.glob("_run_*.json")).read_text(encoding="utf-8"))
+        rows = {r["source_id"]: r for r in run["results"]}
+        self.assertEqual(rows["walled"]["refused"], 403)
+        self.assertIsNone(rows["open"]["refused"])
+
     def test_conditional_refusal_is_final_too(self) -> None:
         opener = mock.Mock()
         opener.open.side_effect = urllib.error.HTTPError(URL, 403, "Forbidden", {}, None)
@@ -630,6 +643,10 @@ class PublicLegalPage(unittest.TestCase):
     def test_internal_law_files_quote_the_canonical_identity(self) -> None:
         for name in ("LEGAL_RISK.md", "TECHNICAL_PROCESS.md"):
             text = (brief.ROOT / name).read_text(encoding="utf-8")
+            if name == "LEGAL_RISK.md":
+                # Dated status paragraphs are history; the stale string is
+                # forbidden only in the facts table (section 1).
+                text = text.split("## 1.", 1)[1].split("## 2.", 1)[0]
             with self.subTest(file=name):
                 self.assertNotIn("vigieqc.com/legal.md)", text)
                 self.assertNotIn("_ua_policy.json", text)

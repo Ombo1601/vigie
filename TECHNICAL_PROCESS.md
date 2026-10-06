@@ -104,7 +104,7 @@ house law, not defaults to be "fixed" by a future feature.
   reporting requires source **and** author; both Canadian aggregation cases were lost on
   missing author names.
 - **Never circumvent (R9)**: an HTTP refusal (any 4xx: 403/406/410/429…) is respected — it
-  ends that feed's collection for the run: never retried, never sent to an alternate URL,
+  ends that feed's collection for the run: never retried (a 412 to a conditional request is answered by one plain request: the validators were refused, not the feed), never sent to an alternate URL,
   never under another identity; no paywall or bot wall ever touched. `URL_ALTERNATES` are
   tried only when the origin gave no HTTP answer at all (timeout, reset, DNS/TLS), and a host
   that never answered is not asked again in the same run. Collection identity is honest and

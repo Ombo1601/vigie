@@ -876,6 +876,7 @@ def main() -> int:
             "item_count": result.get("item_count", 0),
             "dropped_no_url_title": result.get("dropped_no_url_title", 0),
             "error": result.get("error"),
+            "refused": result.get("refused"),
             "parse_error": result.get("parse_error"),
             "xml_file": result.get("xml_file"),
             "meta_file": result.get("meta_file"),

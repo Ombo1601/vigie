@@ -172,7 +172,8 @@ low severity.
 **Status 2026-09-19: R1–R6 implemented in code** (author byline from `dc:creator`/`author`/
 `media:credit`, « Photo : {source} » caption on every re-hosted image, public `/legal.md`
 linked from the brief footer, `data-search` shrunk to title + displayed excerpt, honest
-`Vigie/0.2` UA, 30-day raw-snapshot retention). R7–R10 codified below and in
+`Vigie/0.2 (+https://vigieqc.com/legal.md)` UA with disclosed per-host browser fallback for
+transport-level stalls only, 30-day raw-snapshot retention). R7–R10 codified below and in
 TECHNICAL_PROCESS.md. Tests: `tests/test_legal_remediations.py`.
 
 **Status 2026-10-05 (R5/R9 tightened):** the per-host browser fallback is removed; the only

@@ -189,7 +189,7 @@ Silent boosts = propaganda with better geography.
 
 - Fetch only what the map shows: Near me + Province/Linked life-hit crown + fight voices (not all 244).
 - `og:image` / `twitter:image` only. Never stock. Never AI fill. Empty strip when silent.
-- JdQ hardened (browser UA, Referer, retry) — still **403 Forbidden** from their wall; fail = typography (honest).
+- JdQ hardened (browser UA, Referer, retry) — still **403 Forbidden** from their wall; fail = typography (honest). [retiré le 2026-10-05 : identité honnête seule, sans Referer]
 - Thin `fetch_media` after **morning** pulse only (08:00), not every tick. RENT.md bound.
 - This run: map_scope=76, with_image=80, fetched=40. Method string in `latest_faces.json`.
 
