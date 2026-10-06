@@ -568,8 +568,10 @@ def stage(root: Path = ROOT, output: Path = OUT, *, mode: str | None = None) -> 
                 target = temporary / "media" / source.name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
-        (temporary / "robots.txt").write_text(ROBOTS_TEXT, encoding="utf-8")
-        (temporary / "sitemap.xml").write_text(sitemap_xml(temporary, current), encoding="utf-8")
+        # LF on every platform, like every store (store_io.NEWLINE): a Windows
+        # run stages the same bytes as GitHub Actions
+        (temporary / "robots.txt").write_text(ROBOTS_TEXT, encoding="utf-8", newline="\n")
+        (temporary / "sitemap.xml").write_text(sitemap_xml(temporary, current), encoding="utf-8", newline="\n")
         errors = validate_site(temporary, current)
         if errors:
             raise ValueError("Invalid static site:\n" + "\n".join(errors))
@@ -585,7 +587,7 @@ def stage(root: Path = ROOT, output: Path = OUT, *, mode: str | None = None) -> 
         }
         manifest = {"schema_version": 1, "files": files}
         (temporary / "build-manifest.json").write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
         )
         with _stage_lock(output.parent):
             if output.exists():

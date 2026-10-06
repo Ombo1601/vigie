@@ -50,6 +50,26 @@ class StaticRelease(unittest.TestCase):
             self.assertEqual(entry, {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
         self.assertEqual(json.loads((self.output / "build-manifest.json").read_text()), manifest)
 
+    def test_generated_release_files_are_lf_on_every_platform(self):
+        """robots.txt, sitemap.xml and build-manifest.json are written by the
+        stager itself: LF like every store (store_io), so a Windows fallback
+        run stages the same bytes as GitHub Actions. The call is pinned, so
+        the Windows behaviour is checked on every OS."""
+        calls = []
+        original = Path.write_text
+
+        def spy(path, data, *args, **kwargs):
+            calls.append((Path(path).name, kwargs.get("newline")))
+            return original(path, data, *args, **kwargs)
+
+        with patch.object(Path, "write_text", autospec=True, side_effect=spy):
+            stage_public.stage(self.root, self.output)
+        staged = {name: newline for name, newline in calls
+                  if name in ("robots.txt", "sitemap.xml", "build-manifest.json")}
+        self.assertEqual(staged, {"robots.txt": "\n", "sitemap.xml": "\n", "build-manifest.json": "\n"})
+        for name in staged:
+            self.assertNotIn(b"\r", (self.output / name).read_bytes(), name)
+
     def test_broken_link_preserves_previous_release(self):
         stage_public.stage(self.root, self.output)
         old = (self.output / "index.html").read_bytes()
