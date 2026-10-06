@@ -677,7 +677,11 @@ run: 35 events in only one of the two views; among events with the same
 members, join links differ in 110, neighbours in 3,078, activity in 1, the
 `withdrawn` list in 13, the silence roster in 2; 7 events whose members the
 matcher chose differently). Anchors other than item anchors are official
-records matched by rule and stay as found (sticky, section 10).
+records matched by rule and stay as found (sticky, section 10). Once an
+event's facts are reduced its atoms are gone, so the hedge codes
+(`qualifiers`) of a value kept for an official member are not re-derived
+when a member that co-stated the value is withdrawn (its id leaves the
+value; its hedge code may stay).
 
 ### 17.5 Facts (section 9)
 
