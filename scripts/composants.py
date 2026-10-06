@@ -48,6 +48,11 @@ EventView (one event, from docs/EVENTS.md plus the render fields)::
   independence   {"groups": [[item_id..]..], "count": int}
   language_pairs [{"fr": item_id, "en": item_id, "rule": str, "same_owner": bool}]
   anchors        [AnchorView]              official-record pointers
+  anchor_scope   [str] (optional)          names of the institutions whose
+                                           records the anchor rules read this
+                                           render (withdrawn ones left out);
+                                           worded when no anchor is attached.
+                                           Absent: the catalogue's default list
   facts          [{"slot": {"kind","unit","subject"},
                    "values": [{"value", "stated_by": [item_id], "institutions": [id]}],
                    "divergent": bool}]     media-derived: never on permanent pages
@@ -151,7 +156,14 @@ may be newer than the edition; it is never derived from the EditionView)::
                     "estimated": bool, "impact": the City's vehicle_impact code}]
                   already ordered by the published rule (most restrictive
                   first); the kit never reorders
-  attribution, dataset_url, map_url   optional
+  attribution, dataset_url   optional
+  map_url         str         optional; when the key is present it replaces the
+                              City's map link, and "" prints no map link (a
+                              withdrawn domain is never linked: R10)
+  withdrawn       "withdrawn" | "register_unreadable"   optional (R10): the
+                  lane's source is withdrawn by takedowns.yaml, or that register
+                  could not be read. The block then says so and prints NO
+                  declaration, count, collection time, credit or outbound link
 
 Page assembly: `edition_page(edition, lang, roadworks=...)`,
 `event_page(event, lang, edition=..., followed=...)`; fragments for the
@@ -1290,6 +1302,12 @@ def official_link_panel(ev: dict, lang: str) -> str:
                     f'<span class="small muted">{esc(t("anchor.rule", lang))}{esc(_colon(lang))}<code>{esc(a.get("rule"))}</code>{ref_html}</span></li>')
     if rows:
         body = f'<ul class="off-list">{"".join(rows)}</ul><p class="legend">{esc(t("offlink.note", lang))}</p>'
+    elif isinstance(ev.get("anchor_scope"), (list, tuple)):
+        # where the rules looked, as the builder measured it: a withdrawn
+        # institution is never named (R10), an empty scope is said as such
+        names = [n for n in (loc(x, lang) for x in ev["anchor_scope"]) if n]
+        text = t("offlink.none.in", lang, insts=", ".join(names)) if names else t("offlink.none.nosrc", lang)
+        body = f'<p class="m0">{esc(text)}</p>'
     else:
         body = f'<p class="m0">{esc(t("offlink.none", lang))}</p>'
     return _panel(t("offlink.h", lang), body, hid="ol-h")
@@ -1552,8 +1570,18 @@ def roadworks_block(rw: dict | None, lang: str) -> str:
     refreshed hourly and can be newer than the edition. The collection time,
     the counts and the age note are ALWAYS printed, including when the lane
     delivered nothing; the age note is a fixed sentence (the kit has no
-    clock), and the script adds the relative age on the reader's device."""
+    clock), and the script adds the relative age on the reader's device.
+
+    R10: a view marked `withdrawn` (the lane's source is withdrawn, or the
+    takedown register could not be read) prints only that fact: no
+    declaration, no count, no credit, no outbound link."""
     rw = rw if isinstance(rw, dict) else {}
+    withdrawn = str(rw.get("withdrawn") or "")
+    if withdrawn:
+        key = "roads.withheld" if withdrawn == "register_unreadable" else "roads.withdrawn"
+        return ('<section class="card panel roads" aria-labelledby="road-h" data-roadworks data-rw-withdrawn>'
+                f'<h2 class="h-panel" id="road-h">{esc(t("roads.h", lang))}</h2>'
+                f'<p class="small m0">{esc(t(key, lang))}</p></section>')
     rows = _dicts(rw.get("rows"))
     inst = loc(rw.get("institution_name"), lang) or t("roads.inst_default", lang)
     collected = str(rw.get("collected_at") or "")
@@ -1614,7 +1642,9 @@ def roadworks_block(rw: dict | None, lang: str) -> str:
     else:
         listing = f'<p class="small m0">{esc(t("roads.none", lang))}</p>'
     links = [internal_link(lang, "/partir.html", t("roads.all", lang), cls="btn")]
-    map_url = safe_url(rw.get("map_url") or RW_MAP_URL)
+    # a caller that passes `map_url` decides (an empty one: no map link, e.g.
+    # a withdrawn domain); without the key, the City's official map
+    map_url = safe_url(rw["map_url"]) if "map_url" in rw else safe_url(RW_MAP_URL)
     if map_url:
         links.append(f'<a class="btn" href="{esc(map_url)}" target="_blank" rel="noopener noreferrer" lang="fr">{esc(t("roads.map", lang))}</a>')
     attribution = str(rw.get("attribution") or "") or t("roads.attr", lang)

@@ -146,6 +146,15 @@ for _row, _geo in ((O_PROV, "quebec"), (O_LINK, "linked"), (O_ELSE, "outside")):
     _row["enrich"] = {"geo": {"geo": _geo}}
 OFFICIALS = (O_CITY, O_PROV, O_LINK, O_ELSE)
 
+# An invented civic calendar (a non-RSS official lane) and its source record.
+CIVIC_SRC = src("civic-x", "ville-x", "Ville Xénon", "government", "ville-x", kind="official", typ="civic-html")
+CIVIC_URL = "https://civic-x.example.org/fiche/zorglub-mirliton"
+CIVIC_REF = "civ-zorglub-1"
+CIVIC_TITLE = "Consultation publique sur le parc Zorglub-Mirliton"
+# What the roadworks rows of the fixture quote (street, description): never
+# shown, credited or linked once their lane is withdrawn.
+RW_STRINGS = ("Quirion-Tabarnouche", "Zéphir", "aqueduc", "Alpha et la rue Bêta")
+
 E1_CLOCK = "2026-09-20T12:00:00+00:00"
 MID_CLOCK = "2026-09-22T09:30:00+00:00"   # the strike develops while its first article is still collected
 E2_CLOCK = "2026-09-22T12:00:00+00:00"    # the current edition: the first strike article has left the feeds
@@ -202,15 +211,18 @@ def registre_state() -> dict:
 class Fixture:
     """A temporary site: invented sources, two editions built by events.py."""
 
-    def __init__(self, takedowns=()):
+    def __init__(self, takedowns=(), extra_sources=(), civic=None):
         self.dir = Path(tempfile.mkdtemp(prefix="vigie-evenements-"))
         self.data = self.dir / "data"
         self.sources = self.dir / "sources.yaml"
         self.takedowns = self.dir / "takedowns.yaml"
-        self.sources.write_text(sources_yaml(), encoding="utf-8")
+        self.sources.write_text(sources_yaml(SOURCES + list(extra_sources)), encoding="utf-8")
         self.takedowns.write_text(takedowns_yaml(), encoding="utf-8")
-        for name, doc in (("roadworks/latest_roadworks.json", roadworks("2026-09-22T13:30:00+00:00")),
-                          ("registre/registre.json", registre_state())):
+        stores = [("roadworks/latest_roadworks.json", roadworks("2026-09-22T13:30:00+00:00")),
+                  ("registre/registre.json", registre_state())]
+        if civic is not None:
+            stores.append(("civic/latest_consultations.json", civic))
+        for name, doc in stores:
             path = self.data / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
@@ -269,8 +281,21 @@ def tags_of(page: str) -> list[tuple[str, dict]]:
     return p.tags
 
 
+def civic_doc() -> dict:
+    return {"method": "civic-html-v1", "fetched_at": "2026-09-22T11:00:00+00:00", "source_id": "civic-x",
+            "institution_name": "Ville Xénon", "homepage": "https://civic-x.example.org/",
+            "source_url": "https://civic-x.example.org/activites",
+            "events": [{"event_id": CIVIC_REF, "source_id": "civic-x", "title": CIVIC_TITLE, "url": CIVIC_URL,
+                        "window_text": "du 20 au 30 septembre", "mode_text": "en ligne"}]}
+
+
+RW_ANCHOR = {"type": "roadwork", "ref": "RW-000-Rue ", "rule": "roadwork-v1", "status": "linked_by_rule"}
+CIVIC_ANCHOR = {"type": "consultation", "ref": CIVIC_REF, "rule": "consultation-v1", "status": "linked_by_rule"}
+
+
 def view_with_anchor(fx: "Fixture", event_id: str, anchor: dict) -> dict:
-    """The fixture's current view with one more anchor on one event."""
+    """The fixture's current view with one more anchor on one event (as the
+    builder would have stored it before a takedown arrived)."""
     view = json.loads((fx.data / "events" / "latest_events.json").read_text(encoding="utf-8"))
     for e in view["events"]:
         if e["event_id"] == event_id:
@@ -280,6 +305,10 @@ def view_with_anchor(fx: "Fixture", event_id: str, anchor: dict) -> dict:
 
 def official_block_of(page: str) -> str:
     return html.unescape(page.split('aria-labelledby="off-h"', 1)[1].split("</section>", 1)[0])
+
+
+def roads_block_of(page: str) -> str:
+    return re.search(r'<section class="card panel roads".*?</section>', page, re.S).group(0)
 
 
 # --------------------------------------------------------------------------- #
@@ -449,10 +478,15 @@ class Takedowns(unittest.TestCase):
             public, result = fx.emit()
             self.assertEqual(result["status"], "ok")
             self.assertTrue(any("takedowns.yaml has errors" in d for d in result["diagnosis"]))
-            for name, text in files_of(public).items():
+            files = files_of(public)
+            for name, text in files.items():
                 for s in TEXTS:
                     self.assertNotIn(s[:28], text.replace("&#x27;", "'"), name)
                 self.assertNotIn(".example.org/nouvelles/", text, f"{name}: an article link")
+                for s in RW_STRINGS:
+                    self.assertNotIn(s, html.unescape(text), f"{name}: the roadworks lane is withheld too")
+            for lang, name in (("fr", "evenements.html"), ("en", "en/evenements.html")):
+                self.assertIn(i18n.t("roads.withheld", lang), roads_block_of(files[name]))
         finally:
             fx.close()
 
@@ -891,6 +925,21 @@ class RankingContract(unittest.TestCase):
         finally:
             fx.close()
 
+    def test_a_withdrawn_roadworks_lane_never_reaches_the_ranking(self):
+        mod, seen = self.stub()
+        FX.emit("stub-rw", {"ranking_module": mod, "events_view": view_with_anchor(FX, STRIKE, RW_ANCHOR)})
+        self.assertIn('"roadwork"', seen["events"], "baseline: the ranking reads the roadwork anchor")
+        self.assertTrue(seen["ctx"]["roadworks_view"]["rows"])
+        fx = Fixture(takedowns=[("source", "wzdx-x")])
+        try:
+            mod, seen = self.stub()
+            fx.emit(ctx={"ranking_module": mod, "events_view": view_with_anchor(fx, STRIKE, RW_ANCHOR)})
+            self.assertIsNone(seen["ctx"]["roadworks_view"], "a withdrawn lane is not available to the ranking")
+            self.assertNotIn('"roadwork"', seen["events"], "nor its anchors")
+            self.assertEqual(seen["ctx"]["now"], E2_CLOCK, "and its collection clock is not read")
+        finally:
+            fx.close()
+
     def test_fallback_order_is_newest_first_then_id(self):
         evs = [{"event_id": "ev-b", "members": [{"published_at": "2026-09-22T10:00:00Z"}]},
                {"event_id": "ev-a", "members": [{"published_at": "2026-09-22T10:00:00Z"}]},
@@ -951,6 +1000,141 @@ class OfficialBlock(unittest.TestCase):
         self.assertIn(i18n.tn("off.cap", 1, "en", total="9"), block)
         self.assertIn(i18n.t("off.groups", "en", total="9", city="2", province="5", other="2"), block)
         self.assertNotIn("most recent", block)
+
+
+class LaneTakedowns(unittest.TestCase):
+    """R10 for the official lanes that are not article feeds (roadworks,
+    consultations): they carry no article URL, so the release gate cannot see
+    a source-level withdrawal and the render is the only enforcement. The
+    hourly roads lane re-renders from the stored files, so the rule holds in
+    the same run, from stores built before the takedown arrived."""
+
+    def assert_roadworks_gone(self, files: dict[str, str]) -> None:
+        for name, text in files.items():
+            words = html.unescape(text)
+            for s in RW_STRINGS:
+                self.assertNotIn(s, words, f"{name}: a withdrawn declaration is never quoted")
+            for host in ("wzdx-x.example.org", "donnees.example.org", ck.RW_MAP_URL):
+                self.assertNotIn(host, text, f"{name}: nor linked")
+            for lang in ("fr", "en"):
+                self.assertNotIn(i18n.t("anchor.roadwork", lang), words, f"{name}: nor counted as an anchor")
+                self.assertNotIn(i18n.t("roads.attr", lang), words, f"{name}: nor credited")
+        latest = json.loads(files["evenements/latest.json"])
+        self.assertEqual([a for e in latest["events"] for a in e["anchors"] if a["type"] == "roadwork"], [])
+        for lang, name in (("fr", "evenements.html"), ("en", "en/evenements.html")):
+            block = roads_block_of(files[name])
+            self.assertIn(i18n.t("roads.withdrawn", lang), block)
+            self.assertNotIn("Ville Xénon", block, "the block credits no one")
+            self.assertNotIn("data-age", block, "and dates no withdrawn collection")
+            self.assertNotIn("<a ", block)
+
+    def test_baseline_the_lane_is_quoted_credited_and_anchored(self):
+        public, _ = FX.emit("lane-base", {"events_view": view_with_anchor(FX, STRIKE, RW_ANCHOR)})
+        files = files_of(public)
+        roads = html.unescape(roads_block_of(files["evenements.html"]))
+        for s in RW_STRINGS:
+            self.assertIn(s, roads)
+        self.assertIn("Ville Xénon", roads)
+        self.assertIn(ck.RW_MAP_URL, roads)
+        strike = html.unescape(files[f"evenements/{STRIKE}.html"])
+        self.assertIn(i18n.t("anchor.roadwork", "fr"), strike)
+        self.assertIn("https://wzdx-x.example.org/", strike)
+
+    def check_roadworks_takedown(self, entries: list[tuple[str, str]]) -> None:
+        fx = Fixture(takedowns=entries)
+        try:
+            public, result = fx.emit(ctx={"events_view": view_with_anchor(fx, STRIKE, RW_ANCHOR)})
+            self.assertEqual(result["status"], "ok")
+            self.assert_roadworks_gone(files_of(public))
+            self.assertTrue(any("roadworks (wzdx) lane withdrawn" in d for d in result["diagnosis"]), result)
+        finally:
+            fx.close()
+
+    def test_a_source_takedown_of_the_roadworks_lane(self):
+        self.check_roadworks_takedown([("source", "wzdx-x")])
+
+    def test_a_domain_takedown_of_the_roadworks_source(self):
+        self.check_roadworks_takedown([("host", "wzdx-x.example.org")])
+
+    def test_a_domain_takedown_of_the_url_the_stored_file_carries(self):
+        self.check_roadworks_takedown([("host", "donnees.example.org")])
+
+    def test_the_hourly_lane_cannot_bring_a_withdrawn_lane_back(self):
+        fx = Fixture(takedowns=[("source", "wzdx-x")])
+        try:
+            before = files_of(fx.emit("a")[0])
+            newer = roadworks("2026-09-22T17:45:00+00:00", street="Boulevard Pélican-Zinzolin", n=5)
+            after = files_of(fx.emit("b", {"roadworks": newer})[0])
+            self.assertEqual(before, after)
+        finally:
+            fx.close()
+
+    def test_a_withdrawn_map_domain_is_never_linked(self):
+        fx = Fixture(takedowns=[("host", "carte.ville.quebec.qc.ca")])
+        try:
+            public, _ = fx.emit()
+            roads = roads_block_of(files_of(public)["evenements.html"])
+            self.assertNotIn("carte.ville.quebec.qc.ca", roads)
+            self.assertIn("Quirion-Tabarnouche", roads, "the declarations themselves are not withdrawn")
+        finally:
+            fx.close()
+
+    def civic_files(self, entries=()) -> dict[str, str]:
+        fx = Fixture(takedowns=entries, extra_sources=[CIVIC_SRC], civic=civic_doc())
+        try:
+            public, result = fx.emit(ctx={"events_view": view_with_anchor(fx, STRIKE, CIVIC_ANCHOR)})
+            self.assertEqual(result["status"], "ok")
+            return files_of(public)
+        finally:
+            fx.close()
+
+    def test_baseline_a_consultation_anchor_is_quoted_credited_and_linked(self):
+        page = html.unescape(self.civic_files()[f"evenements/{STRIKE}.html"])
+        for s in (CIVIC_TITLE, CIVIC_URL, CIVIC_REF, i18n.t("anchor.consultation", "fr")):
+            self.assertIn(s, page)
+
+    def test_a_withdrawn_calendar_or_fiche_leaves_no_trace(self):
+        for entries in ([("source", "civic-x")], [("host", "civic-x.example.org")], [("url", CIVIC_URL)]):
+            with self.subTest(entries=entries):
+                files = self.civic_files(entries)
+                for name, text in files.items():
+                    words = html.unescape(text)
+                    self.assertNotIn("Zorglub", words, f"{name}: the title goes with its fiche")
+                    self.assertNotIn("civic-x.example.org", text, name)
+                    self.assertNotIn(CIVIC_REF, text, f"{name}: the anchor is not counted")
+                    self.assertNotIn(i18n.t("anchor.consultation", "fr"), words, name)
+
+    def test_an_institution_withdrawn_entirely_is_named_nowhere(self):
+        page = html.unescape(FILES[f"evenements/{STRIKE}.html"])
+        self.assertIn(i18n.t("offlink.none.in", "fr", insts="Ville Xénon"), page, "baseline: where the rules looked")
+        fx = Fixture(takedowns=[("source", "ville-x"), ("source", "wzdx-x")])
+        try:
+            public, _ = fx.emit()
+            files = files_of(public)
+            for name, text in files.items():
+                self.assertNotIn("Xénon", html.unescape(text), name)
+            self.assertIn(i18n.t("offlink.none.nosrc", "fr"), html.unescape(files[f"evenements/{STRIKE}.html"]))
+        finally:
+            fx.close()
+
+
+class KitR10(unittest.TestCase):
+    """The kit's roadworks block under R10 (a withdrawn lane, a withdrawn map domain)."""
+
+    def test_a_withdrawn_roadworks_view_prints_only_that_fact(self):
+        view = {"withdrawn": "withdrawn", "rows": [{"street": "Rue Zinzolin", "text": "Rue Zinzolin fermée"}],
+                "collected_at": "2026-09-22T13:30:00Z", "total": 4, "closed": 1, "institution_name": "Ville Xénon"}
+        for lang in ("fr", "en"):
+            block = ck.roadworks_block(view, lang)
+            self.assertIn(i18n.t("roads.withdrawn", lang), block)
+            for s in ("Zinzolin", "Xénon", "<a ", "<time", i18n.t("roads.attr", lang)):
+                self.assertNotIn(s, block)
+            self.assertIn(i18n.t("roads.withheld", lang), ck.roadworks_block(dict(view, withdrawn="register_unreadable"), lang))
+
+    def test_an_empty_map_url_prints_no_map_link(self):
+        view = {"collected_at": "2026-09-22T13:30:00Z", "total": 0, "closed": 0, "rows": []}
+        self.assertIn(ck.RW_MAP_URL, ck.roadworks_block(view, "fr"))
+        self.assertNotIn(ck.RW_MAP_URL, ck.roadworks_block(dict(view, map_url=""), "fr"))
 
 
 if __name__ == "__main__":

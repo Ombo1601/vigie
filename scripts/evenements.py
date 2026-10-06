@@ -88,8 +88,15 @@ docs/AUTONOMY.md):
             hourly roads-only lane re-renders from stored files: a withdrawn
             article, feed or domain is never credited, counted, linked or
             quoted on any page; an event left without articles has no page;
-            a withdrawn institution is left out of every roster. The events
-            module's own apply_takedowns helper is called too when it exists.
+            a withdrawn institution is left out of every roster. The official
+            lanes that are not article feeds (wzdx roadworks, civic-html
+            consultations) are judged as a whole (Law.lane_state: their
+            sources.yaml record, the source id and URLs of the stored file):
+            a withdrawn lane's block says so and quotes, counts, credits and
+            links nothing, and every anchor pointing into it goes, for the
+            ranking too. An unreadable takedowns.yaml withholds them as well.
+            The events module's own apply_takedowns helper is called too when
+            it exists.
 
     python -X utf8 scripts/evenements.py [--data-dir DIR] [--public-dir DIR]
 """
@@ -292,6 +299,36 @@ class Law:
         if host and self.rules.match_host("https://" + host + "/") is not None:
             return True
         return bool(row.get("url")) and self.rules.match_url(row.get("url")) is not None
+
+    def lane_state(self, typ: str, doc: object) -> str:
+        """R10 for an official lane that is not an article feed (`wzdx`
+        roadworks, `civic-html` consultations): "" when its stored document
+        may be quoted, credited and linked; "withdrawn" when an active
+        takedown names its source: the sources.yaml record (id, feed or
+        homepage domain, as match_source reads it), or the source id or a URL
+        the stored document itself carries (so a takedown still bites when
+        the registry is unreadable); "register_unreadable" when takedowns.yaml
+        has errors (fail-closed, as for every article). Such lanes have no
+        article URL in the stores, so the release gate cannot catch a
+        source-level withdrawal: this render is the only enforcement."""
+        if self.unreadable:
+            return "register_unreadable"
+        if not self.rules:
+            return ""
+        d = doc if isinstance(doc, dict) else {}
+        sid = _str(d.get("source_id"))
+        sids = {sid} if sid else set()
+        sids |= {_str(row.get("source_id")) for row in _dicts(d.get("events")) if _str(row.get("source_id"))}
+        if sids & set(self.rules.sources):
+            return "withdrawn"
+        records = [self.by_id[s] for s in sorted(sids) if s in self.by_id] or \
+                  [r for r in self.records if r.get("type") == typ]
+        if any(self.rules.match_source(r) is not None for r in records):
+            return "withdrawn"
+        for key in ("feed_url", "source_url", "dataset_url", "homepage", "url"):
+            if self.rules.match_url(d.get(key)) is not None:
+                return "withdrawn"
+        return ""
 
     def name_of(self, source_id: str, fallback: str = "") -> str:
         rec = self.by_id.get(source_id) or {}
@@ -613,15 +650,53 @@ class Render:
                     self.rows_by_item[iid] = m
                     self.effective.setdefault(root, []).append(m)
 
-        # ---- civic calendar, roadworks source, registre ----------------------
-        civ = civic if isinstance(civic, dict) else {}
+        # ---- civic calendar, roadworks source (R10 per lane), registre ----------
+        # A withdrawn lane lends nothing: no row, no name, no link, no anchor.
+        self.roadworks_state = self.law.lane_state("wzdx", self.roadworks_doc)
+        self.civic_state = self.law.lane_state("civic-html", civic)
+        for lane, lane_state in (("roadworks (wzdx)", self.roadworks_state),
+                                 ("consultations (civic-html)", self.civic_state)):
+            if lane_state:
+                diagnosis.append(f"{lane} lane {lane_state.replace('_', ' ')}: none of its records is quoted, "
+                                 "credited, counted or linked this render")
+        civ = civic if isinstance(civic, dict) and not self.civic_state else {}
         self.civic_name = plain(civ.get("institution_name"), NAME_CAP)
         self.civic = {str(r.get("event_id")): r for r in _dicts(civ.get("events")) if r.get("event_id")}
-        wz = next((r for r in self.law.records if r.get("type") == "wzdx"), {})
+        civ_rec = {} if self.civic_state else (
+            self.law.by_id.get(_str(civ.get("source_id"))) or next(
+                (r for r in self.law.records if r.get("type") == "civic-html"), {}))
+        self.civic_record_name = plain(civ_rec.get("institution_name") or civ_rec.get("name"), NAME_CAP)
+        rw_sid = _str(self.roadworks_doc.get("source_id")) if isinstance(self.roadworks_doc, dict) else ""
+        wz = {} if self.roadworks_state else (
+            self.law.by_id.get(rw_sid) or next((r for r in self.law.records if r.get("type") == "wzdx"), {}))
         self.roadworks_name = plain(wz.get("institution_name"), NAME_CAP)
         self.roadworks_home = ck.safe_url(wz.get("homepage"))
+        self.anchor_scope = self._anchor_scope()
         self.state = self._state(state)
         self.seals = self._published_seals()
+
+    def _anchor_scope(self) -> list[str]:
+        """Names of the institutions whose records the anchor rules read this
+        render, in registry order: followed official feeds, and the roadworks
+        and consultation lanes unless withdrawn. Printed when an event has no
+        anchor, so a withdrawn institution is never named there (R10)."""
+        lanes = {"wzdx": self.roadworks_state, "civic-html": self.civic_state}
+        names: list[str] = []
+        for rec in self.law.records:
+            if _str(rec.get("source_kind")) != "official":
+                continue
+            typ = _str(rec.get("type"))
+            if typ == "rss":
+                ok = _str(rec.get("id")) in self.law.enabled
+            elif typ in lanes:
+                ok = (rec.get("enabled") is True and not lanes[typ] and not self.law.unreadable
+                      and self.law.rules.match_source(rec) is None)
+            else:
+                ok = False
+            name = plain(rec.get("institution_name") or rec.get("name"), NAME_CAP)
+            if ok and name and ck.fold(name) not in {ck.fold(n) for n in names}:
+                names.append(name)
+        return names
 
     # registre ------------------------------------------------------------------
     def _state(self, raw: object) -> dict:
@@ -721,14 +796,35 @@ def _member(r: Render, row: dict, text: dict | None) -> dict:
     return m
 
 
+def anchor_live(r: Render, a: dict) -> bool:
+    """R10 for one anchor, the same test for the ranking's input and for every
+    page: a pointer to a withdrawn record goes with it (never credited,
+    counted or linked). An item anchor whose item is withdrawn; a roadwork
+    anchor while the roadworks lane is withdrawn; a consultation anchor while
+    the calendar is withdrawn, or whose own fiche URL is."""
+    typ, ref = _str(a.get("type")), _str(a.get("ref"))
+    if typ in ("official_item", "outage"):
+        return ref not in r.gone
+    if typ == "roadwork":
+        return not r.roadworks_state
+    if typ == "consultation":
+        if r.civic_state:
+            return False
+        entry = r.civic.get(ref) or {}
+        if _str(entry.get("source_id")) and _str(entry.get("source_id")) in r.law.rules.sources:
+            return False
+        return r.law.rules.match_url(entry.get("url")) is None
+    return True
+
+
 def _anchor_views(r: Render, anchors: list[dict], current: bool) -> list[dict]:
     out = []
     for a in anchors:
         typ, ref = _str(a.get("type")), _str(a.get("ref"))
         if typ not in ck.ANCHOR_TYPES or not ref or typ == "edition_seal":
             continue
-        if typ in ("official_item", "outage") and ref in r.gone:
-            continue  # R10: a pointer to a withdrawn item goes with it
+        if not anchor_live(r, a):
+            continue  # R10: a pointer to a withdrawn record goes with it
         row = {"type": typ, "ref": ref, "rule": _str(a.get("rule")), "status": "linked_by_rule"}
         if typ in ("official_item", "outage"):
             text = r.texts.get(ref)
@@ -744,9 +840,9 @@ def _anchor_views(r: Render, anchors: list[dict], current: bool) -> list[dict]:
                 row["language"] = _str(text.get("language")) or "fr"
         elif typ == "consultation":
             entry = r.civic.get(ref) or {}
-            row["institution_name"] = r.civic_name or r.law.name_of("ville-quebec", "")
-            if ck.safe_url(entry.get("url")) and not r.law.unreadable and r.law.rules.match_url(entry.get("url")) is None:
-                row["url"] = entry["url"]
+            row["institution_name"] = r.civic_name or r.civic_record_name
+            if ck.safe_url(entry.get("url")):
+                row["url"] = entry["url"]   # anchor_live already refused a withdrawn fiche
             if current and entry.get("title"):
                 row["title"] = plain(entry.get("title"), TITLE_CAP)
                 row["language"] = "fr"
@@ -928,6 +1024,7 @@ def build_view(r: Render, e: dict, rows: list[dict], *, current: bool, in_curren
         "independence": _independence(ids, by_id, e.get("copies")),
         "language_pairs": pairs,
         "anchors": _anchor_views(r, _dicts(e.get("anchors")), current),
+        "anchor_scope": list(r.anchor_scope),
         "facts": facts_rows,
         "why": why,
         "words": words if current else [],
@@ -1110,7 +1207,15 @@ def suggestions(cards: list[dict]) -> list[str]:
 
 def roadworks_view(r: Render) -> tuple[dict, str]:
     """(RoadworksView, collection clock). anchors.roadworks_view measures the
-    age against the later of the edition clock and the collection."""
+    age against the later of the edition clock and the collection.
+
+    R10, applied here because the hourly roads lane re-renders from the stored
+    file: when the lane is withdrawn (or the takedown register is unreadable)
+    the view is only that marker (the block then quotes, counts, credits and
+    links nothing, and has no collection clock), and the City's map link is
+    dropped when its domain is withdrawn."""
+    if r.roadworks_state:
+        return {"withdrawn": r.roadworks_state, "rows": []}, ""
     doc = r.roadworks_doc if isinstance(r.roadworks_doc, dict) else {}
     try:
         import anchors  # noqa: PLC0415
@@ -1121,6 +1226,8 @@ def roadworks_view(r: Render) -> tuple[dict, str]:
         view = ck.roadworks_view(doc, render_clock=r.clock)
     if not view.get("institution_name") and r.roadworks_name:
         view["institution_name"] = r.roadworks_name
+    if r.law.rules.match_url(ck.RW_MAP_URL) is not None:
+        view["map_url"] = ""
     return view, _str(view.get("collected_at"))
 
 
@@ -1263,13 +1370,14 @@ def build_site(r: Render) -> tuple[dict[str, str], dict]:
         x["institutions"] = sorted({_str(m.get("institution")) for m in rows})
         x["languages"] = sorted({_str(m.get("language")) for m in rows if m.get("language") in ("fr", "en")})
         x["independence"] = _independence(ids, by_id, e.get("copies"))
-        x["anchors"] = [a for a in _dicts(e.get("anchors"))
-                        if not (a.get("type") in ("official_item", "outage") and _str(a.get("ref")) in r.gone)]
+        x["anchors"] = [a for a in _dicts(e.get("anchors")) if anchor_live(r, a)]
         x["in_edition"] = [i for i in _strs(e.get("in_edition")) if i in by_id]
         rank_input.append(x)
     rw_view, rw_clock = roadworks_view(r)
     later = max((c for c in (r.clock, rw_clock) if _instant(c) is not None), key=lambda c: _epoch(c) or 0.0, default=None)
-    rank_ctx = {"edition_clock": r.clock, "roadworks_view": copy.deepcopy(rw_view), "now": later}
+    # a withdrawn roadworks lane is not available to the ranking either (R10)
+    rank_ctx = {"edition_clock": r.clock, "roadworks_view": None if r.roadworks_state else copy.deepcopy(rw_view),
+                "now": later}
     rows, ranking_name = rank(rank_input, rank_ctx, r.ranking, diag) if rank_input else ([], FALLBACK_RANKING)
     pos = {row["event_id"]: row for row in rows}
 
