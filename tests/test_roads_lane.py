@@ -76,6 +76,12 @@ class RoadsOnlyLane(unittest.TestCase):
                 ROADS_SIGNAL_PATH=directory / "roads_signal.json",
             ),
             mock.patch.object(refresh, "acquire_lock", return_value=True),
+            # Deploy authority and the chain guards have their own tests
+            # (test_refresh_guards); here they must neither refuse nor fetch.
+            mock.patch.dict(refresh.os.environ, {"GITHUB_ACTIONS": "true"}),
+            mock.patch.object(refresh, "chain_guard", return_value=(1, "0" * 64)),
+            mock.patch.object(refresh, "verify_live"),
+            mock.patch.object(refresh, "ping_indexnow"),  # never a real POST from a test
         ]
         for patch in self._patches:
             patch.start()

@@ -70,6 +70,22 @@ is a loud halt, not a silent fork, and the dated copy it uploaded first is what
 the next restore recovers from. When the restore refuses, follow the runbook
 below ("When the state restore refuses").
 
+**Deploy guards (`refresh.py`).** A production deploy runs only when
+`GITHUB_ACTIONS=true` (exit 2 otherwise; `--no-deploy` always works). Before
+`vercel deploy`, the chain guard compares the registre about to ship (the
+`data/registre` state, verified with `registre.verify_chain`, and the staged
+`deploy/public/registre/checkpoint.txt`, which must equal its tip) with the
+committed `anchors/checkpoint.txt` and the live `/registre/checkpoint.txt`: a
+shorter chain, a genesis reset or another root at a published seq is refused;
+a full run must also have sealed a new edition (the roads lane need not). An
+unreachable live site is a WARN and the anchor decides; a missing anchor passes
+only when the live checkpoint is a definite 404 (true first run). After the
+deploy the live checkpoint is re-read (spaced retries) and a persistent
+mismatch fails the run. Break-glass, logged loudly: `VIGIE_ALLOW_LOCAL_DEPLOY=1`,
+`VIGIE_SKIP_CHAIN_GUARD=1`. The root `vercel.json` `buildCommand` refuses on
+purpose, so a bare `vercel --prod` from the repo root fails instead of
+publishing a data-less build.
+
 When `data/` is needed locally, seed it by unpacking the private state tarball;
 never commit it.
 
