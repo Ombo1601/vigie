@@ -476,6 +476,68 @@ class FailSoft(unittest.TestCase):
         finally:
             R._rank = saved
 
+    def _corrupt_docs(self):
+        base = tier_doc(certain=(80, 0), human=True)
+        docs = []
+        d = copy.deepcopy(base); d["gates"]["gate1_tier_precision"].update(labelers=5, provenance=None, human_verified=False); docs.append(d)
+        d = copy.deepcopy(base); d["gates"]["gate1_tier_precision"].update(labelers={"a": 1}, provenance=7, human_verified=False); docs.append(d)
+        d = copy.deepcopy(base); d["gates"]["gate1_tier_precision"]["splits"]["test"]["tier_by_label"]["different"]["certain"] = -5; docs.append(d)
+        d = copy.deepcopy(base); d["gates"]["gate1_tier_precision"]["splits"]["test"]["tier_by_label"]["same_event"]["certain"] = True; docs.append(d)
+        d = copy.deepcopy(base); d["gates"]["gate1_tier_precision"]["splits"]["test"]["tier_by_label"]["same_event"]["certain"] = "80"; docs.append(d)
+        d = copy.deepcopy(base); d["gates"]["gate1_tier_precision"]["splits"]["test"]["tier_by_label"]["same_event"]["certain"] = None; docs.append(d)
+        d = copy.deepcopy(base); d["gates"]["gate1_tier_precision"]["splits"]["test"]["tier_by_label"] = {"same_event": 3, 4: {"certain": 1}}; docs.append(d)
+        docs.append({"gates": {"gate1_tier_precision": {"status": "measured", "labelers": 5}}})
+        docs.append({"gates": {"gate1_tier_precision": {"status": "measured", "splits": {"test": 5}}}})
+        docs.append({"gates": {"gate1_tier_precision": {"status": "measured", "splits": [1], "labelers": [None, 3]}}})
+        return docs
+
+    def test_a_malformed_measured_gate_is_auto_unmeasured_not_a_crash(self):
+        import io
+        from contextlib import redirect_stderr
+        for doc in self._corrupt_docs():
+            for tier in ("certain", "probable"):
+                with redirect_stderr(io.StringIO()):
+                    chip = R.tier_chip(tier, doc)
+                self.assertEqual(chip["kind"], "auto", doc)
+                i18n.t(chip["key"], "fr", **chip["values"])
+                i18n.t(chip["key"], "en", **chip["values"])
+            with redirect_stderr(io.StringIO()):
+                pub = R.quality_public(doc)
+            self.assertEqual(pub["format"], "events-quality-public-v1")
+            json.dumps(pub)
+
+    def test_negative_counts_are_unmeasured_and_diagnosed(self):
+        import io
+        from contextlib import redirect_stderr
+        doc = tier_doc(certain=(80, -5), human=True)
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            chip = R.tier_chip("certain", doc)
+        self.assertEqual((chip["kind"], chip["key"], chip["values"]["n"]), ("auto", "chip.auto.unmeasured", 0))
+        self.assertIn("unreadable pair count", buf.getvalue())
+
+    def test_a_crash_inside_the_readers_is_a_diagnosis(self):
+        import io
+        from contextlib import redirect_stderr
+        saved = (R._tier_chip, R._quality_public)
+        R._tier_chip = lambda *a, **k: 1 / 0
+        R._quality_public = lambda *a, **k: 1 / 0
+        try:
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                chip = R.tier_chip("certain", tier_doc(certain=(80, 0), human=True))
+                pub = R.quality_public(tier_doc(certain=(80, 0), human=True))
+            self.assertEqual((chip["kind"], chip["key"]), ("auto", "chip.auto.unmeasured"))
+            self.assertFalse(pub["measured"])
+            self.assertEqual(buf.getvalue().count("fault while reading the quality document"), 2)
+        finally:
+            R._tier_chip, R._quality_public = saved
+
+    def test_wilson_clamps_corrupt_counts(self):
+        for k, n in ((10, 5), (-3, 5), (5, 5), (0, 5)):
+            lo, hi = R.wilson(k, n)
+            self.assertTrue(0.0 <= lo <= hi <= 1.0)
+
     def test_summary_of_nothing(self):
         s = R.summarize([])
         self.assertEqual((s["total"], s["shown"], s["not_shown"]), (0, 0, 0))

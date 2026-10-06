@@ -119,10 +119,6 @@ def _str(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def _int(value: object) -> int:
-    return value if isinstance(value, int) and not isinstance(value, bool) else 0
-
-
 def _instant(value: object) -> datetime | None:
     """A plausible UTC instant, else None. Feeds stamp 0001-01-01 or 9999-12-31
     for 'unknown': that is not a date (the same bounds as events.py)."""
@@ -508,6 +504,7 @@ def wilson(k: int, n: int, z: float = 1.959964) -> tuple[float, float]:
     """95 % Wilson score interval, the same figure scripts/events_eval.py computes."""
     if n <= 0:
         return 0.0, 1.0
+    k = min(max(k, 0), n)         # a corrupt count can never push p outside [0, 1]
     p = k / n
     denom = 1.0 + z * z / n
     centre = (p + z * z / (2 * n)) / denom
@@ -526,21 +523,47 @@ def provenance_kind(gate: dict) -> str:
     `model` when its recorded provenance names a model, else `unrecorded`."""
     if gate.get("human_verified") is True:
         return "human"
-    text = " ".join(str(x) for x in [gate.get("provenance")] + list(gate.get("labelers") or [])).lower()
+    text = " ".join([_str(gate.get("provenance"))] + _strs(gate.get("labelers"))).lower()
     return "model" if any(w in text for w in _MODEL_WORDS) else "unrecorded"
 
 
 def _tier_counts(gate: dict, tier: str) -> tuple[int, int]:
-    """(same-event pairs, predicted pairs) at exactly this tier on the held-out split."""
-    split = (gate.get("splits") or {}).get(SPLIT) if isinstance(gate.get("splits"), dict) else None
+    """(same-event pairs, predicted pairs) at exactly this tier on the held-out split.
+    A negative or non-integer count is a corrupt document, not a measurement:
+    the answer is then (0, 0), "not measured", with a diagnosis."""
+    splits = gate.get("splits")
+    split = splits.get(SPLIT) if isinstance(splits, dict) else None
     by = split.get("tier_by_label") if isinstance(split, dict) else None
     if not isinstance(by, dict):
         return 0, 0
-    total = sum(_int((by.get(lab) or {}).get(tier)) for lab in sorted(by) if isinstance(by.get(lab), dict))
-    return _int((by.get("same_event") or {}).get(tier)) if isinstance(by.get("same_event"), dict) else 0, total
+    total = 0
+    same = 0
+    for lab in sorted(k for k in by if isinstance(k, str)):
+        row = by[lab]
+        if not isinstance(row, dict) or tier not in row:
+            continue
+        raw = row[tier]
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+            _say(f"unreadable pair count in the quality document (tier {tier}); treated as not measured")
+            return 0, 0
+        total += raw
+        if lab == "same_event":
+            same = raw
+    return same, total
 
 
 def tier_chip(tier: object, quality_doc: object) -> dict:
+    """Fail-soft wrapper of `_tier_chip`: a quality document the reader cannot
+    make sense of is the honest answer "auto, not measured", never a crash of the render."""
+    try:
+        return _tier_chip(tier, quality_doc)
+    except Exception as exc:  # noqa: BLE001 - fail-soft, as rank_events
+        _say(f"fault while reading the quality document ({type(exc).__name__}: {str(exc)[:160]})")
+        t = tier if tier in ("certain", "probable") else ""
+        return {"kind": "auto", "key": "chip.auto.unmeasured", "values": {"tier": t, "n": 0}}
+
+
+def _tier_chip(tier: object, quality_doc: object) -> dict:
     """The chip of one grouping: {"kind", "key", "values"}.
 
     kind  "none"      no grouping (a single article); "possible" never a merge;
@@ -601,7 +624,20 @@ def _counts_only(value: object, depth: int = 0):
     return None
 
 
+_UNMEASURED_PUBLIC = {"format": "events-quality-public-v1", "measured": False, "gates": {},
+                      "chip": {"human_checked": False, "provenance": "unrecorded"}}
+
+
 def quality_public(quality_doc: object) -> dict:
+    """Fail-soft wrapper of `_quality_public`: any fault is the 'not measured' document."""
+    try:
+        return _quality_public(quality_doc)
+    except Exception as exc:  # noqa: BLE001 - fail-soft, as rank_events
+        _say(f"fault while reading the quality document ({type(exc).__name__}: {str(exc)[:160]})")
+        return {**_UNMEASURED_PUBLIC, "gates": {}, "chip": dict(_UNMEASURED_PUBLIC["chip"])}
+
+
+def _quality_public(quality_doc: object) -> dict:
     """The counts-only document public/qualite.json prints: numbers, booleans and
     the gate verdicts; no text, no pair, no id, no path. Fail-soft: an absent
     document yields an honest 'not measured' document."""
