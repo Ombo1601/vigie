@@ -1402,18 +1402,20 @@ def journal_panel(ev: dict, lang: str) -> str:
         parts = [t("jr.joins.v", lang, d=i18n.fmt_datetime(r.get("edition"), lang, short=True),
                    n=tn("n.articles", _int(r.get("n")), lang)) for r in joins]
         rows.append((t("jr.joins", lang), "<br>".join(esc(p) for p in parts)))
+    def _record_link(ref: dict) -> str:
+        # `href` is the French site path of a record that has a page; the
+        # language's own path is derived here (docs/I18N.md section 1)
+        href = str(ref.get("href") or "")
+        eid = esc(ref.get("event_id"))
+        if href.startswith("/") and not href.startswith("//"):
+            return f'<a href="{esc(path_for(lang, href))}">{eid}</a>'
+        return f"<code>{eid}</code>"
+
     merged = _map(j.get("merged_into"))
     if merged.get("event_id"):
-        href = str(merged.get("href") or "")
-        target = (f'<a href="{esc(href)}">{esc(merged.get("event_id"))}</a>' if href.startswith("/")
-                  else f"<code>{esc(merged.get('event_id'))}</code>")
         when = i18n.fmt_datetime(merged.get("at"), lang, short=True)
-        rows.append((t("jr.merged", lang), target + (f" · {esc(when)}" if when else "")))
-    absorbed = []
-    for a in _dicts(j.get("absorbed")):
-        href = str(a.get("href") or "")
-        eid = esc(a.get("event_id"))
-        absorbed.append(f'<a href="{esc(href)}">{eid}</a>' if href.startswith("/") else f"<code>{eid}</code>")
+        rows.append((t("jr.merged", lang), _record_link(merged) + (f" · {esc(when)}" if when else "")))
+    absorbed = [_record_link(a) for a in _dicts(j.get("absorbed"))]
     if absorbed:
         rows.append((t("jr.absorbed", lang), ", ".join(absorbed)))
     if _int(j.get("detached")) > 0:
