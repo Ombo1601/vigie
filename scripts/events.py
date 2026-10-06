@@ -302,14 +302,22 @@ def article_host(url: object) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
-def derive_item(item: dict) -> dict:
-    return {
-        "type_scores": item_type_scores(item),
-        "places": item_places(item),
-        "geo": item_geo(item),
-        "facts": facts.extract_item(item),
-        "host": article_host(item.get("url")),
-    }
+def derive_item(item: dict, diagnosis: list[str] | None = None) -> dict:
+    """The item's codes. A classifier fault on one item costs that item its
+    codes (diagnosed), never the edition its events."""
+    out: dict = {}
+    for key, fn, empty in (("type_scores", item_type_scores, {}), ("places", item_places, []),
+                           ("geo", item_geo, "unknown"), ("facts", facts.extract_item, [])):
+        try:
+            out[key] = fn(item)
+        except Exception as exc:  # noqa: BLE001 - per-item fail-soft
+            out[key] = empty
+            if diagnosis is not None:
+                msg = f"{key} fault on one item ({type(exc).__name__}); its {key} left empty"
+                if msg not in diagnosis:
+                    diagnosis.append(msg)
+    out["host"] = article_host(item.get("url"))
+    return out
 
 
 def published_fields(raw: object, first_seen: str) -> tuple[str | None, bool]:
@@ -735,7 +743,7 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
     origins = origin.classify_batch(eligible, reg.by_id)
     for it in eligible:
         if it["id"] not in items:
-            items[it["id"]] = derive_item(it)
+            items[it["id"]] = derive_item(it, diagnosis)
 
     # ---- attach (sticky, tiered) -------------------------------------------
     prev_events = [e for e in store.get("events") or [] if isinstance(e, dict)]
@@ -1230,6 +1238,12 @@ def main(argv: list[str] | None = None) -> int:
         args = ap.parse_args(argv)
         if args.replay is None:
             return run(args.in_path, args.data_dir, args.sources, args.takedowns)
+        target = args.data_dir / "events" / "store.json"
+        if target.exists():
+            # A replay builds a store from whatever snapshots are at hand; it
+            # never replaces a store that carries minted ids.
+            _say(f"replay refused: {target} exists; give --data-dir an empty scratch directory")
+            return 0
         reg = Registry.load(args.sources, args.takedowns)
         timings: list[float] = []
         store, view, ops, counts = replay(snapshots(args.replay), reg, timings=timings)

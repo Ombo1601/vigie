@@ -795,6 +795,15 @@ class Determinism(unittest.TestCase):
                                 "--takedowns", str(out.takedowns)])
         self.assertEqual(code, 0)
         self.assertEqual(out.outputs(), live.outputs())
+        # A replay never replaces a store that already carries minted ids.
+        partial = self.tmp / "partial"
+        partial.mkdir()
+        (partial / f"{stamp(E1['normalized_at'])}_candidates.json").write_text(json.dumps(E1), encoding="utf-8")
+        before = out.outputs()
+        with mock.patch("sys.stdout"):
+            events.main(["--replay", str(partial), "--data-dir", str(out.data), "--sources", str(out.sources),
+                         "--takedowns", str(out.takedowns)])
+        self.assertEqual(out.outputs(), before)
 
     def test_identical_under_two_hash_seeds(self):
         files = Files(self.tmp / "seed")
@@ -937,6 +946,13 @@ class FailSoft(unittest.TestCase):
         self.assertEqual(self._run(hostile), 0)
         ops = json.loads((self.files.data / "ops" / "events_shadow.json").read_text(encoding="utf-8"))
         self.assertEqual(ops["items"]["excluded"], {"malformed_candidate": 1, "malformed_id": 1})
+
+    def test_a_classifier_fault_on_one_item_costs_only_its_codes(self):
+        with mock.patch.object(facts, "extract_item", side_effect=ValueError("bad item")):
+            store, _, ops = events.build(None, E1, registry())
+        self.assertEqual(owner_map(store)[F1["id"]], FIRE_ID, "the edition's events are still built")
+        self.assertEqual(store["items"][F1["id"]]["facts"], [])
+        self.assertTrue(any("facts fault" in d for d in ops["diagnosis"]))
 
     def test_a_fault_inside_the_builder_exits_zero(self):
         with mock.patch.object(events, "build", side_effect=RuntimeError("boom")), mock.patch("sys.stdout"):
