@@ -1,6 +1,6 @@
 # Mentions légales — Vigie
 
-Dernière mise à jour : 2026-09-19.
+Dernière mise à jour : 2026-10-05.
 
 Vigie est un **agrégateur de nouvelles local, gratuit et sans but commercial**,
 fait pour la ville de Québec. Vigie ne produit pas d'articles, n'en réécrit
@@ -48,28 +48,33 @@ tout changement, et cette page serait mise à jour.
 
 ## Identité de collecte
 
-La collecte des flux et des images s'identifie honnêtement :
+Toute la collecte (flux, pages d'articles, images, fichiers robots.txt)
+s'identifie d'une seule façon, honnêtement :
 
 ```
 Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)
 ```
 
-Certains serveurs ralentissent ou interrompent les lecteurs automatisés au
-niveau du transport (sans refus HTTP) ; pour ceux-là uniquement, et c'est
-documenté ici, Vigie utilise une identité de navigateur standard :
+Vigie n'emprunte aucune autre identité : ni identité de navigateur, ni en-tête
+Referer imitant une visite sur le site de l'éditeur. Un serveur qui ne répond
+pas à cette identité n'est pas contourné : la collecte manquée est consignée
+comme une lacune de collecte de Vigie, jamais comme un silence de l'institution.
 
-```
-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Vigie/0.2
-```
+**Un refus HTTP (403, 410, 429…) est toujours respecté** : il met fin à la
+collecte de ce flux pour cette édition, sans nouvelle tentative, ni par une
+autre identité, ni par un autre chemin. Seul un serveur qui ne donne aucune
+réponse (délai dépassé, connexion coupée) peut être relu à une autre adresse
+que l'éditeur publie pour le même flux, avec la même identité.
 
-Le changement d'identité n'a lieu qu'après un échec de transport réel (délai,
-connexion réinitialisée), jamais après un refus HTTP, et il expire après
-30 jours : l'identité honnête est alors réessayée. **Un refus
-HTTP (403, 410, 429…) est toujours respecté** : il n'est jamais contourné, ni
-par une autre identité, ni par un autre chemin. Aucun mur de paiement n'est
-jamais touché. La collecte est conditionnelle (ETag / If-Modified-Since) pour
-ne transférer que ce qui a changé, et chaque silence est diagnostiqué plutôt
-que comblé.
+Avant de lire une page d'article ou une image, Vigie consulte le fichier
+robots.txt du site (une fois par collecte) et respecte ses interdictions
+visant Vigie ou tous les robots. Si ce fichier est absent (404), la lecture est
+permise ; s'il ne peut pas être lu pour toute autre raison, la page ou l'image
+n'est pas lue, et la raison est consignée.
+
+Aucun mur de paiement n'est jamais touché. La collecte est conditionnelle
+(ETag / If-Modified-Since) pour ne transférer que ce qui a changé, et chaque
+silence est diagnostiqué plutôt que comblé.
 
 ## Conservation
 

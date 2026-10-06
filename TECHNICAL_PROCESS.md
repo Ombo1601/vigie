@@ -32,7 +32,7 @@ Open http://127.0.0.1:8765/
 | 4 Cluster | `scripts/cluster_issues.py` | `data/issues/latest_issues.json` — multi-voice only |
 | 4b Edge Atlas | `scripts/edge_atlas.py` | `data/edges/latest_edges.json` — literal street-name joins between the official collection and the dossiers (`edge.md`) |
 | 4c Anomalies | `scripts/compile_anomalies.py` | `data/anomalies/latest_verdict.json` — fixed-threshold structural rules over the official collection (`anomalies.md`) |
-| 4d Brief media | `scripts/fetch_brief_media.py` | `data/media/brief/` + `brief_manifest.json` — publisher images (og:image, else the feed's own media), locally re-hosted and sniffed; every miss diagnosed + `data/ops/media_health.json` ledger |
+| 4d Brief media | `scripts/fetch_brief_media.py` | `data/media/brief/` + `brief_manifest.json` — publisher images (og:image, else the feed's own media), robots.txt first for every page and image, locally re-hosted and sniffed; every miss diagnosed + `data/ops/media_health.json` ledger |
 | 5 Rank+HTML | `scripts/rank_display.py` | `latest_ranked.json` + `public/index.html` (French brief, incl. roadworks/civic/beacon/joins) + `explorer.html` + ambient twin via `ambient_pulse` |
 | 5b Ambient | `scripts/ambient_pulse.py` | `data/pulse/latest_morning.{json,txt}` + `public/morning.html` (same Approaches; no second rank; store order — no facets, no beacon) |
 | 5c Récits | `scripts/recits.py` | `public/dossiers.html` + `public/dossiers/<issue_id>.html` — one complete, addressable record page per current-edition dossier (every voice, every verbatim headline, collection timeline, silence roster, measured evidence); linked from the brief, the machine substrate and the sitemap; pages exist only for the current edition (a quiet dossier keeps its counters in the history and the registre, never its page) |
@@ -103,11 +103,18 @@ house law, not defaults to be "fixed" by a future feature.
   that very feed image — never guessed for an og:image). s. 29.2 fair dealing for news
   reporting requires source **and** author; both Canadian aggregation cases were lost on
   missing author names.
-- **Never circumvent (R9)**: an HTTP refusal (403/406/410/429) is respected — never retried
-  under another identity, never routed around, no paywall or bot wall ever touched. Collection
-  identity is honest (`Vigie/0.2 (+https://vigieqc.com/legal.md)`); a disclosed browser
-  identity is used only for hosts that stall automated readers at *transport* level (recorded
-  in `data/raw/_ua_policy.json`, published in legal.md). Silence is diagnosed, never filled.
+- **Never circumvent (R9)**: an HTTP refusal (any 4xx: 403/406/410/429…) is respected — it
+  ends that feed's collection for the run: never retried, never sent to an alternate URL,
+  never under another identity; no paywall or bot wall ever touched. `URL_ALTERNATES` are
+  tried only when the origin gave no HTTP answer at all (timeout, reset, DNS/TLS), and a host
+  that never answered is not asked again in the same run. Collection identity is honest and
+  single: `Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)`
+  for feeds, article pages, images and robots.txt — no browser identity, no Referer. A host
+  that cannot be read honestly is a recorded collection gap (registre: « collecte en échec —
+  lacune de Vigie »). Article pages and images are fetched only after the host's robots.txt
+  (read once per host per run): Disallow for `Vigie` or `*` → `robots_disallow`; absent (404)
+  → allowed; any other failure → `robots_unreachable` (fail closed). Both reasons land in the
+  media manifest and `data/ops/media_health.json`. Silence is diagnosed, never filled.
 - **Honor opt-outs (R10)**: a publisher asking to leave → `enabled: false` + `cut_reason` in
   `sources.yaml`, same day (one edition). The silence map then reports the cut honestly —
   never silently.
