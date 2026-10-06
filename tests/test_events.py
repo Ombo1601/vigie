@@ -645,10 +645,114 @@ class Anchors(unittest.TestCase):
             self.assertIsNone(events.anchors_module())
             stores, _, opss = build_all(EDITIONS[:1])
         g = by_id(stores[0])[em.event_id_for(G1["id"])]
-        self.assertEqual(g["anchors"], [{"type": "official_item", "ref": G1["id"], "rule": "membership",
-                                         "status": "linked_by_rule"}])
+        self.assertEqual(g["anchors"], [{"type": "official_item", "ref": G1["id"],
+                                         "rule": "membership-official-source", "status": "linked_by_rule"}])
+        self.assertEqual(events.ANCHOR_RULE_MEMBERSHIP, "membership-official-source",
+                         "the name scripts/anchors.py gives the same rule (RULE_OFFICIAL)")
         self.assertEqual(by_id(stores[0])[FIRE_ID]["anchors"], [], "no anchor is a measured absence")
         self.assertIn("absent", opss[0]["anchors"])
+
+    def test_one_row_per_type_and_ref_a_fresh_row_replaces_a_stored_one(self):
+        rows = [{"type": "official_item", "ref": "a" * 24, "rule": "membership-official-source"},
+                {"type": "official_item", "ref": "a" * 24, "rule": "membership"},
+                {"type": "roadwork", "ref": "wzdx-1", "rule": "roadwork-name-dates-v1"}]
+        self.assertEqual(events.clean_anchors(rows),
+                         [{"type": "official_item", "ref": "a" * 24, "rule": "membership", "status": "linked_by_rule"},
+                          {"type": "roadwork", "ref": "wzdx-1", "rule": "roadwork-name-dates-v1",
+                           "status": "linked_by_rule"}])
+        merged = events.merge_anchors(rows[1:2], rows[:1] + [{"type": "consultation", "ref": "c-1", "rule": "r"}])
+        self.assertEqual([(a["type"], a["ref"], a["rule"]) for a in merged],
+                         [("consultation", "c-1", "r"), ("official_item", "a" * 24, "membership-official-source")])
+
+    def _contract_module(self, calls):
+        """A stand-in with the contract of the parallel scripts/anchors.py:
+        keyword-only event_type, rows deduplicated by (type, ref), RULE_OFFICIAL,
+        and a road rule that can only match when it is given the member texts."""
+        fake = types.ModuleType("anchors")
+        fake.RULE_OFFICIAL = "membership-official-source"
+
+        def find_anchors(members, official_items=(), roadworks=None, consultations=None, outages=(),
+                         vocab_places=None, *, event_type=None):
+            calls.append({"event_type": event_type, "members": [dict(m) for m in members],
+                          "official_items": list(official_items), "outages": [dict(o) for o in outages]})
+            out = {}
+            for m in members:
+                if m.get("source_kind") == "official" or m.get("item_id") in official_items:
+                    out[("official_item", m["item_id"])] = fake.RULE_OFFICIAL
+            if event_type in ("roadworks", "road-closure"):
+                text = " ".join(str(m.get("title") or "") for m in members).lower()
+                for rw in roadworks or []:
+                    if any(name.lower() in text for name in rw.get("road_names") or []):
+                        out[("roadwork", rw["event_id"])] = "roadwork-name-dates-v1"
+            return [{"type": t, "ref": r, "rule": rule, "status": "linked_by_rule"} for (t, r), rule in sorted(out.items())]
+
+        fake.find_anchors = find_anchors
+        return fake
+
+    ROADWORKS = [{"event_id": "wzdx-77", "road_names": ["Rue Quirion-Tabarnouche"], "start_date": "2026-09-19T00:00:00Z",
+                  "end_date": "2026-10-02T00:00:00Z", "vehicle_impact": "all-lanes-closed", "event_status": "active"}]
+
+    def test_the_module_reads_member_texts_the_event_type_and_source_kinds_never_stored(self):
+        calls = []
+        with mock.patch.dict(sys.modules, {"anchors": self._contract_module(calls)}):
+            events._ANCHORS_MODULE.clear()
+            store, _, ops = events.build(None, E1, registry(), anchor_inputs={"roadworks": self.ROADWORKS})
+        g = by_id(store)[em.event_id_for(G1["id"])]
+        self.assertEqual(g["type"], "roadworks")
+        self.assertEqual(g["anchors"], [
+            {"type": "official_item", "ref": G1["id"], "rule": "membership-official-source", "status": "linked_by_rule"},
+            {"type": "roadwork", "ref": "wzdx-77", "rule": "roadwork-name-dates-v1", "status": "linked_by_rule"}])
+        call = next(c for c in calls if [m["item_id"] for m in c["members"]] == [G1["id"]])
+        self.assertEqual(call["event_type"], "roadworks", "the event's own type, not a re-derivation")
+        self.assertEqual((call["members"][0]["title"], call["members"][0]["source_kind"]), (G1["title"], "official"))
+        self.assertEqual(call["official_items"], [G1["id"]], "the edition's official items, from sources.yaml")
+        self.assertEqual(ops["anchors"], "anchors.find_anchors")
+        blob = json.dumps(store, ensure_ascii=False)
+        for text in (G1["title"], G1["summary"], F1["title"], F1["summary"]):
+            self.assertNotIn(text, blob, "member texts reach the module in memory only")
+
+    def test_no_duplicate_official_anchor_across_the_module_arriving(self):
+        with mock.patch.dict(sys.modules, {"anchors": None}):
+            events._ANCHORS_MODULE.clear()
+            before, _, _ = events.build(None, E1, registry())
+        with mock.patch.dict(sys.modules, {"anchors": self._contract_module([])}):
+            events._ANCHORS_MODULE.clear()
+            after, _, _ = events.build(json.loads(json.dumps(before)), E2, registry(),
+                                       anchor_inputs={"roadworks": self.ROADWORKS})
+        g = by_id(after)[em.event_id_for(G1["id"])]
+        refs = [(a["type"], a["ref"]) for a in g["anchors"]]
+        self.assertEqual(len(refs), len(set(refs)), "one row per (type, ref)")
+        self.assertEqual([a for a in g["anchors"] if a["type"] == "official_item"],
+                         [{"type": "official_item", "ref": G1["id"], "rule": "membership-official-source",
+                           "status": "linked_by_rule"}])
+
+    def test_without_anchor_inputs_as_in_a_replay_official_members_still_anchor(self):
+        with mock.patch.dict(sys.modules, {"anchors": self._contract_module([])}):
+            events._ANCHORS_MODULE.clear()
+            store, _, _ = events.build(None, E1, registry())
+        self.assertEqual([a["ref"] for a in by_id(store)[em.event_id_for(G1["id"])]["anchors"]], [G1["id"]])
+
+    def test_the_real_anchors_module_when_it_is_merged(self):
+        """Integration with scripts/anchors.py (built in parallel); skipped
+        until it is on this branch."""
+        events._ANCHORS_MODULE.clear()
+        mod = events.anchors_module()
+        if mod is None or not hasattr(mod, "RULE_OFFICIAL"):
+            self.skipTest("scripts/anchors.py is not merged on this branch yet")
+        stores = []
+        store = None
+        for _, p in EDITIONS[:2]:
+            store, _, _ = events.build(store, p, registry(), anchor_inputs={"roadworks": self.ROADWORKS})
+            store = json.loads(json.dumps(store))
+            stores.append(store)
+        g = by_id(stores[-1])[em.event_id_for(G1["id"])]
+        refs = [(a["type"], a["ref"]) for a in g["anchors"]]
+        self.assertEqual(len(refs), len(set(refs)))
+        self.assertIn(("official_item", G1["id"]), refs)
+        self.assertIn(("roadwork", "wzdx-77"), refs, "the road rule matched on the member's own text")
+        self.assertEqual({a["rule"] for a in g["anchors"] if a["type"] == "official_item"}, {mod.RULE_OFFICIAL})
+        for e in stores[-1]["events"]:
+            self.assertEqual(check_v1(events.to_v1(e)), [], e["event_id"])
 
     def test_the_hook_calls_find_anchors_with_the_contract_and_validates_rows(self):
         calls = []
@@ -658,7 +762,11 @@ class Anchors(unittest.TestCase):
                           list(vocab_places)))
             return [{"type": "roadwork", "ref": "wzdx-1", "rule": "same-road", "status": "linked_by_rule"},
                     {"type": "rumour", "ref": "x", "rule": "y"}, "garbage",
-                    {"type": "roadwork", "ref": "wzdx-1", "rule": "same-road"}]
+                    {"type": "roadwork", "ref": "wzdx-1", "rule": "same-road"},
+                    # a module bug: pointers to no record it was given never reach the store
+                    {"type": "roadwork", "ref": F1["title"], "rule": "same-road"},
+                    {"type": "official_item", "ref": F1["summary"], "rule": "membership-official-source"},
+                    {"type": "edition_seal", "ref": "douze", "rule": "edition-presence"}]
 
         fake = types.ModuleType("anchors")
         fake.find_anchors = find_anchors
@@ -669,6 +777,8 @@ class Anchors(unittest.TestCase):
         self.assertEqual(by_id(store)[FIRE_ID]["anchors"],
                          [{"type": "roadwork", "ref": "wzdx-1", "rule": "same-road", "status": "linked_by_rule"}])
         self.assertEqual(ops["anchors"], "anchors.find_anchors")
+        self.assertTrue(any("pointers to no record" in d for d in ops["diagnosis"]))
+        self.assertNotIn(F1["title"], json.dumps(store, ensure_ascii=False))
 
     def test_a_faulty_anchors_module_falls_back_and_is_diagnosed(self):
         fake = types.ModuleType("anchors")

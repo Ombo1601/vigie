@@ -55,6 +55,12 @@ House law carried here
     damaged one for repair). `check_store` checks every field the builder
     reads back, so damage is refused before the build, never half-trusted.
     An absent store is a first run.
+  * Anchors (EVENTS.md section 10): scripts/anchors.py when present, given
+    each live member's stored row joined in memory with its current-edition
+    text and its source kind (texts are never stored) and the event's own
+    type; otherwise the membership rule alone, under the module's own rule
+    name. One row per (type, ref); a pointer found again replaces the stored
+    row, a pointer to a withdrawn item goes in the same run.
   * Retention (EVENTS.md section 13): the newest 400 editions; media fact
     values only while the event is in window, then reduced to counts per
     slot (values stated by an official member are kept).
@@ -76,6 +82,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib
+import inspect
 import json
 import re
 import sys
@@ -132,7 +139,8 @@ MEMBER_KEYS = ("item_id", "institution", "source_id", "language", "published_at"
 
 PAIR_RULE_FEATURES = "bilingual-complete-link"   # cluster_issues.features_match, bilingual branch
 PAIR_RULE_MATCHER = "event-match-fr-en-guard"    # matcher tier >= probable, FR/EN guard satisfied
-ANCHOR_RULE_MEMBERSHIP = "membership"
+ANCHOR_RULE_MEMBERSHIP = "membership-official-source"   # = anchors.RULE_OFFICIAL: one name for one rule
+ITEM_ANCHORS = ("official_item", "outage")              # anchor types whose ref is an item id
 
 
 class StoreUnreadable(Exception):
@@ -614,51 +622,118 @@ _ANCHORS_MODULE: list = []
 
 def anchors_module():
     """scripts/anchors.py when it exists (contract: find_anchors(members,
-    official_items, roadworks, consultations, outages, vocab_places) -> list of
-    {type, ref, rule, status}); None while it does not. Cached."""
+    official_items, roadworks, consultations, outages, vocab_places, *,
+    event_type=None) -> list of {type, ref, rule, status}); None while it does
+    not. Cached, with whether its find_anchors takes `event_type`."""
     if not _ANCHORS_MODULE:
         try:
             mod = importlib.import_module("anchors")
-            _ANCHORS_MODULE.append(mod if callable(getattr(mod, "find_anchors", None)) else None)
         except ImportError:
-            _ANCHORS_MODULE.append(None)
+            mod = None
+        fn = getattr(mod, "find_anchors", None)
+        _ANCHORS_MODULE.append(mod if callable(fn) else None)
+        _ANCHORS_MODULE.append(callable(fn) and _takes_event_type(fn))
     return _ANCHORS_MODULE[0]
 
 
-def membership_anchors(rows: list[dict]) -> list[dict]:
-    """The one anchor rule that needs no other store: an official member is a
-    pointer to the official record itself (rule `membership`)."""
-    return [{"type": "official_item", "ref": r["item_id"], "rule": ANCHOR_RULE_MEMBERSHIP,
-             "status": "linked_by_rule"} for r in rows if r.get("origin_class") == origin.OFFICIAL]
+def _takes_event_type(fn) -> bool:
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.kind is p.VAR_KEYWORD
+               or (p.name == "event_type" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)) for p in params)
+
+
+def membership_rule() -> str:
+    """The rule name of an official member's own anchor: the module's
+    RULE_OFFICIAL when it declares one, the same name otherwise, so a row
+    stored before the module and one found by it are the same row."""
+    name = getattr(anchors_module(), "RULE_OFFICIAL", None)
+    return name if isinstance(name, str) and name else ANCHOR_RULE_MEMBERSHIP
+
+
+def membership_anchors(members: list[dict]) -> list[dict]:
+    """The one anchor rule that needs no other store: a member from an
+    official source is a pointer to the official record itself."""
+    rule = membership_rule()
+    return [{"type": "official_item", "ref": m["item_id"], "rule": rule, "status": "linked_by_rule"}
+            for m in members if m.get("source_kind") == "official" or m.get("origin_class") == origin.OFFICIAL]
 
 
 def clean_anchors(raw) -> list[dict]:
-    out: dict[tuple[str, str, str], dict] = {}
+    """Valid rows, one per (type, ref) as EVENTS.md section 10 and anchors.py
+    keep them (when two rules give the same pointer, the first rule name in
+    sort order stands), sorted by (type, ref)."""
+    out: dict[tuple[str, str], dict] = {}
     for a in raw if isinstance(raw, list) else []:
         if not isinstance(a, dict) or a.get("type") not in ANCHOR_TYPES:
             continue
         ref, rule = _str(a.get("ref")), _str(a.get("rule"))
         if not ref or not rule:
             continue
-        out[(a["type"], ref, rule)] = {"type": a["type"], "ref": ref, "rule": rule, "status": "linked_by_rule"}
+        key = (a["type"], ref)
+        if key not in out or rule < out[key]["rule"]:
+            out[key] = {"type": a["type"], "ref": ref, "rule": rule, "status": "linked_by_rule"}
     return [out[k] for k in sorted(out)]
 
 
-def find_anchors(rows: list[dict], places: list[str], inputs: dict, diagnosis: list[str]) -> tuple[list[dict], str]:
-    """(anchors, source). scripts/anchors.py when present, else the membership
-    rule alone. A fault in the module is diagnosed and falls back."""
+def merge_anchors(stored: list[dict], found: list[dict]) -> list[dict]:
+    """A pointer found this edition replaces the stored row for the same
+    (type, ref) (a renamed or refined rule); a stored pointer that is not
+    found again stays (its record may have left the feed since)."""
+    out = {(a["type"], a["ref"]): a for a in clean_anchors(stored)}
+    out.update({(a["type"], a["ref"]): a for a in clean_anchors(found)})
+    return [out[k] for k in sorted(out)]
+
+
+def _input_ids(rows) -> set[str]:
+    rows = rows.get("events") if isinstance(rows, dict) else rows
+    return {str(r["event_id"]) for r in rows or [] if isinstance(r, dict) and r.get("event_id")}
+
+
+def _known_refs(inputs: dict) -> dict[str, set[str]]:
+    return {"roadwork": _input_ids(inputs.get("roadworks")), "consultation": _input_ids(inputs.get("consultations"))}
+
+
+def _ref_ok(a: dict, known: dict[str, set[str]]) -> bool:
+    """A pointer names a record: an item id, a declaration or calendar entry
+    the module was given, or a seal number. Anything else (a module bug)
+    never reaches the store."""
+    if a["type"] in ITEM_ANCHORS:
+        return bool(ITEM_ID.fullmatch(a["ref"]))
+    if a["type"] == "edition_seal":
+        return a["ref"].isdigit()
+    return a["ref"] in known.get(a["type"], set())
+
+
+def find_anchors(members: list[dict], places: list[str], event_type: str, inputs: dict,
+                 diagnosis: list[str]) -> tuple[list[dict], str]:
+    """(anchors, source). `members` are the event's live member rows joined
+    with their current-edition text (in memory, never stored) and their
+    source kind. scripts/anchors.py when present (given the event's own type
+    when it accepts one), else the membership rule alone. A fault in the
+    module is diagnosed and falls back."""
     mod = anchors_module()
     if mod is None:
-        return clean_anchors(membership_anchors(rows)), "membership-only (scripts/anchors.py absent)"
+        return clean_anchors(membership_anchors(members)), "membership-only (scripts/anchors.py absent)"
     try:
-        found = mod.find_anchors(rows, inputs.get("official_items") or [], inputs.get("roadworks") or [],
-                                 inputs.get("consultations") or [], inputs.get("outages") or [], list(places))
-        return clean_anchors(found), "anchors.find_anchors"
+        args = (members, inputs.get("official_items") or [], inputs.get("roadworks") or [],
+                inputs.get("consultations") or [], inputs.get("outages") or [], list(places))
+        found = mod.find_anchors(*args, event_type=event_type) if _ANCHORS_MODULE[1] else mod.find_anchors(*args)
+        rows = clean_anchors(found)
+        known = _known_refs(inputs)
+        kept = [a for a in rows if _ref_ok(a, known)]
+        if len(kept) < len(rows):
+            msg = "anchors.find_anchors returned pointers to no record it was given; dropped"
+            if msg not in diagnosis:
+                diagnosis.append(msg)
+        return kept, "anchors.find_anchors"
     except Exception as exc:  # noqa: BLE001 - an anchor fault never blocks the events
         msg = f"anchors.find_anchors failed ({type(exc).__name__}); membership rule only"
         if msg not in diagnosis:
             diagnosis.append(msg)
-        return clean_anchors(membership_anchors(rows)), "membership-only (anchors.py fault)"
+        return clean_anchors(membership_anchors(members)), "membership-only (anchors.py fault)"
 
 
 # --------------------------------------------------------------------------- #
@@ -988,8 +1063,23 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
 
     present = {r_id for r_id, ids in eff.items() if any(i in texts for i in ids)}
     nbrs = em.neighbours(events, texts, ctx) if texts else {}
-    anchor_inputs = anchor_inputs or {}
+    anchor_inputs = dict(anchor_inputs or {})
+    if anchors_module() is not None:
+        # The edition's own official and Hydro-Québec items, from the
+        # in-memory texts (the same in a replay as in a pipeline run).
+        official_now = [texts[i] for i in sorted(texts) if _str(texts[i].get("source_kind")) == "official"]
+        anchor_inputs.setdefault("official_items", [t["id"] for t in official_now])
+        anchor_inputs.setdefault("outages", [t for t in official_now if "hydro" in vocabulaire.fold(
+            _str(t.get("institution")) + " " + _str(t.get("source_id")))])
     anchor_source = ""
+    gone_items = withdrawn_ids | reg.withdrawn_item_ids
+
+    def anchor_member(i: str) -> dict:
+        """The member as anchors.py reads it: its stored row, its text while
+        the item is in this edition (in memory only, never stored) and its
+        source kind from sources.yaml."""
+        rec = reg.by_id.get(rows[i]["source_id"]) or {}
+        return {**(texts.get(i) or {}), **rows[i], "source_kind": _str(rec.get("source_kind"))}
 
     for e in events:
         eid = e["event_id"]
@@ -1076,11 +1166,14 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
         e["language_pairs"] = [pairs[k] for k in sorted(pairs)]
 
         # Anchors: computed while the event is in this edition; kept otherwise.
+        # A pointer to a withdrawn item goes in the same run (R10).
         stored = [a for a in clean_anchors(e.get("anchors"))
-                  if not (a["type"] == "official_item" and a["ref"] in withdrawn_ids)]
+                  if not (a["type"] in ITEM_ANCHORS and a["ref"] in gone_items)]
         if root[eid] in present or anchors_module() is None:
-            found, anchor_source = find_anchors([rows[i] for i in live], places, anchor_inputs, diagnosis)
-            stored = clean_anchors(stored + found)
+            found, anchor_source = find_anchors([anchor_member(i) for i in live], places, e["type"],
+                                                anchor_inputs, diagnosis)
+            stored = merge_anchors(stored, [a for a in found if not (a["type"] in ITEM_ANCHORS
+                                                                     and a["ref"] in gone_items)])
         e["anchors"] = stored
 
         # Neighbours (possible tier and above, never merged): ids and scores only.
@@ -1286,19 +1379,17 @@ def _read_json(path: Path):
         return None
 
 
-def anchor_inputs_from(data: Path, eligible_payload: dict) -> dict:
-    """What anchors.py reads; loaded only when the module exists."""
+def anchor_inputs_from(data: Path) -> dict:
+    """The stores anchors.py reads besides the edition (loaded only when the
+    module exists). The edition's official and Hydro-Québec items come from
+    the edition itself, inside `build`."""
     if anchors_module() is None:
         return {}
-    cands = [c for c in eligible_payload.get("candidates") or [] if isinstance(c, dict)]
-    official = [c for c in cands if str(c.get("source_kind") or "") == "official"]
     road = _read_json(data / "roadworks" / "latest_roadworks.json")
     civic = _read_json(data / "civic" / "latest_consultations.json")
     return {
-        "official_items": official,
         "roadworks": road.get("events") if isinstance(road, dict) and isinstance(road.get("events"), list) else [],
         "consultations": civic.get("events") if isinstance(civic, dict) and isinstance(civic.get("events"), list) else [],
-        "outages": [c for c in official if str(c.get("institution") or "") == "hydro-quebec"],
     }
 
 
@@ -1460,7 +1551,7 @@ def run(in_path: Path = IN_PATH, data: Path = DATA, sources_path: Path = SOURCES
             issues = _read_json(data / "issues" / "latest_issues.json")
             store, view, ops = build(previous, payload, reg, issues=issues if isinstance(issues, dict) else None,
                                      collection=collection_facts(payload, sources_path),
-                                     anchor_inputs=anchor_inputs_from(data, payload))
+                                     anchor_inputs=anchor_inputs_from(data))
         except StoreUnreadable as exc:
             return _not_built(data, edition, "store_unreadable",
                               f"store unreadable ({exc}); left for repair, no events this run", reg)
