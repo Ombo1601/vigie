@@ -114,7 +114,7 @@ GEO_RANK = {"quebec-city": 0, "quebec": 1, "linked": 2}
 V1_KEYS = ("event_id", "schema", "method", "type", "places", "label", "born_edition",
            "last_edition", "window_state", "activity", "members", "institutions", "languages",
            "independence", "facts", "anchors", "language_pairs", "lineage", "seals")
-EXT_KEYS = ("family", "geo", "place_basis", "tier", "neighbours", "withdrawn",
+EXT_KEYS = ("family", "geo", "place_basis", "tier", "neighbours", "withdrawn", "copies",
             "facts_reduced", "facts_state")
 MEMBER_KEYS = ("item_id", "institution", "source_id", "language", "published_at", "first_seen",
                "origin_class", "origin_rule", "ownership_class", "owner_group", "url", "date_suspect")
@@ -441,15 +441,21 @@ def event_geo(ids: list[str], items: dict) -> str:
     return ranked[0] if ranked else "unknown"
 
 
-def independence(ids: list[str], rows: dict[str, dict]) -> dict:
-    """Union-find over the members (EVENTS.md section 8), in sorted order.
+def independence(ids: list[str], rows: dict[str, dict], copies: list | None = None) -> dict:
+    """Union-find over the members (EVENTS.md section 8, docs/AUTONOMY.md), in
+    sorted order.
 
     Each member carries one key: a wire member the agency that wrote it
     (`wire:<agency>`), a press-release relay its issuer (unknown to the rules
     today, so `release:unknown-issuer`), any other member its owner group
     (`owner:<group>`; Radio-Canada and CBC are one group, Quebecor titles one
     group), or its institution when no sourced owner is declared. Members
-    sharing a key are one group. Counted, never judged."""
+    sharing a key are one group; so are near-duplicate copies (`copies`,
+    pairs found by `near_duplicate`, whoever owns them). Counted, never judged.
+
+    `count` is every group (the schema's figure). Official members are
+    declarations, never corroboration of the reporting: they are listed in
+    `declarations`, and `reporting_count` counts only the groups without one."""
     parent = {i: i for i in ids}
 
     def find(x: str) -> str:
@@ -457,6 +463,11 @@ def independence(ids: list[str], rows: dict[str, dict]) -> dict:
             parent[x] = parent[parent[x]]
             x = parent[x]
         return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
 
     first: dict[str, str] = {}
     for i in sorted(ids):
@@ -471,16 +482,44 @@ def independence(ids: list[str], rows: dict[str, dict]) -> dict:
         else:
             key = "institution:" + (_str(row.get("institution")) or _str(row.get("source_id")) or i)
         if key in first:
-            a, b = find(i), find(first[key])
-            if a != b:
-                parent[max(a, b)] = min(a, b)
+            union(i, first[key])
         else:
             first[key] = i
+    for pair in sorted(tuple(p) for p in copies or [] if isinstance(p, (list, tuple)) and len(p) == 2):
+        if pair[0] in parent and pair[1] in parent:
+            union(pair[0], pair[1])
     groups: dict[str, list[str]] = {}
     for i in sorted(ids):
         groups.setdefault(find(i), []).append(i)
     out = sorted(sorted(g) for g in groups.values())
-    return {"groups": out, "count": max(1, len(out))}
+    declarations = sorted(i for i in ids if _str((rows.get(i) or {}).get("origin_class")) == origin.OFFICIAL)
+    reporting = sum(1 for g in out if not set(g) & set(declarations))
+    return {"groups": out, "count": max(1, len(out)), "declarations": declarations, "reporting_count": reporting}
+
+
+# Near-duplicate copy (docs/AUTONOMY.md): two members whose texts share most
+# of their word shingles are one origin, whoever owns them. Published bound:
+# Jaccard of word 3-shingles over the folded headline and the first 400
+# characters of the excerpt >= 3/5, each side carrying at least 6 shingles.
+# Compared at build time only; only the pair of ids is kept (sticky, like the
+# language pairs: found while both texts were current, it stays).
+COPY_SHINGLE = 3
+COPY_BOUND = (3, 5)
+COPY_MIN_SHINGLES = 6
+
+
+def shingles(item: dict) -> set[tuple[str, ...]]:
+    text = vocabulaire.fold(_str(item.get("title")) + " " + _str(item.get("summary"))[:em.SUMMARY_CHARS])
+    words = text.split()
+    return {tuple(words[k:k + COPY_SHINGLE]) for k in range(max(0, len(words) - COPY_SHINGLE + 1))}
+
+
+def near_duplicate(a: dict, b: dict) -> bool:
+    sa, sb = shingles(a), shingles(b)
+    if len(sa) < COPY_MIN_SHINGLES or len(sb) < COPY_MIN_SHINGLES:
+        return False
+    num, den = COPY_BOUND
+    return den * len(sa & sb) >= num * len(sa | sb)
 
 
 def slots_from_atoms(rows: list[tuple[str, str, list[dict]]]) -> list[dict]:
@@ -857,7 +896,17 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
                          else "developed" if e.get("last_edition") == edition else "quiet")
         e["institutions"] = sorted({rows[i]["institution"] for i in ids})
         e["languages"] = sorted({rows[i]["language"] for i in ids if rows[i].get("language") in ("fr", "en")})
-        e["independence"] = independence(ids, rows)
+        # Near-duplicate copies (sticky): one origin whoever owns them.
+        copies = {tuple(p) for p in e.get("copies") or []
+                  if isinstance(p, list) and len(p) == 2 and p[0] in ids and p[1] in ids}
+        current = [i for i in ids if i in texts]
+        for x in range(len(current)):
+            for y in range(x + 1, len(current)):
+                a, b = current[x], current[y]
+                if (a, b) not in copies and near_duplicate(texts[a], texts[b]):
+                    copies.add((a, b))
+        e["copies"] = [list(p) for p in sorted(copies)]
+        e["independence"] = independence(ids, rows, e["copies"])
         e["withdrawn"] = sorted(set(ids) & withdrawn_ids)
         lineage = dict(e.get("lineage") or {})
         e["lineage"] = {"merged_into": _str(lineage.get("merged_into")),
@@ -1057,9 +1106,12 @@ def _ops(store: dict, view: dict, edition: str, raw: list, eligible: list, exclu
     vev = view["events"]
     multi = [e for e in vev if e["member_count"] > 1]
     independence_dist: dict[str, int] = {}
+    reporting_dist: dict[str, int] = {}
     for e in multi:
         k = str(e["independence"]["count"])
         independence_dist[k] = independence_dist.get(k, 0) + 1
+        r = str(e["independence"].get("reporting_count", 0))
+        reporting_dist[r] = reporting_dist.get(r, 0) + 1
     activity = {a: sum(1 for e in vev if e["activity"] == a) for a in ACTIVITIES}
     tiers = {}
     for e in multi:
@@ -1101,6 +1153,8 @@ def _ops(store: dict, view: dict, edition: str, raw: list, eligible: list, exclu
             "tier_of_multi_member": dict(sorted(tiers.items())),
             "largest_event": max((e["member_count"] for e in vev), default=0),
             "independence_of_multi_member": dict(sorted(independence_dist.items(), key=lambda kv: int(kv[0]))),
+            "reporting_origins_of_multi_member": dict(sorted(reporting_dist.items(), key=lambda kv: int(kv[0]))),
+            "copy_pairs": sum(len(e.get("copies") or []) for e in vev),
             "withdrawn_members": sum(len(e.get("withdrawn") or []) for e in vev),
             "language_pairs": sum(len(e["language_pairs"]) for e in vev),
         },

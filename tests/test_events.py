@@ -496,7 +496,31 @@ class Independence(unittest.TestCase):
         self.assertEqual(out["groups"], sorted([["a", "b"], ["c", "d"], ["w1", "w2"], ["w3"], ["o"], ["p1", "p2"],
                                                  ["g"], ["u"]]))
         self.assertEqual(out["count"], 8)
+        self.assertEqual(out["declarations"], ["g"], "official voices are declarations")
+        self.assertEqual(out["reporting_count"], 7, "a declaration never corroborates the reporting")
         self.assertEqual(events.independence(["x"], {"x": row("x", "solo", "solo")})["count"], 1)
+        # A near-duplicate copy is one origin, whoever owns it.
+        copied = events.independence(sorted(rows), rows, [["c", "o"], ["zz", "o"]])
+        self.assertIn(["c", "d", "o"], copied["groups"])
+        self.assertEqual(copied["count"], 7)
+
+    def test_near_duplicate_copies_are_one_origin_and_stay_one(self):
+        copy = item("cp1", "delta", F1["title"], iso(20, 8, 20), F1["summary"])
+        other = item("cp2", "gamma-fr", "Limoilou : incendie d'un entrepôt, 60 000 litres de mazout en péril",
+                     iso(20, 8, 40), "Des pompiers de Québec sur place depuis l'aube à l'entrepôt Zéphirin.")
+        self.assertTrue(events.near_duplicate(F1, copy))
+        self.assertFalse(events.near_duplicate(F1, other))
+        self.assertFalse(events.near_duplicate({"title": "Court titre"}, {"title": "Court titre"}),
+                         "too short to call a copy")
+        first = payload("2026-09-20T12:00:00+00:00", [F1, copy, other])
+        s1, _, _ = events.build(None, first, registry())
+        fire = by_id(s1)[FIRE_ID]
+        self.assertEqual({m["item_id"] for m in fire["members"]}, {F1["id"], copy["id"], other["id"]})
+        self.assertEqual(fire["copies"], [sorted([F1["id"], copy["id"]])])
+        self.assertEqual(fire["independence"]["count"], 2, "Alpha's text republished by Delta is one origin")
+        s2, _, _ = events.build(json.loads(json.dumps(s1)), payload("2026-09-20T18:00:00+00:00", [S1]), registry())
+        self.assertEqual(by_id(s2)[FIRE_ID]["copies"], fire["copies"], "kept when the texts are gone")
+        self.assertEqual(by_id(s2)[FIRE_ID]["independence"], fire["independence"])
 
     def test_radio_canada_and_cbc_are_one_group_in_the_real_registry(self):
         reg = events.Registry.load(ROOT / "sources.yaml", ROOT / "takedowns.yaml")
