@@ -43,6 +43,10 @@ Open http://127.0.0.1:8765/
 | 6b Watchdog | `scripts/compile_watchdog.py` | `data/ops/watchdog.{md,json}` — the weekly human read: fixed-threshold attention rules over the three ledgers + refresh log + disk usage; same-week recompiles replace; capped 26-week history |
 | Serve | `scripts/serve.py` | local static server |
 
+Stage 5 is not read-only: `rank_display.main` also mutates `data/` during the render step
+(`takedown.purge_media` deletes withdrawn preview files and rewrites `brief_manifest.json`;
+fail-soft on `OSError`).
+
 ## Published method files
 
 The method files below are the machine source of truth. Humans read their
@@ -116,8 +120,7 @@ house law, not defaults to be "fixed" by a future feature.
   (read once per host per run): Disallow for `Vigie` or `*` → `robots_disallow`; absent (404)
   → allowed; any other failure → `robots_unreachable` (fail closed). Both reasons land in the
   media manifest and `data/ops/media_health.json`. Silence is diagnosed, never filled.
-- **Honor opt-outs (R10)**: removal the same day, at the latest in the next edition (about
-  6 h). A publisher's or rights-holder's request becomes an entry in `takedowns.yaml`
+- **Honor opt-outs (R10)**: **On receipt of a request, the removal is applied the same day by a hand-triggered edition; failing that, at the next scheduled run (about every 6 h, sometimes up to about ten hours). A release that still contains the withdrawn item is refused.** A publisher's or rights-holder's request becomes an entry in `takedowns.yaml`
   (`source` | `host` | `url` | `image`; their name only, never personal data), enforced by
   `scripts/takedown.py` at collection, normalize, render, media and staging, with a purge of
   a withdrawn source's raw snapshots and bodies. Emergency path: edit `takedowns.yaml`, push,

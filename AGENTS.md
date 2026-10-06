@@ -175,6 +175,5 @@ Tests alone: `python -X utf8 -m unittest discover -s tests`.
 - **Takedowns (R10).** A publisher's removal request is one entry in
   `takedowns.yaml` (source | host | url | image; their name only), enforced by
   `scripts/takedown.py` at collection, normalize, render, media and staging
-  (`python -X utf8 scripts/takedown.py --check` validates it). Same day, at the
-  latest the next edition: edit, push, then run "Vigie refresh" via
+  (`python -X utf8 scripts/takedown.py --check` validates it). **On receipt of a request, the removal is applied the same day by a hand-triggered edition; failing that, at the next scheduled run (about every 6 h, sometimes up to about ten hours). A release that still contains the withdrawn item is refused.** Edit, push, then run "Vigie refresh" via
   `workflow_dispatch`.

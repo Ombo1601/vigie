@@ -1,6 +1,6 @@
 # Mentions légales — Vigie
 
-Dernière mise à jour : 2026-10-05.
+Dernière mise à jour : 2026-10-06.
 
 Vigie est un **agrégateur de nouvelles local, gratuit et sans but commercial**,
 fait pour la ville de Québec. Vigie ne produit pas d'articles, n'en réécrit
@@ -92,13 +92,11 @@ Les journaux internes ne contiennent aucune donnée de lecteur.
 ## Retrait et contact
 
 Un éditeur ou un ayant droit qui souhaite que Vigie cesse de relayer son flux,
-son domaine, un article ou une image obtient le retrait **le jour même, au plus
-tard à l'édition suivante (environ 6 h)** : la demande est inscrite au registre
-public des retraits (`takedowns.yaml`) et appliquée dans ce délai. Dès lors,
+son domaine, un article ou une image l'obtient. Dès réception d'une demande, le retrait est appliqué le jour même par une édition déclenchée à la main ; à défaut, au prochain passage planifié (toutes les 6 h environ, parfois jusqu'à une dizaine d'heures). Une mise en ligne qui contiendrait encore l'élément retiré est refusée. La demande est inscrite au registre
+public des retraits (`takedowns.yaml`). Dès lors,
 l'élément n'entre plus dans aucune édition ni aucune page ; un flux ou un
 domaine retiré n'est plus collecté ; les images d'aperçu concernées sont
-supprimées de ce site et ne sont plus récupérées ; une mise en ligne qui
-contiendrait encore un élément retiré est refusée. Les instantanés bruts d'une
+supprimées de ce site et ne sont plus récupérées. Les instantanés bruts d'une
 source retirée sont supprimés au même moment.
 
 La liste des retraits — éditeur, portée et date, jamais le contenu retiré —

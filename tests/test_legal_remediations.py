@@ -653,5 +653,22 @@ class PublicLegalPage(unittest.TestCase):
                 self.assertIn(ingest_rss.USER_AGENT, text)
 
 
+class TakedownPromiseIsOneSentence(unittest.TestCase):
+    PHRASE = (
+        "Dès réception d'une demande, le retrait est appliqué le jour même par une édition "
+        "déclenchée à la main ; à défaut, au prochain passage planifié (toutes les 6 h environ, "
+        "parfois jusqu'à une dizaine d'heures). Une mise en ligne qui contiendrait encore "
+        "l'élément retiré est refusée."
+    )
+
+    def test_legal_md_and_the_sources_page_carry_the_identical_phrase(self):
+        import method_site
+        legal = " ".join((Path(__file__).resolve().parent.parent / "legal.md").read_text(encoding="utf-8").split())
+        self.assertIn(self.PHRASE, legal)
+        self.assertIn(self.PHRASE, method_site._sources_html())
+        self.assertNotIn("environ 6 h)", legal)
+        self.assertNotIn("à l'édition suivante", legal)
+
+
 if __name__ == "__main__":
     unittest.main()

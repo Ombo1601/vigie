@@ -336,6 +336,9 @@ body.lens-title-only .excerpt,body.lens-title-only .excerpt-label,body.lens-titl
 .dv-kind{font-size:var(--step--2);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--blue);margin-right:6px}
 .dv-quiet .dv-inst{font-weight:500;color:var(--muted)}
 .dv-quiet .dv-state:before{content:"— ";color:var(--line)}
+.dv-withdrawn .dv-inst{font-weight:500;color:var(--muted)}
+.dv-withdrawn .dv-state:before{content:"— ";color:var(--line)}
+.sb-withdrawn .sb-row-label,.sb-withdrawn .sb-name,.sb-cut .sb-row-label,.sb-cut .sb-name{color:var(--muted);opacity:.85}
 
 @media(max-width:600px){.dv-row{grid-template-columns:1fr;gap:2px}}
 

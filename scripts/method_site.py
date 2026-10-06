@@ -32,6 +32,11 @@ import resident_brief as brief  # noqa: E402
 import store_io  # noqa: E402
 import takedown  # noqa: E402
 
+# Same sentence as legal.md ("Retrait et contact"); tests pin the equality.
+TAKEDOWN_PHRASE_FR = (
+    "Dès réception d'une demande, le retrait est appliqué le jour même par une édition déclenchée à la main ; à défaut, au prochain passage planifié (toutes les 6 h environ, parfois jusqu'à une dizaine d'heures). Une mise en ligne qui contiendrait encore l'élément retiré est refusée."
+)
+
 METHOD = "methode-v1"
 OUT_DIR = ROOT / "public" / "methode"
 SITE_URL = "https://vigieqc.com"
@@ -307,7 +312,7 @@ def _sources_html() -> str:
         )
     # A source cut in the registry itself (enabled: false + cut_reason) or
     # withdrawn on a publisher's request stays named here, never vanishes.
-    requests = takedown.load(ROOT / "takedowns.yaml")[0]
+    requests = takedown.load()[0]
     withdrawn = {
         str(rec.get("id")): rec
         for rec in takedown.withdrawn_sources(takedown.Rules(requests), sources_path=ROOT / "sources.yaml")
@@ -345,8 +350,8 @@ def _sources_html() -> str:
             f"<th>État</th></tr></thead><tbody>{removal_rows}</tbody></table>"
             if removal_rows else '<p class="no-data">Aucune demande de retrait à ce jour.</p>'
         )
-        + '<p class="fine">Chaque demande est appliquée le jour même, au plus tard à l’édition '
-        "suivante (environ 6 h). Seuls l’éditeur, la portée et la date sont publiés — jamais le "
+        + '<p class="fine">' + TAKEDOWN_PHRASE_FR + " "
+        "Seuls l’éditeur, la portée et la date sont publiés — jamais le "
         "contenu retiré. <a href=\"/methode/legal.html#retrait-et-contact\">Demander un retrait</a>.</p>"
     )
     fine = []

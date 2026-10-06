@@ -212,6 +212,24 @@ class Matching(TempRoot):
         self.assertEqual(kept["streets"]["s"]["matched_issue_ids"], ["a"])
         self.assertEqual((list(kept["issues"]), kept["matched_issue_count"]), (["a"], 1))
 
+    def test_withdrawing_the_only_official_voice_recomputes_the_derived_counts(self) -> None:
+        rules = self.withdraw(entry("u1", "url", "https://news.example/official"))
+
+        def tension(iid, kind, url):
+            return {"institution_id": iid, "source_kind": kind, "items": [{"source_id": iid, "url": url}]}
+
+        iss = {"issue_id": "a", "official_voice_count": 1, "media_remix": False,
+               "silence": {"spoke_count": 3, "silent_count": 1},
+               "tensions": [tension("o", "official", "https://news.example/official"),
+                            tension("x", "media", "https://news.example/1"),
+                            tension("y", "media", "https://news.example/2")]}
+        out = takedown.filter_issues([iss], rules)[0]
+        self.assertEqual(out["source_count"], 2)
+        self.assertEqual(out["official_voice_count"], 0)
+        self.assertTrue(out["media_remix"])
+        self.assertEqual(out["silence"]["spoke_count"], 2)
+        self.assertEqual(out["silence"]["silent_count"], 1)
+
 
 # --------------------------------------------------------------------------- #
 # Collection and normalize

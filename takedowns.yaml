@@ -14,6 +14,8 @@
 # status:       active (enforced) | lifted (the publisher withdrew the request;
 #               kept for the record). Never delete an entry silently.
 #
+# On receipt of a request, the removal is applied the same day by a hand-triggered edition; failing that, at the next scheduled run (about every 6 h, sometimes up to about ten hours). A release that still contains the withdrawn item is refused.
+#
 # Any hard error in this file (unknown kind, bad date, unreadable YAML) blocks
 # every release until it is fixed: an entry nobody can interpret is never ignored.
 #

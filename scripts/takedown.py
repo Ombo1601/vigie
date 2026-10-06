@@ -339,8 +339,14 @@ def filter_issues(issues: list, rules: Rules | None = None) -> list:
             continue
         feeds = sorted({str(it.get("source_id")) for t in tensions for it in t["items"]
                         if isinstance(it, dict) and it.get("source_id")})
-        out.append({**iss, "tensions": tensions, "sources": voices, "source_count": len(voices),
-                    "source_feeds": feeds, "item_count": sum(len(t["items"]) for t in tensions)})
+        official = sum(1 for t in tensions if str(t.get("source_kind")) == "official")
+        silence = iss.get("silence") if isinstance(iss.get("silence"), dict) else None
+        rebuilt = {**iss, "tensions": tensions, "sources": voices, "source_count": len(voices),
+                   "source_feeds": feeds, "item_count": sum(len(t["items"]) for t in tensions),
+                   "official_voice_count": official, "media_remix": official == 0}
+        if silence is not None:
+            rebuilt["silence"] = {**silence, "spoke_count": len(voices)}
+        out.append(rebuilt)
     return out
 
 

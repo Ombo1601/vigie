@@ -24,7 +24,7 @@ Established by code audit, not memory:
 | 403/410/bot walls are respected, never circumvented; no paywall is ever touched | media sentinel retry policy |
 | WZDX roadworks: CC-BY 4.0, attribution rendered on the page (« Données : … (CC-BY 4.0, via Données Québec) ») | `resident_brief.py` rw-attr |
 | Civic HTML calendar: Ville participation table, `IdProjet` identity, titles and date windows quoted verbatim, each item links to the City fiche; robots.txt respected; never ranked with articles | `ingest_civic.py`, `resident_brief.py` civic section |
-| 13 sources, all named in public (`sources.yaml` is served); cuts are logged, never silent | sources.yaml law |
+| every enabled source (10 RSS + wzdx + civic), all named in public (`sources.yaml` is served); cuts are logged, never silent | sources.yaml law |
 | No accounts, no tracking, no ads, no revenue; saved articles stay in the visitor's browser | method section |
 | Dossiers are « proposés », with « Rapprochement automatique à vérifier » disclaimer; questions never assert facts | cluster/rank law |
 | Fetcher identifies itself honestly, always and only as `Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)` — no browser identity, no Referer; a host that cannot be read honestly is a recorded collection gap (since 2026-10-05; the former browser fallback is removed); conditional GETs (ETag/304) minimize load | `ingest_rss.py` |
@@ -178,7 +178,7 @@ linked from the brief footer, `data-search` shrunk to title + displayed excerpt,
 transport-level stalls only, 30-day raw-snapshot retention). R7–R10 codified below and in
 TECHNICAL_PROCESS.md. Tests: `tests/test_legal_remediations.py`.
 
-**Status 2026-10-05 (R5/R9 tightened):** the per-host browser fallback is removed; the only
+**Status 2026-10-06 (R5/R9 tightened):** the per-host browser fallback is removed; the only
 identity is `Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)`,
 with no Referer. A 4xx refusal stops a feed for the run (no alternate URL), and robots.txt
 gates every article-page and image fetch. Hosts that stall the honest identity (CBC on
@@ -197,8 +197,7 @@ permanent gap is not carried edition after edition.
   (plus author when R1 has one).
 - **R3 — Public legal page** (`/legal.md` or method subsection): what Vigie copies and why
   (fair dealing, news reporting, attribution), non-commercial declaration, **named contact +
-  takedown commitment** (removal the same day, at the latest in the next edition — about
-  6 h; see R10), pointer to sources.yaml. Notice-and-takedown posture is what kept Stross
+  takedown commitment** (On receipt of a request, the removal is applied the same day by a hand-triggered edition; failing that, at the next scheduled run (about every 6 h, sometimes up to about ten hours). A release that still contains the withdrawn item is refused. See R10), pointer to sources.yaml. Notice-and-takedown posture is what kept Stross
   damages nominal.
 - **R4 — Shrink the DOM excess**: `data-search` should carry title + the displayed ≤240-char
   excerpt, not the 2000-char summary. Aligns the *amount* factor with what a visitor sees.
@@ -222,8 +221,7 @@ permanent gap is not carried edition after edition.
   TECHNICAL_PROCESS.md, so no future feature "fixes" a bot wall. A refusal is never routed
   to an alternate URL, and robots.txt is honoured for article pages and images (fail closed
   unless the file is absent).
-- **R10 — Honor opt-outs**: one commitment, everywhere: **removal the same day, at the
-  latest in the next edition (about 6 h)**. A request (public GitHub Issues) becomes an
+- **R10 — Honor opt-outs**: one commitment, everywhere: **On receipt of a request, the removal is applied the same day by a hand-triggered edition; failing that, at the next scheduled run (about every 6 h, sometimes up to about ten hours). A release that still contains the withdrawn item is refused.** A request (public GitHub Issues) becomes an
   entry in the versioned `takedowns.yaml` (kind `source` | `host` | `url` | `image`;
   publisher or rights-holder *name* only, never personal data). `scripts/takedown.py`
   enforces it at every boundary: a withdrawn feed or domain is no longer fetched, normalize

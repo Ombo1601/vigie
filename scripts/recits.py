@@ -70,6 +70,15 @@ def _status_html(iss: dict, ledger_entry: dict | None) -> str:
     silence = iss.get("silence") if isinstance(iss.get("silence"), dict) else {}
     silent = brief.safe_int(silence.get("silent_count"), len(silence.get("silent") or []))
     chips.append(f'<span class="recit-chip">{silent} absente{"s" if silent != 1 else ""} de ce dossier</span>')
+    withdrawn = {
+        str(e.get("institution_name") or e.get("institution_id") or "").strip()
+        for e in (silence.get("withdrawn") or []) if isinstance(e, dict)
+    } - {""}
+    if withdrawn:
+        chips.append(
+            f'<span class="recit-chip">{len(withdrawn)} retirée{"s" if len(withdrawn) != 1 else ""} '
+            "à la demande de l’éditeur</span>"
+        )
     if iss.get("media_remix"):
         chips.append('<span class="recit-chip developed">reprise médiatique seulement</span>')
     if ledger_entry:
