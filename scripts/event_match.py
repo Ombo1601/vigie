@@ -37,9 +37,13 @@ both and says when they drift). The IDF tables come from the context corpus
 
 Tiers. "certain" and "probable" pairs may group articles; "possible" pairs
 are only ever shown as neighbours, never merged. A French/English pair must
-share a name, a specific place or a salient number (the FR/EN guard), or its
-tier is capped at "possible". Same-owner pairs (CBC / Radio-Canada) are
-matched like any other: independence is counted elsewhere, never here.
+share a specific place, a rare name or a number >= 10 that is not a year (the
+FR/EN guard), or its tier is capped at "possible". Same-owner pairs (CBC /
+Radio-Canada) are matched like any other: independence is counted elsewhere,
+never here.
+
+Callers own fail-soft: these are pure functions over well-formed dicts; the
+event builder wraps them, prints a diagnosis on a fault and exits 0.
 
 Reasons are render-time explanations: they quote single words or numbers as
 each publisher wrote them (so "privatisation ≙ privatization", never a stem)
@@ -938,6 +942,8 @@ def attach(events: list[dict], new_items: list[dict], ctx: MatchContext, *, edit
                is gone keeps its membership but is no longer compared.
     compatible optional extra merge condition (docs/EVENTS.md section 4: same
                type and first place, decided by the event builder).
+    merge_tier, merge_average  override MERGE_PAIR_TIER / MERGE_AVERAGE (the
+               evaluation compares merge rules; production keeps the defaults).
 
     Order: new items by (published_at or edition clock, item_id). An item
     joins the event whose link is strongest (average score over its compared
