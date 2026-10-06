@@ -72,19 +72,30 @@ current edition store only (section 13).
    never re-derives an id from current membership, so an outlet joining,
    leaving, editing its URL or opting out (R10) cannot move it.
 3. **Sticky membership.** An item joins at most one event, once. Later editions
-   may add members; they never move or remove one by rule. Matching a new item
-   against an event uses the existing `cluster_issues.features_match`
-   (complete-link: the newcomer must match every in-window member it is compared
-   with; FR/EN needs a shared place or proper name).
+   may add members; they never move or remove one by rule. Matching is
+   **tiered**, not `features_match` alone: `scripts/event_match.py` scores a
+   pair 0..1 with its reasons (table below), gives it a tier, and a newcomer
+   links to an event when its **average score over the event's compared
+   members reaches the `probable` threshold and at least one of them is at
+   tier `probable` or above** (average link, chosen on dev over complete and
+   single link). Compared members are those within 7 days of the newcomer
+   whose text is still in the window; a member whose text is gone keeps its
+   membership and is no longer compared.
 4. **Attach order.** New items of an edition are processed in
-   `(published_at or first_seen, item_id)` order. Ties between candidate events
-   resolve by most matching members, then oldest `born_edition`, then smallest
-   `event_id`.
+   `(published_at or first_seen, item_id)` order. Among the events it links
+   to, a newcomer joins the one with the highest average score; ties by most
+   matching members, then oldest `born_edition`, then smallest `event_id`.
 5. **Merge.** Two in-window events merge only when at least two cross pairs
-   satisfy `features_match` and both share `type` and `places[0]`. The older
-   event (by `born_edition`, then `event_id`) keeps its id; the younger records
-   `lineage.merged_into` and stops accepting members. Its page redirects by a
-   static link, never disappears.
+   are at tier `probable` or above **and** the average score over their
+   comparable cross pairs reaches the `probable` threshold, and (decided by
+   the event builder, the `compatible` hook) both share `type` and
+   `places[0]`. The average condition is not decoration: on a replay of 49
+   stamped editions the two-pair rule alone glued unrelated stories into one
+   100-member "event" (96 merges); with it the largest event has 11 members
+   (11 merges), at the same dev F1. The older event (by `born_edition`, then
+   `event_id`) keeps its id; the younger records `lineage.merged_into` and
+   stops accepting members; no member moves. Its page redirects by a static
+   link, never disappears.
 6. **Split / detach.** Never automatic. A correction (corrections ledger, see
    `docs/CHARTE.md`) may detach an item; the event keeps its id, records
    `lineage.detached: [item_id]`, and the item mints its own event.
@@ -97,6 +108,44 @@ current edition store only (section 13).
    event *types*, not events: a seven-week saga is many events of type
    `tramway-project`, browsable by type. Continuity across events is a
    type plus place filter, never an id.
+
+### Tiers, guard and reasons (`scripts/event_match.py`)
+
+| Tier | Pair score | What it may do |
+|------|-----------|----------------|
+| `certain` | ≥ 0.8713 | group articles |
+| `probable` | ≥ 0.3985 | group articles |
+| `possible` | ≥ 0.0984 | shown only as **neighbours** ("voisins, non regroupés"); never merged |
+| none | below | nothing |
+
+- **Score.** A logistic sum of measured components (publication gap, shared
+  numbers, dates, capitalised names, lexicon places / institutions / event
+  types, bilingual word overlap, headline overlap, character 4-gram
+  similarity, place and event-type conflicts). Weights were fitted once on the
+  dev split of the private gold set and are frozen in the module; IDF tables
+  come from the window's items, never from labels.
+- **Thresholds**, chosen on dev only: `certain` is the lowest dev threshold
+  whose dev precision is ≥ 0.95 there and at every higher threshold;
+  `probable` is the median of the dev F1 plateau (within 0.01 of the best F1;
+  one arg-max is noisy); `possible` is the lowest dev threshold at which ≥ 90 %
+  of the dev pairs at or above it are the same event or the same storyline.
+- **FR/EN guard.** A French/English pair must share a specific place, a rare
+  name (carried by at most 1 % of the window, never a broad place or a role)
+  or a number ≥ 10 that is not a year; otherwise its tier is capped at
+  `possible`. Same-owner pairs (CBC / Radio-Canada) are matched like any
+  other: independence is counted in section 8, never by the matcher.
+- **Reasons.** Every grouping explains itself: each non-zero component with
+  its signed weight (they add up to the score's log-odds), quoting single
+  words or numbers as each outlet wrote them and Vigie's lexicon labels
+  ("60 000 ≙ 60,000", "pont Pierre-Laporte ≙ Pierre Laporte Bridge"), never a
+  stem; the headline reason cites headline words only. Reasons are computed at
+  render time and are **never stored in the event store or sealed**: only
+  ids, tiers and scores are.
+- **Blocking.** Only pairs that share a rare key (a token, name, number or
+  lexicon term carried by at most max(30, 4 %) of the window) and were
+  published at most 7 days apart are scored. On the gold items it keeps 172 of
+  173 same-event pairs (the lost one is at tier `possible`) and scores about
+  one pair in ten; a 325-item edition is clustered in about 0.6 s.
 
 ## 5. Label: event type times place
 
@@ -376,13 +425,42 @@ from media once out of window.
 
 Gates before events replace dossiers on the front door (measured, published):
 
-1. Pairing precision ≥ 0.95 on a private hand-labelled gold set (counts only
-   are published, never the pairs' text).
+1. Pairing precision ≥ 0.95 at tier `certain` on a private **hand-labelled**
+   gold set (counts only are published, never the pairs' text).
 2. Zero publisher text in sealed records and permanent pages (a test scans
    them against current titles and excerpts).
 3. Id stability: 0 id changes across a full replay of the snapshot history.
 4. Every existing main-chain seal byte-identical (golden test).
 
+**Where gate 1 stands (2026-10-06, `eval/REPORT.md`).** Every number below is
+**model-labelled and relative**: gold_v0 (520 pairs) was labelled by one
+language model in three passes (two labellers and an adjudicator); its kappa
+0.89 is the model's consistency with itself, no human has checked a label,
+and 8 pairs await the founder. Its pairs were sampled through a lexical
+screen of the same kind as the matcher's features, so recall is an upper
+bound on screen-findable pairs. These figures rank designs; they are not a
+measured real-world precision, and gate 1 cannot be passed on gold_v0.
+
+| Measure (shipped matcher, TEST) | Value | 95% interval |
+|---|---|---|
+| `certain`, pair split | 33 of 34 same-event: precision 0.971, recall 0.465 | Wilson 0.851–0.995; component bootstrap 0.90–1.00 |
+| `certain`, leakage-free component split (no item on both sides; refit and tiers on its dev) | 38 of 42: precision 0.905, recall 0.551 | component bootstrap 0.75–1.00 |
+| grouped (`certain` or `probable`), pair split | 57 of 77: precision 0.740, recall 0.803 | Wilson 0.633–0.825 |
+| grouped, French/English pairs only | 13 of 16: precision 0.812, recall 0.765 | Wilson 0.570–0.934 |
+| clusters (sticky clusterer), induced pairwise | P 0.778, R 0.789, F1 0.783 | — |
+
+Verdict: **not met**. The point estimate clears 0.95 on the pair split, but
+its lower bound does not, and the leakage-free split falls to 0.905. Most
+grouped-tier false merges are `related` pairs (same storyline, distinct
+happening). What would open the gate: founder review of the gold (the 8
+uncertain pairs first), then a human-labelled sample drawn from the natural
+stream at tier `certain` and `probable` (not through the screen); showing
+precision ≥ 0.95 with 95 % confidence takes about 73 `certain` pairs without a
+single error (110 with one). If that sample misses, raise `certain` on a new
+dev split before shipping the word.
+
 Founder decisions: (a) Hydro-Québec in owner group `etat-quebec`;
 (b) wire/relay marker lists; (c) public-office entity list; (d) whether event
-seals ever fold into the main record (schema 3).
+seals ever fold into the main record (schema 3); (e) until gate 1 passes on
+human labels, whether the brief may show "Regroupement certain" at all or
+only "probable"; (f) the 8 uncertain gold pairs.
