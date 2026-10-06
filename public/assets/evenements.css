@@ -82,6 +82,7 @@ table { border-spacing: 0; }
 .chip.certain { background: var(--ok-soft); border-color: transparent; color: var(--ok); }
 .chip.probable { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
 .chip.possible { border-style: dashed; }
+.chip.auto { border-style: solid; color: var(--ink2); }
 .chip.lang { font-family: var(--mono); letter-spacing: .04em; }
 .chip.en-only, .chip.first, .chip.act-new { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
 .chip.act-quiet { border-style: dashed; }

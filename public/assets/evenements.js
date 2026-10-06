@@ -151,7 +151,8 @@
     roads.forEach(function (li, i) { li.__i = i; });
     var cardText = cards.map(function (c) {
       var t = '';
-      Array.prototype.forEach.call(c.querySelectorAll('[data-hl]'), function (el) { t += ' ' + el.textContent; });
+      /* publisher text (data-hl) and Vigie's own place label (data-mine-text) */
+      Array.prototype.forEach.call(c.querySelectorAll('[data-hl], [data-mine-text]'), function (el) { t += ' ' + el.textContent; });
       return fold(t);
     });
     var roadText = roads.map(function (li) { return fold(li.textContent); });

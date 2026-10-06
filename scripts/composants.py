@@ -61,7 +61,21 @@ EventView (one event, from docs/EVENTS.md plus the render fields)::
   neighbours     [{"member": MemberView, "reason": "shared_word" |
                    "same_thread" | "outside_window", "why": {fr,en}|None}]
   ledger         {"changes": [{"at", "institution_name", "before", "after"}]}
-                                           headline history (publisher text)
+                                           headline history (publisher text); a
+                                           view WITHOUT this key renders no panel
+                                           (not measured is never "no change")
+  tier_view      {"kind": auto|certain|probable|possible|none, "key": str,
+                  "values": dict}          the grouping chip as the measured
+                                           quality words it (ranking_events.
+                                           tier_chip); wins over `tier`
+  quality_href   str                       site path of the measured numbers
+  rank           {"position": int, "of": int, "explain": [{"key", "values"}]}
+                                           the published ranking's own words,
+                                           first rows of "Pourquoi ici ?"
+  journal        {"born", "last", "merged_into": {"event_id", "href", "at"},
+                  "absorbed": [{"event_id", "href"}], "detached": int,
+                  "joins": [{"edition", "n"}]}   the record's own history
+                                           (Vigie data only, every page)
 
 MemberView::
 
@@ -72,6 +86,8 @@ MemberView::
   ownership_class  public_broadcaster|quebecor|cooperative|independent|government,
   owner_group (code), owner_name (str|{fr,en}, optional group display name),
   url (http(s) only, absent when the source is withdrawn: R10),
+  text_gone (bool, current pages: the member's text left the collection;
+             the card says Vigie keeps no copy),
   -- publisher text, current pages only --
   title, excerpt, author, photo_credit
 
@@ -91,12 +107,19 @@ EditionView (the front door)::
                                              kit never reorders
   roster              [{"name", "state": in_events|outside|declared|no_items|
                         collection_gap|not_established, "events": int,
-                        "articles": int}]
+                        "articles": int, "scope": "shown" (optional: a
+                        "declared" count measured against the cards shown)}]
   seal                {"seq": int, "root": hex} | None   a PUBLISHED seal
   official            [{"institution_name", "ownership_class", "published_at",
                         "title", "url", "language"}]
                       declared items linked to no event shown above
   suggestions         [str]                  examples for the on-device search
+  events_total        int | None             events of the whole collection,
+                                             when more than the cards shown
+  official_total      int | None             declared items of the collection
+                                             linked to no card (prints the cap)
+  status              "not_built" | absent   the builder did not establish this
+                                             collection: never printed as "no event"
 
 RoadworksView (its own view model: the official lane is refreshed hourly and
 may be newer than the edition; it is never derived from the EditionView)::
@@ -161,6 +184,9 @@ RW_MAP_URL = "https://carte.ville.quebec.qc.ca/"
 EN_MIRROR = ("/", "/evenements.html", "/evenements/")
 
 TIERS = ("certain", "probable", "possible")
+# Chip kinds of ranking_events.tier_chip (docs/AUTONOMY.md): "auto" until the
+# measured quality clears the published bar; "none" prints no chip.
+TIER_KINDS = ("auto", "certain", "probable", "possible")
 ORIGINS = ("official", "wire", "press_release", "own_reporting", "unknown")
 OWNERSHIPS = ("public_broadcaster", "quebecor", "cooperative", "independent", "government")
 ACTIVITIES = ("new", "developed", "quiet")
@@ -312,12 +338,14 @@ def internal_link(lang: str, fr_path: str, text: str, *, cls: str = "", fragment
 # --------------------------------------------------------------------------- #
 def head_meta(*, lang: str, fr_path: str, title: str, description: str,
               counterpart: bool = True, robots: str = "index, follow",
-              scripts: bool = True, page_type: str = "website") -> str:
+              scripts: bool = True, page_type: str = "website", view: str = "") -> str:
     """Everything inside <head>.
 
     canonical is self-referential per language (never cross-language);
     hreflang fr-CA / en-CA / x-default (French) only when the page has a
     counterpart; Open Graph; stylesheet links (self-hosted, no external host).
+    `view` ("current" | "permanent") is a machine marker: a page that may carry
+    publisher text says so, so a leak scan can tell it from a permanent one.
     """
     here = abs_url(lang, fr_path) if (lang == "fr" or has_mirror(fr_path)) else abs_url("fr", fr_path)
     full_title = f"{title} — {t('site.name', lang)}" if title else t("site.name", lang)
@@ -331,6 +359,8 @@ def head_meta(*, lang: str, fr_path: str, title: str, description: str,
         f'<meta name="robots" content="{esc(robots)}">',
         f'<link rel="canonical" href="{esc(here)}">',
     ]
+    if view in ("current", "permanent"):
+        out.append(f'<meta name="vigie-view" content="{view}">')
     if counterpart and has_mirror(fr_path):
         out += [
             f'<link rel="alternate" hreflang="fr-CA" href="{esc(abs_url("fr", fr_path))}">',
@@ -383,9 +413,13 @@ def lang_link(lang: str, fr_path: str, *, counterpart: bool = True) -> str:
     return f'<div class="seg" role="group" aria-label="{esc(t("lang.group", "en"))}">{other}{cur}</div>'
 
 
-def site_header(lang: str, fr_path: str, *, counterpart: bool = True, mine_href: str = "#chez-moi") -> str:
-    """Skip link first, then the banner: brand, "Chez moi", language link."""
-    home = path_for(lang, "/")
+def site_header(lang: str, fr_path: str, *, counterpart: bool = True, mine_href: str = "#chez-moi",
+                home: str | None = None) -> str:
+    """Skip link first, then the banner: brand, "Chez moi", language link.
+
+    `home` overrides the brand target (a site path) while a surface the brand
+    would point at does not exist yet in that language (MIGRATION step 11)."""
+    home = home or path_for(lang, "/")
     return (
         f'<a class="skip" href="#main">{esc(t("skip", lang))}</a>\n'
         '<header class="top"><div class="wrap">'
@@ -398,7 +432,9 @@ def site_header(lang: str, fr_path: str, *, counterpart: bool = True, mine_href:
     )
 
 
-def site_footer(lang: str) -> str:
+def site_footer(lang: str, note: str = "") -> str:
+    """Footer links and the house text; `note` (a Vigie sentence, e.g. the
+    published page rule) is printed under it."""
     links = [
         ("/methode/", "foot.method", ""),
         ("/registre.html", "foot.registre", ""),
@@ -407,10 +443,11 @@ def site_footer(lang: str) -> str:
         ("/methode/legal.html", "foot.takedown", "#retrait-et-contact"),
     ]
     items = "".join(internal_link(lang, p, t(k, lang), fragment=frag) for p, k, frag in links)
+    extra = f'<p class="small">{esc(note)}</p>' if note else ""
     return (
         '<footer class="site"><div class="wrap">'
         f'<nav class="links" aria-label="{esc(t("foot.nav", lang))}">{items}</nav>'
-        f'<p>{esc(t("foot.text", lang))}</p>'
+        f'<p>{esc(t("foot.text", lang))}</p>{extra}'
         "</div></footer>"
     )
 
@@ -424,16 +461,17 @@ def _js_island(lang: str) -> str:
 
 def document(*, lang: str, fr_path: str, title: str, description: str, main: str,
              counterpart: bool = True, robots: str = "index, follow", mine_href: str = "#chez-moi",
-             page_type: str = "website") -> str:
+             page_type: str = "website", home: str | None = None, footer_note: str = "",
+             view: str = "") -> str:
     """A complete page: head, skip link, banner, main, contentinfo, one script."""
     return (
         "<!doctype html>\n"
         f'<html lang="{"fr-CA" if lang == "fr" else "en-CA"}">\n<head>\n'
-        f"{head_meta(lang=lang, fr_path=fr_path, title=title, description=description, counterpart=counterpart, robots=robots, page_type=page_type)}\n"
+        f"{head_meta(lang=lang, fr_path=fr_path, title=title, description=description, counterpart=counterpart, robots=robots, page_type=page_type, view=view)}\n"
         "</head>\n<body>\n"
-        f"{site_header(lang, fr_path, counterpart=counterpart, mine_href=mine_href)}\n"
+        f"{site_header(lang, fr_path, counterpart=counterpart, mine_href=mine_href, home=home)}\n"
         f'<main id="main" tabindex="-1"><div class="wrap">\n{main}\n</div></main>\n'
-        f"{site_footer(lang)}\n"
+        f"{site_footer(lang, footer_note)}\n"
         f"{_js_island(lang)}\n"
         f'<script src="{JS_SRC}" defer></script>\n'
         "</body>\n</html>\n"
@@ -476,6 +514,88 @@ def tier_chip(tier: object, lang: str) -> str:
     if tier not in TIERS:
         return ""
     return chip(t(f"tier.{tier}", lang), tier)
+
+
+_ISO_INSTANT = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
+
+
+def fmt_value(value: object, lang: str) -> str:
+    """A value handed over by another module (ranking, quality) as words for
+    `lang`: integers grouped, instants in Quebec City time, `{fr, en}` texts in
+    the language, lists joined. Never raises; a float keeps its digits."""
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return i18n.fmt_int(value, lang)
+    if isinstance(value, float):
+        text = f"{value:.3f}".rstrip("0").rstrip(".") if value == value else "?"
+        return text.replace(".", ",") if lang == "fr" else text
+    if isinstance(value, dict):
+        return loc(value, lang)
+    if isinstance(value, (list, tuple)):
+        return ", ".join(fmt_value(v, lang) for v in value)
+    if value is None:
+        return "—"
+    text = str(value)
+    if _ISO_INSTANT.match(text):
+        shown = i18n.fmt_datetime(text, lang, short=True)
+        if shown:
+            return shown
+    return text
+
+
+def catalogue_text(key: object, values: object, lang: str) -> str:
+    """The catalogue text of `key` with `values` formatted for `lang`, when the
+    key exists in BOTH catalogues with the same placeholders and every
+    placeholder has a value; "" otherwise. Never raises: a key another module
+    names but the catalogue lacks is the caller's to word generically."""
+    if not isinstance(key, str) or not key:
+        return ""
+    fr, en = i18n.catalogue("fr"), i18n.catalogue("en")
+    if key not in fr or key not in en:
+        return ""
+    holes = i18n.placeholders(fr[key])
+    if holes != i18n.placeholders(en[key]):
+        return ""
+    vals = values if isinstance(values, dict) else {}
+    if not holes <= {str(k) for k in vals}:
+        return ""
+    try:
+        return t(key, lang, **{str(k): fmt_value(v, lang) for k, v in vals.items() if str(k) in holes})
+    except (KeyError, IndexError, ValueError):
+        return ""
+
+
+def _tier_view(ev: dict) -> dict | None:
+    view = ev.get("tier_view")
+    return view if isinstance(view, dict) else None
+
+
+def tier_kind(ev: dict) -> str:
+    """The chip kind this view prints: the measured-quality kind when the view
+    carries one (docs/AUTONOMY.md), else the matcher tier; "" for none."""
+    view = _tier_view(ev)
+    if view is not None:
+        kind = str(view.get("kind") or "")
+        return kind if kind in TIER_KINDS else ""
+    tier = str(ev.get("tier") or "")
+    return tier if tier in TIERS else ""
+
+
+def tier_view_chip(view: object, lang: str) -> str:
+    """The grouping chip worded by ranking_events.tier_chip: its own key and
+    values when the catalogue has them, else the kind's own words."""
+    v = view if isinstance(view, dict) else {}
+    kind = str(v.get("kind") or "")
+    if kind not in TIER_KINDS:
+        return ""
+    text = catalogue_text(v.get("key"), v.get("values"), lang) or t(f"tier.{kind}", lang)
+    return chip(text, kind)
+
+
+def event_tier_chip(ev: dict, lang: str) -> str:
+    view = _tier_view(ev)
+    return tier_view_chip(view, lang) if view is not None else tier_chip(ev.get("tier"), lang)
 
 
 def activity_chip(activity: object, lang: str) -> str:
@@ -777,6 +897,29 @@ def _why_rows(ev: dict, ms: list[dict], lead: dict | None, lang: str) -> list[tu
     return [(k, v) for k, v in rows if v]
 
 
+def rank_lines(ev: dict, lang: str) -> list[str]:
+    """The published ranking's own explanation (escaped <li> bodies): the
+    position, then each criterion with its real values, worded from the
+    catalogue; a key the catalogue lacks is printed as its code and values,
+    never dropped and never guessed (docs/AUTONOMY.md: explained on the page)."""
+    rank = _map(ev.get("rank"))
+    if not rank:
+        return []
+    out = []
+    pos, total = _int(rank.get("position")), _int(rank.get("of"))
+    if pos > 0:
+        where = t("why.rank.v", lang, n=i18n.fmt_int(pos, lang), m=i18n.fmt_int(max(pos, total), lang))
+        out.append(f"<b>{esc(t('why.rank', lang))}{esc(_colon(lang))}</b>{esc(where)}")
+    for item in _dicts(rank.get("explain")):
+        text = catalogue_text(item.get("key"), item.get("values"), lang)
+        if not text:
+            vals = _map(item.get("values"))
+            shown = ", ".join(f"{k} = {fmt_value(vals[k], lang)}" for k in sorted(vals, key=str))
+            text = t("why.rank.raw", lang, k=str(item.get("key") or "?"), v=shown or "—")
+        out.append(esc(text))
+    return out
+
+
 def event_card(ev: dict, lang: str) -> str:
     """One event on the front door: the attributed headline of the lead voice,
     its time strip, the counts, and a "why is this here?" disclosure. A
@@ -789,7 +932,7 @@ def event_card(ev: dict, lang: str) -> str:
     n, orgs = len(ms), _orgs(ms)
     kind = loc(ev.get("type_label"), lang)
     top = "".join(x for x in (
-        chip(kind, "kind") if kind else "", activity_chip(ev.get("activity"), lang), tier_chip(ev.get("tier"), lang),
+        chip(kind, "kind") if kind else "", activity_chip(ev.get("activity"), lang), event_tier_chip(ev, lang),
     ) if x)
     label = loc(ev.get("label"), lang)
     if lead is not None and lead.get("title"):
@@ -810,7 +953,13 @@ def event_card(ev: dict, lang: str) -> str:
     facts = f'<b>{esc(tn("n.voices", n, lang))}</b> · {esc(tn("n.orgs", orgs, lang))} · {langs}'
     primary = " primary" if n > 1 else ""
     action = t("compare", lang, n=i18n.fmt_int(n, lang)) if n > 1 else t("see", lang)
-    why = "".join(f"<li><b>{esc(k)}{esc(_colon(lang))}</b>{esc(v)}</li>" for k, v in _why_rows(ev, ms, lead, lang))
+    place_key = t("why.place", lang)
+    why = "".join(f"<li>{line}</li>" for line in rank_lines(ev, lang))
+    # The place is Vigie's own label (not publisher text, so not `data-hl`):
+    # marked for the on-device "Chez moi" match.
+    why += "".join(
+        f'<li{" data-mine-text" if k == place_key else ""}><b>{esc(k)}{esc(_colon(lang))}</b>{esc(v)}</li>'
+        for k, v in _why_rows(ev, ms, lead, lang))
     return (
         f'<article class="card ev" id="{esc(dom_id("c", eid))}" data-mine-card>'
         f'<div class="ev-top">{top}</div>{head}{byline}{summary}{mini_timeline(ms, lang)}'
@@ -873,6 +1022,9 @@ def voice_card(m: dict, lang: str, *, first: bool = False, multi: bool = False) 
     read = _link(m.get("url"), t("read", lang, o=inst))
     title = f'<h3 lang="{code}" data-hl>{esc(m.get("title"))}</h3>' if m.get("title") else ""
     excerpt = f'<p lang="{code}" data-hl>{esc(_excerpt(m))}</p>' if m.get("excerpt") else ""
+    if not title and not excerpt and m.get("text_gone"):
+        # An earlier member whose text left the collection: Vigie keeps no copy.
+        excerpt = f'<p class="small muted">{esc(t("voice.text_gone", lang))}</p>'
     return (
         f'<article class="card voice {_color(m)}" id="{esc(dom_id("v", m.get("item_id")))}" tabindex="-1">'
         f'<header>{"".join(header)}</header>{title}{excerpt}'
@@ -1060,20 +1212,28 @@ def why_panel(ev: dict, lang: str) -> str:
     if gap is not None:
         text = t("why.window.v", lang, d=i18n.fmt_duration(gap, lang), h=_int(why.get("window_hours"), 72))
         rows.append((t("why.window", lang), esc(text)))
-    rows.append((t("why.orgs", lang), esc(t("why.orgs.v", lang, n=_orgs(ms), m=_int(why.get("min_institutions"), 2)))))
+    if "min_institutions" in why and why.get("min_institutions") is None:
+        # a rule with no minimum (events): the count alone, never a made-up floor
+        rows.append((t("why.orgs", lang), esc(tn("n.orgs", _orgs(ms), lang))))
+    else:
+        rows.append((t("why.orgs", lang), esc(t("why.orgs.v", lang, n=_orgs(ms), m=_int(why.get("min_institutions"), 2)))))
     anchor = loc(why.get("place_anchor"), lang)
     if anchor and not perm:
         rows.append((t("why.anchor", lang), esc(t("why.anchor.v", lang, place=anchor))))
     if why.get("rule"):
         rows.append((t("why.rule", lang), f'<code>{esc(why.get("rule"))}</code>'))
-    tier = str(ev.get("tier") or "")
-    if tier in TIERS:
-        rows.append((t("why.level", lang), tier_chip(tier, lang)))
+    kind = tier_kind(ev)
+    if kind:
+        rows.append((t("why.level", lang), event_tier_chip(ev, lang)))
     dl = "".join(f"<dt>{esc(k)}</dt><dd>{v}</dd>" for k, v in rows)
     level = ""
-    if tier in TIERS:
-        warn = " warn" if tier != "certain" else ""
-        level = f'<p class="fact{warn} mt-m">{esc(t(f"why.level.{tier}", lang))}</p>'
+    if kind:
+        warn = " warn" if kind != "certain" else ""
+        level = f'<p class="fact{warn} mt-m">{esc(t(f"why.level.{kind}", lang))}</p>'
+        href = str(ev.get("quality_href") or "")
+        if href.startswith("/") and not href.startswith("//"):
+            level += (f'<p class="small muted mt-xs">{esc(t("why.level.numbers", lang))} '
+                      f'<a href="{esc(href)}">{esc(t("why.level.numbers.link", lang))}</a></p>')
     return _panel(t("grp.h", lang), f'<dl class="why-dl">{dl}</dl>{level}', hid="gp-h")
 
 
@@ -1157,6 +1317,8 @@ def neighbours_panel(ev: dict, lang: str) -> str:
 def ledger_panel(ev: dict, lang: str) -> str:
     """Headline history. Current pages list each change with both headlines;
     permanent pages keep only how many changes were observed."""
+    if not isinstance(ev.get("ledger"), dict):
+        return ""  # headline history not measured for this view: no panel, no claim
     changes = _dicts(_map(ev.get("ledger")).get("changes"))
     if not changes:
         body = f'<p class="small m0">{esc(t("ledger.none", lang))}</p>'
@@ -1222,8 +1384,49 @@ def _crumb(ev: dict, lang: str, edition: dict | None) -> str:
     return internal_link(lang, "/evenements.html", text, cls="crumb")
 
 
+def journal_panel(ev: dict, lang: str) -> str:
+    """The record's own history (Vigie data only, so on every page): when the
+    record was opened, when it last gained an article, how many joined per
+    edition, merges with links, detached articles. Nothing when the view
+    carries no journal."""
+    j = _map(ev.get("journal"))
+    if not j:
+        return ""
+    rows: list[tuple[str, str]] = []
+    if i18n.parse_instant(j.get("born")) is not None:
+        rows.append((t("jr.born", lang), esc(i18n.fmt_datetime(j.get("born"), lang))))
+    if i18n.parse_instant(j.get("last")) is not None:
+        rows.append((t("jr.last", lang), esc(i18n.fmt_datetime(j.get("last"), lang))))
+    joins = [r for r in _dicts(j.get("joins")) if i18n.parse_instant(r.get("edition")) is not None and _int(r.get("n")) > 0]
+    if joins:
+        parts = [t("jr.joins.v", lang, d=i18n.fmt_datetime(r.get("edition"), lang, short=True),
+                   n=tn("n.articles", _int(r.get("n")), lang)) for r in joins]
+        rows.append((t("jr.joins", lang), "<br>".join(esc(p) for p in parts)))
+    merged = _map(j.get("merged_into"))
+    if merged.get("event_id"):
+        href = str(merged.get("href") or "")
+        target = (f'<a href="{esc(href)}">{esc(merged.get("event_id"))}</a>' if href.startswith("/")
+                  else f"<code>{esc(merged.get('event_id'))}</code>")
+        when = i18n.fmt_datetime(merged.get("at"), lang, short=True)
+        rows.append((t("jr.merged", lang), target + (f" · {esc(when)}" if when else "")))
+    absorbed = []
+    for a in _dicts(j.get("absorbed")):
+        href = str(a.get("href") or "")
+        eid = esc(a.get("event_id"))
+        absorbed.append(f'<a href="{esc(href)}">{eid}</a>' if href.startswith("/") else f"<code>{eid}</code>")
+    if absorbed:
+        rows.append((t("jr.absorbed", lang), ", ".join(absorbed)))
+    if _int(j.get("detached")) > 0:
+        rows.append((t("jr.detached", lang), esc(tn("n.articles", _int(j.get("detached")), lang))))
+    if not rows:
+        return ""
+    dl = "".join(f"<dt>{esc(k)}</dt><dd>{v}</dd>" for k, v in rows)
+    body = f'<dl class="why-dl">{dl}</dl><p class="legend">{esc(t("jr.note", lang))}</p>'
+    return _panel(t("jr.h", lang), body, hid="jr-h")
+
+
 def event_page(ev: dict, lang: str, *, edition: dict | None = None, followed: int | None = None,
-               robots: str = "index, follow") -> str:
+               robots: str = "index, follow", home: str | None = None, footer_note: str = "") -> str:
     """A complete event page. `ev["permanent"]` selects the permanent variant:
     no publisher text, links and counts only."""
     ms = _sorted_members(ev)
@@ -1242,7 +1445,7 @@ def event_page(ev: dict, lang: str, *, edition: dict | None = None, followed: in
     place = loc(ev.get("place_label"), lang)
     chips = "".join(x for x in (
         chip(loc(ev.get("type_label"), lang), "kind") if ev.get("type_label") else "",
-        activity_chip(ev.get("activity"), lang), tier_chip(ev.get("tier"), lang),
+        activity_chip(ev.get("activity"), lang), event_tier_chip(ev, lang),
         chip(place) if place else "", event_lang_chip(langs, lang) if langs == ["en"] else "",
     ) if x)
     if any(p.get("same_owner") for p in _dicts(ev.get("language_pairs"))):
@@ -1264,7 +1467,8 @@ def event_page(ev: dict, lang: str, *, edition: dict | None = None, followed: in
             notices += f'<p class="fact mb-m"><b>{esc(t("single", lang))}.</b> {esc(single)}</p>'
         cards = "".join(voice_card(m, lang, first=(i == 0), multi=n > 1) for i, m in enumerate(ms))
         left = f'<h2 class="sect-title">{esc(t("voices.h", lang))}</h2>{notices}<div class="voices" id="voices">{cards}</div>'
-    stack = "".join((neighbours_panel(ev, lang), ledger_panel(ev, lang), archive_panel(ev, lang)))
+    stack = "".join((neighbours_panel(ev, lang), ledger_panel(ev, lang), journal_panel(ev, lang),
+                     archive_panel(ev, lang)))
     aside = "".join((words_panel(ev, lang), origins_panel(ev, lang), numbers_panel(ev, lang), why_panel(ev, lang),
                      silence_panel(ev, lang), official_link_panel(ev, lang)))
     main = (f'{_crumb(ev, lang, edition)}{head}{timeline}'
@@ -1275,7 +1479,8 @@ def event_page(ev: dict, lang: str, *, edition: dict | None = None, followed: in
     else:
         desc = t("meta.desc.event", lang, label=label, articles=tn("n.articles", n, lang), orgs=tn("n.orgs", orgs, lang))
     return document(lang=lang, fr_path=event_path(eid), title=label, description=desc, main=main,
-                    robots=robots, mine_href=path_for(lang, "/evenements.html") + "#chez-moi", page_type="article")
+                    robots=robots, mine_href=path_for(lang, "/evenements.html") + "#chez-moi", page_type="article",
+                    home=home, footer_note=footer_note, view="permanent" if perm else "current")
 
 
 # --------------------------------------------------------------------------- #
@@ -1414,8 +1619,9 @@ def roadworks_block(rw: dict | None, lang: str) -> str:
     )
 
 
-def official_block(items: list[dict] | None, lang: str) -> str:
-    """Official releases, as published, none linked to an event above."""
+def official_block(items: list[dict] | None, lang: str, total: int | None = None) -> str:
+    """Official releases, as published, none linked to an event above. `total`
+    (all such releases of the collection) prints the cap when more exist."""
     rows = []
     for o in _dicts(items):
         if not o.get("title"):
@@ -1431,6 +1637,8 @@ def official_block(items: list[dict] | None, lang: str) -> str:
     body = (f'<ul class="off-list mt-s">{"".join(rows)}</ul>' if rows
             else f'<p class="small m0 mt-s">{esc(t("off.empty", lang))}</p>')
     sub = f'<p class="small muted">{esc(t("off.sub", lang))}</p>' if rows else ""
+    if rows and _int(total) > len(rows):
+        body += f'<p class="small muted mt-s">{esc(t("off.cap", lang, n=i18n.fmt_int(len(rows), lang), total=i18n.fmt_int(_int(total), lang)))}</p>'
     return (f'<section class="card panel" aria-labelledby="off-h"><h2 class="h-panel" id="off-h">{esc(t("off.h", lang))}</h2>'
             f'{sub}{body}</section>')
 
@@ -1460,6 +1668,9 @@ def roster_block(ed: dict, lang: str) -> str:
             text = tn("roster.in_events", _int(r.get("events")), lang)
         elif state == "outside":
             text = tn("roster.outside", _int(r.get("articles")), lang)
+        elif state == "declared" and r.get("scope") == "shown":
+            # every release is an event of its own: say "none in an event SHOWN"
+            text = tn("roster.declared_shown", _int(r.get("articles")), lang)
         elif state == "declared":
             text = tn("roster.declared", _int(r.get("articles")), lang)
         else:
@@ -1491,7 +1702,7 @@ def end_card(ed: dict, lang: str) -> str:
     expected (never a promise), and shows who spoke and who did not."""
     period = _period(ed)
     events = _dicts(ed.get("events"))
-    text = t("end.p", lang, end=t(f"ed.end.{period}", lang), events=tn("n.events", len(events), lang))
+    text = t("end.p", lang, end=t(f"ed.end.{period}", lang), events=_events_count(ed, len(events), lang))
     nxt = i18n.fmt_time(ed.get("next_collection"), lang)
     if nxt:
         text += " " + t("end.next", lang, tm=nxt)
@@ -1503,8 +1714,17 @@ def end_card(ed: dict, lang: str) -> str:
     )
 
 
+def _events_count(ed: dict, shown: int, lang: str) -> str:
+    """"12 events", or "12 shown of 194 events" when the collection holds more
+    than the cards: the front door never understates what was collected."""
+    total = _int(ed.get("events_total"))
+    if total > shown:
+        return t("ed.shown_of", lang, n=i18n.fmt_int(shown, lang), total=tn("n.events", total, lang))
+    return tn("n.events", shown, lang)
+
+
 def edition_page(ed: dict, lang: str, *, roadworks: dict | None = None, fr_path: str = "/evenements.html",
-                 robots: str = "index, follow") -> str:
+                 robots: str = "index, follow", home: str | None = None, footer_note: str = "") -> str:
     """The events index / front door: edition head, event cards in the given
     order, the aside (Chez moi, roadworks, official declarations), the end.
 
@@ -1515,7 +1735,7 @@ def edition_page(ed: dict, lang: str, *, roadworks: dict | None = None, fr_path:
     followed = _int(ed.get("institutions_followed"))
     clock = ed.get("clock")
     eyebrow = t("ed.line", lang, period=t(f"ed.title.{period}", lang), date=i18n.fmt_date(clock, lang, weekday=True))
-    lede = t("ed.lede", lang, events=tn("n.events", len(events), lang),
+    lede = t("ed.lede", lang, events=_events_count(ed, len(events), lang),
              institutions=tn("n.institutions", followed, lang), tm=i18n.fmt_time(clock, lang))
     rules = "".join(f"<li><b>{esc(t(f'rules.{i}.h', lang))}</b>{esc(t(f'rules.{i}.p', lang))}</li>" for i in (1, 2, 3))
     pledge = "".join(chip(t(f"pledge.{i}", lang)) for i in (1, 2, 3))
@@ -1528,14 +1748,18 @@ def edition_page(ed: dict, lang: str, *, roadworks: dict | None = None, fr_path:
     )
     if events:
         cards = "".join(event_card(e, lang) for e in events)
+    elif ed.get("status") == "not_built":
+        # the builder did not establish this collection's events: say so, never "no event"
+        cards = f'<p class="card panel">{esc(t("ed.notbuilt", lang))}</p>'
     else:
         cards = f'<p class="card panel">{esc(t("ed.empty", lang))}</p>'
     suggestions = [str(s) for s in (ed.get("suggestions") if isinstance(ed.get("suggestions"), (list, tuple)) else [])][:6]
     aside = (f'<aside class="aside stack" aria-label="{esc(t("roads.h", lang))}">'
-             f'{mine_panel(lang, suggestions)}{roadworks_block(roadworks, lang)}{official_block(ed.get("official"), lang)}</aside>')
+             f'{mine_panel(lang, suggestions)}{roadworks_block(roadworks, lang)}'
+             f'{official_block(ed.get("official"), lang, ed.get("official_total"))}</aside>')
     main = (f'{head}<div class="grid"><div class="stack" id="cards">{cards}</div>{aside}</div>{end_card(ed, lang)}')
     return document(lang=lang, fr_path=fr_path, title=t("ed.h1", lang), description=t("meta.desc.home", lang),
-                    main=main, robots=robots)
+                    main=main, robots=robots, home=home, footer_note=footer_note, view="current")
 
 
 # --------------------------------------------------------------------------- #
