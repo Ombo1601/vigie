@@ -152,13 +152,11 @@ def _question_html(issues: list[dict]) -> str:
     issue = _question_pick(issues)
     if issue is None:
         return ""
-    question = brief.plain(issue.get("question"))[:160]
+    question = brief.capped_title(issue.get("question"), 160)
     line = promesse.line_of(issue)
     status_html = f'<p class="depart-question-status">{brief.esc(line)}</p>' if line else ""
-    attributed = str(issue.get("label_kind") or "") == "attributed_headline"
-    attrib_html = (
-        '<p class="fine">Titre d’un éditeur, cité tel quel.</p>' if attributed else ""
-    )
+    attrib = brief.label_attribution(issue)
+    attrib_html = f'<p class="fine">{brief.esc(attrib)}</p>' if attrib else ""
     link = brief.dossier_page_path(issue)
     return (
         '<section class="depart-question" aria-labelledby="depart-question-title">'

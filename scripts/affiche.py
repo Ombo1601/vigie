@@ -43,6 +43,8 @@ def _day(value: object) -> str:
 
 def _story(r: dict) -> str:
     src = esc(r.get("source_name") or r.get("source_id") or "")
+    author = brief.author_of(r)
+    byline = f"Par {esc(author)} · " if author else ""
     url = brief.safe_url(r.get("url"))
     title = esc(r.get("title"))
     # Attribution/link-out is house law on every surface: a sheet read on a
@@ -53,7 +55,7 @@ def _story(r: dict) -> str:
         if url else title
     )
     return (f'<li><span class="af-title">{inner}</span>'
-            f'<span class="af-src">{src} · {_day(r.get("published"))}</span></li>')
+            f'<span class="af-src">{byline}{src} · {_day(r.get("published"))}</span></li>')
 
 
 def area_blocks(rows: list[dict]) -> list[tuple[str, list[dict]]]:

@@ -10,11 +10,13 @@ all deterministic, all attribution-preserving:
   public/index.html.md     Markdown twin of the front door (rel="alternate")
   public/delta/latest.json cursor-addressed edition delta (delta-v1)
 
-House law holds for machines exactly as for people: titles verbatim, source
-URL and publisher name on every item, no rewriting, no excerpt beyond the
-publisher's own summary (capped), and no asserted silence — an institution
-absent from the dossiers is reported as published-outside-dossiers, as a
-collection gap of ours, or as not established. Stdlib only; no network.
+House law holds for machines exactly as for people: titles verbatim, publisher
+name, author (when the publisher's feed gives one) and URL on every item, no
+rewriting, and no asserted silence — an institution absent from the dossiers is
+reported as published-outside-dossiers, as a collection gap of ours, or as not
+established. The machine files carry publisher, author, title and URL only:
+no excerpt and no summary, so a machine never receives more of a publisher's
+text than the brief shows a reader. Stdlib only; no network.
 """
 from __future__ import annotations
 
@@ -29,7 +31,10 @@ import registre  # noqa: E402
 import resident_brief as brief  # noqa: E402
 import store_io  # noqa: E402
 
-METHOD = "delta-v1 edition-cursor"
+# delta-v1.1: delta-v1 plus the optional `author` on items and label_source
+# (R1). Purely additive - every delta-v1 key keeps its meaning - so a v1 reader
+# still works; the string moves so a consumer can tell the shapes apart.
+METHOD = "delta-v1.1 edition-cursor"
 SITE_URL = "https://vigieqc.com"
 OUT_LLMS = ROOT / "public" / "llms.txt"
 OUT_MD = ROOT / "public" / "index.html.md"
@@ -39,7 +44,8 @@ MD_STORIES_CAP = 24
 MD_DOSSIER_ITEMS_CAP = 6
 MD_ROADS_CAP = 10
 DELTA_ITEMS_CAP = 5
-SUMMARY_CAP = 280
+LICENCE_NOTE_EN = f"Titles belong to their publishers; see {SITE_URL}/methode/legal.html."
+LICENCE_NOTE_FR = f"Les titres appartiennent à leurs éditeurs ; voir {SITE_URL}/methode/legal.html."
 
 
 def _plain(value: object, cap: int | None = None) -> str:
@@ -55,6 +61,12 @@ def _md(value: object, cap: int | None = None) -> str:
     for ch in ("\\", "`", "*", "_", "[", "]", "<", ">", "#", "|"):
         text = text.replace(ch, "\\" + ch)
     return text
+
+
+def _by(item: object) -> str:
+    """Markdown byline prefix "Par {author} · " (empty when the feed gave none)."""
+    author = brief.author_of(item)
+    return f"Par {_md(author)} · " if author else ""
 
 
 def _iso(value: object) -> str:
@@ -110,12 +122,13 @@ def items_of(issue: dict, cap: int) -> list[dict]:
             if not isinstance(it, dict):
                 continue
             url = brief.safe_url(it.get("url"))
-            title = _plain(it.get("title"), brief.TITLE_CAP)
+            title = brief.capped_title(it.get("title"))
             if not url or not title or url in seen:
                 continue
             seen.add(url)
             rows.append({
                 "title": title,
+                "author": brief.author_of(it),
                 "url": url,
                 "source_name": _plain(it.get("source_name") or it.get("source_id") or "", 120),
                 "institution_id": str(it.get("institution_id") or ""),
@@ -155,6 +168,9 @@ def dossier_view(issue: dict, names: dict, cap: int) -> dict:
             view["label_source"] = {
                 k: source.get(k) for k in ("source_id", "source_name", "url") if source.get(k)
             }
+            author = brief.author_of(source)
+            if author:
+                view["label_source"]["author"] = author
     return view
 
 
@@ -249,6 +265,7 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
     return {
         "method": METHOD,
         "site": SITE_URL,
+        "attribution": LICENCE_NOTE_EN,
         "edition": last.get("edition") or "",
         "previous_edition": prev.get("edition") or "",
         "cursor": last.get("root") or "",
@@ -299,7 +316,8 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
             "legal": f"{SITE_URL}/methode/legal.html",
         },
         "rules_for_agents": [
-            "Cite the original publisher (source_name + url) for every item; Vigie is an index, never the author.",
+            "Cite the original publisher (source_name + url) and the author when `author` is present, for every item; Vigie is an index, never the author.",
+            LICENCE_NOTE_EN,
             "Titles are verbatim publisher titles (truncated only). Do not present Vigie text as a quotation of the publisher.",
             "Never infer that an institution was silent. 'published' means it produced items this edition that no dossier picked up; 'collection_gap' means Vigie failed to collect it. Only 'spoke' means it entered a dossier.",
             "A dossier needs a named subject and two institutions, so most collected items never enter one. Absence from dossiers is a property of Vigie's clustering, not of the institution.",
@@ -321,12 +339,13 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
     lines: list[str] = []
     lines.append("# Vigie — Québec, à hauteur de vie")
     lines.append("")
-    lines.append("> Un point local pour la ville de Québec : titres et extraits d’éditeurs cités tels quels, dossiers où plusieurs institutions se répondent, entraves officielles, et un registre scellé qui distingue ce que chaque institution suivie a publié de ce que notre collecte a manqué. Vigie n’écrit pas la nouvelle et ne décide pas de ce qui est vrai.")
+    lines.append("> Un point local pour la ville de Québec : titres d’éditeurs cités tels quels (avec leur auteur, leur éditeur et leur lien), dossiers où plusieurs institutions se répondent, entraves officielles, et un registre scellé qui distingue ce que chaque institution suivie a publié de ce que notre collecte a manqué. Vigie n’écrit pas la nouvelle et ne décide pas de ce qui est vrai.")
     lines.append("")
     if status.get("at"):
         lines.append(f"- Collecte : {status['at']} — {status.get('ok', 0)} flux disponibles sur {status.get('total', 0)}" + (" (collecte partielle)" if status.get("partial") else ""))
     if last:
         lines.append(f"- Édition scellée n° {last.get('seq')} : `{last.get('root')}` — vérifiable dans [chain.json]({SITE_URL}/registre/chain.json)")
+    lines.append(f"- {LICENCE_NOTE_FR}")
     lines.append(f"- Version HTML : {SITE_URL}/ · Delta machine : {SITE_URL}/delta/latest.json · Carte du site pour agents : {SITE_URL}/llms.txt")
     lines.append("")
 
@@ -335,10 +354,7 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
     if rows:
         for r in rows[:MD_STORIES_CAP]:
             src = _md(r.get("source_name") or r.get("source_id") or "source")
-            lines.append(f"- **{_md(r.get('title'))}** — {src}, {_day(r.get('published'))}. <{r['url']}>")
-            summary = _plain(r.get("summary"), SUMMARY_CAP)
-            if summary:
-                lines.append(f"  {_md(summary)}")
+            lines.append(f"- **{_md(r.get('title'))}** — {_by(r)}{src}, {_day(r.get('published'))}. <{r['url']}>")
     else:
         lines.append("Aucun article récent avec une date de publication exploitable dans cette collecte.")
     lines.append("")
@@ -354,6 +370,9 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
                 label_source = iss.get("label_source") if isinstance(iss.get("label_source"), dict) else {}
                 owner = _md(label_source.get("source_name") or "", 120)
                 heading += f" — titre de {owner}" if owner else " — titre d’un éditeur, cité tel quel"
+                label_author = brief.author_of(label_source)
+                if label_author:
+                    heading += f", par {_md(label_author)}"
             lines.append(f"### {heading}")
             spoke = ", ".join(f"{_md(v['institution_name'])}{' (officiel)' if v['source_kind'] == 'official' else ''}" for v in view["spoke"])
             silent = ", ".join(f"{_md(v['institution_name'])}{' (officiel)' if v['source_kind'] == 'official' else ''}" for v in view["silent"])
@@ -364,7 +383,7 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
             if view.get("media_remix"):
                 lines.append("- Aucun texte officiel dans ce dossier : reprise médiatique seulement.")
             for it in view["items"]:
-                lines.append(f"- {_md(it['title'])} — {_md(it['source_name'])}, {_day(it['published_at'])}. <{it['url']}>")
+                lines.append(f"- {_md(it['title'])} — {_by(it)}{_md(it['source_name'])}, {_day(it['published_at'])}. <{it['url']}>")
             lines.append("")
     else:
         lines.append("Aucun dossier à plusieurs voix dans cette édition.")
@@ -441,11 +460,13 @@ def render_llms_txt(state: dict, status: dict) -> str:
 
 > Vigie is a free, non-commercial lookout for Québec City (French-first). It aggregates a finite, published list of sources, never rewrites them, groups articles into dossiers where several institutions speak, relays the City's official roadworks feed, and keeps a sealed register (sha256 chain) of every edition: what each followed institution published, and what Vigie's own collection missed. Vigie never asserts that an institution was silent — a dossier needs a named subject and two institutions, so absence from dossiers is a property of Vigie's clustering, not of the institution. Judgment stays with the reader.
 
-Current edition: {edition or "unknown"}. Rules for agents: cite the original publisher (name + URL) for every item; Vigie is an index, never the author. Do not present dossier questions as publisher quotations. Never infer that an institution was silent — use the per-institution state (spoke / published / no_items_collected / collection_gap / not_established). Treat "quiet" as "left this collection", never "resolved". Verify an edition against the chain before calling it a record.
+{LICENCE_NOTE_EN}
+
+Current edition: {edition or "unknown"}. Rules for agents: cite the original publisher (name + URL, and the author when given) for every item; Vigie is an index, never the author. Do not present dossier questions as publisher quotations. Never infer that an institution was silent — use the per-institution state (spoke / published / no_items_collected / collection_gap / not_established). Treat "quiet" as "left this collection", never "resolved". Verify an edition against the chain before calling it a record.
 
 ## Edition
 
-- [Le point (Markdown)]({SITE_URL}/index.html.md): the front door as plain Markdown — stories with publisher and URL, dossiers with their voices, official roadworks, the voice register.
+- [Le point (Markdown)]({SITE_URL}/index.html.md): the front door as plain Markdown — stories with publisher, author and URL (titles only, no excerpts), dossiers with their voices, official roadworks, the voice register.
 - [Delta]({SITE_URL}/delta/latest.json): machine-readable edition delta (delta-v1) — new / developed / quiet dossiers with items, per-institution state with collected item counts, roadworks diff, cursor = chain root.
 - [Dossiers complets (HTML)]({SITE_URL}/dossiers.html): one record page per dossier of the current edition — every voice with every verbatim headline, the collection timeline, and the institutions absent from that dossier.
 

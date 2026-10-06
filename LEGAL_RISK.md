@@ -185,6 +185,10 @@ gates every article-page and image fetch. Hosts that stall the honest identity (
 - **R1 — Author attribution (s. 29.2(b))**: capture `<dc:creator>` / `<media:credit>` /
   byline when the feed provides it and render it (« Par {author} — {source} »). Cedrom and
   Stross were both *lost on missing author names*. This is the single highest-value fix.
+  (2026-10-05: the byline now travels with the title on every surface — dossier rows, peers,
+  record pages, the sheet, the explorer and the machine files — through `author_of` /
+  `label_attribution` in `resident_brief.py`; `tests/test_author_attribution.py` fails when a
+  surface shows a title without a known author.)
 - **R2 — Image credit line**: render « Photo : {source} » adjacent to every re-hosted image
   (plus author when R1 has one).
 - **R3 — Public legal page** (`/legal.md` or method subsection): what Vigie copies and why

@@ -100,6 +100,46 @@ def plain(value: object) -> str:
     return re.sub(r"\s+", " ", sanitize(html.unescape(raw))).strip()
 
 
+AUTHOR_CAP = 120    # byline names, as the publisher's feed gives them
+
+
+def author_of(item: object) -> str:
+    """The author name the publisher's own feed gave for this item, or "".
+
+    Attribution law (LEGAL_RISK.md R1): s. 29.2 requires source AND author for
+    news reporting, so every surface that shows a publisher title shows this
+    beside it, in the byline style "Par {author}"."""
+    return plain(item.get("author"))[:AUTHOR_CAP] if isinstance(item, dict) else ""
+
+
+def by_html(author: str, cls: str = "by") -> str:
+    """The "Par {author}" tag for a list row, empty when the feed gave no author."""
+    return f'<span class="{cls}">Par {esc(author)}</span>' if author else ""
+
+
+def capped_title(value: object, cap: int | None = None) -> str:
+    """A relayed title as plain words, truncated (never reworded) to the
+    published cap; the ellipsis counts, so the result never exceeds `cap`."""
+    cap = TITLE_CAP if cap is None else cap
+    title = plain(value)
+    return title[:cap - 1].rstrip() + "…" if len(title) > cap else title
+
+
+def label_attribution(issue: object) -> str:
+    """Plain-text publisher note for a dossier whose label is a publisher's own
+    headline (label_kind=attributed_headline); "" for Vigie's own labels.
+
+    "Titre d’un éditeur, cité tel quel — Par {author} · {source}." The same
+    words on the brief, the record page, the departure screen and the sheet."""
+    if not isinstance(issue, dict) or str(issue.get("label_kind") or "") != "attributed_headline":
+        return ""
+    source = issue.get("label_source") if isinstance(issue.get("label_source"), dict) else {}
+    owner = plain(source.get("source_name") or source.get("source_id"))[:120]
+    author = author_of(source)
+    who = " · ".join(part for part in ((f"Par {author}" if author else ""), owner) if part)
+    return "Titre d’un éditeur, cité tel quel" + (f" — {who}" if who else "") + "."
+
+
 # Folding law: ligatures and typographic apostrophes are mapped before the
 # diacritics are stripped, so the client fold in brief.js and this server-side
 # search index agree (searching "oeuvre" must match a stored "œuvre").
@@ -227,11 +267,9 @@ def prepare_items(ranked: list[dict], now: datetime) -> tuple[list[dict], int]:
             excluded += 1
             continue
         url = safe_url(item.get("url"))
-        title = plain(item.get("title"))
-        if len(title) > TITLE_CAP:
-            # The ellipsis counts: the relayed title stays within the published
-            # cap (LEGAL_RISK.md "≤300 chars"), never one over.
-            title = title[:TITLE_CAP - 1].rstrip() + "…"
+        # The ellipsis counts: the relayed title stays within the published
+        # cap (LEGAL_RISK.md "≤300 chars"), never one over.
+        title = capped_title(item.get("title"))
         when = parse_date(item.get("published_at"))
         if not title or not url:
             excluded += 1
@@ -374,7 +412,8 @@ def _headline_rows(issue: dict) -> list[dict]:
             rows.append({
                 "inst": inst,
                 "url": url,
-                "title": str(entry.get("title") or "Sans titre"),
+                "title": capped_title(entry.get("title")) or "Sans titre",
+                "author": author_of(entry),
                 "published": entry.get("published_at"),
                 "when": when,
                 "geo": geo,
@@ -399,7 +438,7 @@ def _headline_li(row: dict) -> str:
         f'<li data-url="{esc(row["url"])}" data-official="{row["official"]}" '
         f'data-date="{esc(date_attr)}" data-nest-rank="{row["nest_rank"]}" '
         f'data-inst="{esc(folded(row["inst"]))}">'
-        f'<span class="dossier-inst">{esc(row["inst"])}</span>'
+        f'<span class="dossier-inst">{esc(row["inst"])}{by_html(row.get("author") or "", "dossier-by")}</span>'
         f'<a href="{esc(row["url"])}" rel="noopener noreferrer">{esc(row["title"])}'
         f'<span class="arrow" aria-hidden="true"> ↗</span></a>{time_html}</li>'
     )
@@ -499,17 +538,28 @@ def dossier_timeline_html(issue: dict) -> str:
         entries.append(f'<li>{when} — {" · ".join(bits)}</li>')
     # Field-level revisions: when the dossier question was reformulated. The
     # initial question and up to two later revisions, quoted verbatim — a
-    # wording change, never a change of meaning.
-    revisions = [
-        (date_html(t.get("ts"), fallback="date non précisée"), str(t.get("question")).strip())
-        for t in rows if isinstance(t.get("question"), str) and t.get("question").strip()
-    ]
+    # wording change, never a change of meaning. A dossier named after a
+    # publisher's headline never replays that headline from the history (it may
+    # even have changed outlet between editions): only the outlet is listed.
+    attributed = str(issue.get("label_kind") or "") == "attributed_headline"
+    revisions = []
+    for t in rows:
+        when = date_html(t.get("ts"), fallback="date non précisée")
+        question = str(t.get("question")).strip() if isinstance(t.get("question"), str) else ""
+        outlet = plain(t.get("label_source"))[:120] if isinstance(t.get("label_source"), str) else ""
+        if question and not attributed:
+            revisions.append((when, "question", f"« {esc(question)} »"))
+        elif outlet:
+            revisions.append((when, "outlet", esc(outlet)))
     revisions_html = ""
     if revisions:
-        shown = [("Question initiale", revisions[0])]
-        shown += [("Question révisée", rev) for rev in revisions[1:][-2:]]
-        items = "".join(f'<li>{label} le {when} : « {esc(text)} »</li>' for (label, (when, text)) in shown)
-        revisions_html = f'<ul class="dossier-revisions">{items}</ul>'
+        def _rev(index: int, rev: tuple) -> str:
+            when, kind, text = rev
+            if kind == "outlet":
+                return f"<li>Titre d’un éditeur le {when} : {text}</li>"
+            return f"<li>{'Question initiale' if index == 0 else 'Question révisée'} le {when} : {text}</li>"
+        shown = [(0, revisions[0])] + [(i, rev) for i, rev in enumerate(revisions[1:][-2:], start=1)]
+        revisions_html = f'<ul class="dossier-revisions">{"".join(_rev(i, rev) for i, rev in shown)}</ul>'
     return (
         '<details class="dossier-timeline"><summary>Repères de collecte '
         f'({len(rows)} éditions)</summary><ul>{"".join(entries)}</ul>{revisions_html}'
@@ -616,7 +666,12 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
     A malformed store entry is skipped, never fatal.
     """
     issue = issue if isinstance(issue, dict) else {}
-    question = esc(issue.get("question") or "Sujet suivi")
+    # A dossier named after one outlet's headline is that publisher's text: it is
+    # relayed as plain capped words and carries the same publisher note as the
+    # record page (R1/R8).
+    question = esc(capped_title(issue.get("question")) or "Sujet suivi")
+    attrib = label_attribution(issue)
+    attrib_html = f'<p class="dossier-attrib fine">{esc(attrib)}</p>' if attrib else ""
     nest = dossier_nest(issue.get("geo_focus"))
     tensions = [t for t in (issue.get("tensions") or []) if isinstance(t, dict)]
     spoke_names = {
@@ -702,7 +757,7 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
         f'<span class="dossier-count">{spoke_count} dans ce dossier · '
         f'{silent_count} absente{"s" if silent_count != 1 else ""}</span>'
         f'<a class="recit-more" href="{esc(dossier_page_path(issue))}">Récit complet ↗</a></div>'
-        f'<h3 class="dossier-q">{question}</h3>{why}{promesse.html_of(issue)}'
+        f'<h3 class="dossier-q">{question}</h3>{attrib_html}{why}{promesse.html_of(issue)}'
         f"{tracking_html(issue)}{dossier_timeline_html(issue)}"
         f"{headlines}{sources}{dossier_voices_html(issue)}"
         f"{silence_line}{remix_line}{units_line}{edge_line}"
@@ -1565,9 +1620,9 @@ def article_html(item: dict, index: int, related: list[dict], media: dict | None
     excerpt_html = f'<p class="excerpt">{esc(excerpt)}</p><span class="excerpt-label">Extrait du flux de {source}</span>' if excerpt else '<p class="excerpt-label">Le flux ne fournit pas de résumé. Consultez l’article original.</p>'
     # Attribution law (LEGAL_RISK.md R1): the author name when the publisher's
     # feed gives one - s. 29.2 requires source AND author for news reporting.
-    author = plain(item.get("author"))[:120]
+    author = author_of(item)
     byline_author = f'Par {esc(author)}<span aria-hidden="true"> · </span>' if author else ""
-    peers = "".join(f'<li><span>{esc(r.get("source_name") or r.get("source_id"))}</span><a href="{esc(safe_url(r.get("url")))}" rel="noopener noreferrer">{esc(r.get("title"))}</a>{date_html(r.get("published"))}</li>' for r in related)
+    peers = "".join(f'<li><span>{esc(r.get("source_name") or r.get("source_id"))}{by_html(author_of(r))}</span><a href="{esc(safe_url(r.get("url")))}" rel="noopener noreferrer">{esc(r.get("title"))}</a>{date_html(r.get("published"))}</li>' for r in related)
     related_html = f'<p class="evidence-label">Autres articles du dossier proposé</p><ul class="source-list">{peers}</ul><p class="fine">Rapprochement automatique à vérifier. Plusieurs médias ne constituent pas plusieurs confirmations indépendantes.</p>' if peers else '<p class="fine">Aucun autre article rapproché dans cette collecte. Cela ne dit rien de la couverture ailleurs.</p>'
     kind = '<span class="official">Source officielle</span>' if item.get("source_kind") == "official" else ''
     why = why_here_line(item)

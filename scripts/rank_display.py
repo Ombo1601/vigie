@@ -241,6 +241,8 @@ def safe_int(value: object, default: int = 0) -> int:
 
 
 TITLE_CAP = resident_brief.TITLE_CAP
+author_of = resident_brief.author_of
+by_html = resident_brief.by_html
 
 
 def title_html(value: object, cap: int = TITLE_CAP) -> str:
@@ -313,14 +315,14 @@ def build_continuity(issues: list[dict], ranked: list[dict]) -> dict:
     return {"by_id": by_id, "id_to_issues": id_to_issues}
 
 
-def same_fight_links(c: dict, continuity: dict, *, limit: int = 3) -> list[tuple[str, str]]:
+def same_fight_links(c: dict, continuity: dict, *, limit: int = 3) -> list[tuple[str, str, str]]:
     """Scar brothers only — share an issue_id / named scar on disk. Never bare topic."""
     if not isinstance(c, dict):
         return []
     cid = str(c.get("id") or "")
     by_id = continuity["by_id"]
     seen = {cid}
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, str]] = []
     for iss in continuity["id_to_issues"].get(cid, []):
         for other in issue_candidate_ids(iss):
             if other in seen:
@@ -329,10 +331,26 @@ def same_fight_links(c: dict, continuity: dict, *, limit: int = 3) -> list[tuple
             if not oc:
                 continue
             seen.add(other)
-            out.append((oc.get("title") or "(no title)", oc.get("url") or "#"))
+            out.append((oc.get("title") or "(no title)", oc.get("url") or "#",
+                        author_of(oc)))
             if len(out) >= limit:
                 return out
     return out
+
+
+def author_chip(c: dict) -> str:
+    """R1: the byline beside every relayed title - "Par {author}" when the feed gave one."""
+    author = author_of(c)
+    return f"<span class='chip author'>Par {esc(author)}</span>" if author else ""
+
+
+def same_fight_bits(links: list[tuple[str, str, str]], cap: int) -> list[str]:
+    """Same-fight links with their author, the one renderer for every Stage/card."""
+    return [
+        f"<a class='same' href=\"{esc(link_url(u))}\" target=\"_blank\" rel=\"noopener\">{esc(t[:cap])}</a>"
+        + by_html(a)
+        for t, u, a in links
+    ]
 
 
 def chip_topics(c: dict) -> str:
@@ -772,10 +790,7 @@ def card_html(c: dict, continuity: dict | None = None) -> str:
     if continuity is not None:
         links = same_fight_links(c, continuity)
         if links:
-            bits = [
-                f"<a class='same' href=\"{esc(link_url(u))}\" target=\"_blank\" rel=\"noopener\">{esc(t[:72])}</a>"
-                for t, u in links
-            ]
+            bits = same_fight_bits(links, 72)
             cont = (
                 "<div class='same-fight'>"
                 "<span class='same-label'>Same fight / Même combat</span> "
@@ -785,7 +800,7 @@ def card_html(c: dict, continuity: dict | None = None) -> str:
     return (
         "<article class='card'>"
         f"<a class='card-title' href=\"{url}\" target=\"_blank\" rel=\"noopener\">{title}</a>"
-        f"<div class='card-meta'><span class='chip source'>{source}</span>"
+        f"<div class='card-meta'><span class='chip source'>{source}</span>{author_chip(c)}"
         f"<span class='chip geo'>{geo}</span>{chips}"
         f"<span class='score'>score {score:.3f}</span></div>"
         f"{cont}"
@@ -894,7 +909,9 @@ def fight_theater_arc_html(iss: dict) -> str:
 def issue_stage_html(iss: dict, continuity: dict | None = None, *, panel_id: str = "", faces: dict | None = None) -> str:
     """Fight theater: calm confrontation — institution voices + silence arc first."""
     iss = iss if isinstance(iss, dict) else {}
-    q = esc(iss.get("question") or "Issue")
+    q = title_html(iss.get("question") or "Issue")
+    attrib = resident_brief.label_attribution(iss)
+    attrib_note = f"<p class='rule'>{esc(attrib)}</p>" if attrib else ""
     topic_obj = iss.get("topic") or {}
     topic = topic_obj.get("topic") if isinstance(topic_obj, dict) else topic_obj
     topic = topic or "other"
@@ -960,7 +977,8 @@ def issue_stage_html(iss: dict, continuity: dict | None = None, *, panel_id: str
                 claims_html = "<ul class='claims'>" + "".join(claim_bits) + "</ul>"
             items_html.append(
                 f"<a class='voice-link' href=\"{esc(link_url(it.get('url')))}\" "
-                f"target=\"_blank\" rel=\"noopener\">{esc(it.get('title') or '(no title)')}</a>"
+                f"target=\"_blank\" rel=\"noopener\">{title_html(it.get('title'))}</a>"
+                f"{by_html(author_of(it), 'voice-by')}"
                 f"{claims_html}"
                 f"{vface}"
             )
@@ -975,10 +993,8 @@ def issue_stage_html(iss: dict, continuity: dict | None = None, *, panel_id: str
     for cid in list(issue_candidate_ids(iss))[:4]:
         oc = by_id.get(cid)
         if oc:
-            related.append(
-                f"<a class='same' href=\"{esc(link_url(oc.get('url')))}\" target=\"_blank\" rel=\"noopener\">"
-                f"{esc((oc.get('title') or '')[:72])}</a>"
-            )
+            related.extend(same_fight_bits(
+                [(oc.get("title") or "", oc.get("url") or "#", author_of(oc))], 72))
     same = ""
     if related:
         same = (
@@ -992,7 +1008,7 @@ def issue_stage_html(iss: dict, continuity: dict | None = None, *, panel_id: str
     return (
         f"<article class='issue-stage fight-theater'{pid} data-kind='issue'>"
         "<div class='kind-chip'>Fight</div>"
-        f"<h2 class='stage-title'>{q}</h2>"
+        f"<h2 class='stage-title'>{q}</h2>{attrib_note}"
         f"<div class='card-meta fight-glance'>"
         f"<span class='chip'>{esc(topic)}</span>"
         f"<span class='chip voices'>{spoke_n} spoke</span>"
@@ -1027,10 +1043,7 @@ def near_rail_item(c: dict, continuity: dict | None = None, faces: dict | None =
     if continuity is not None:
         links = same_fight_links(c, continuity, limit=2)
         if links:
-            bits = [
-                f"<a class='same' href=\"{esc(link_url(u))}\" target=\"_blank\" rel=\"noopener\">{esc(t[:48])}</a>"
-                for t, u in links
-            ]
+            bits = same_fight_bits(links, 48)
             cont = (
                 "<div class='same-fight'>"
                 "<span class='same-label'>Same fight</span> "
@@ -1044,7 +1057,7 @@ def near_rail_item(c: dict, continuity: dict | None = None, faces: dict | None =
         f"<article class='near-item'{pin_attr}>"
         f"{face}"
         f"<a class='near-title' href=\"{url}\" target=\"_blank\" rel=\"noopener\">{title}</a>"
-        f"<div class='card-meta'><span class='chip source'>{source}</span>"
+        f"<div class='card-meta'><span class='chip source'>{source}</span>{author_chip(c)}"
         f"{kind_chip}"
         f"<span class='chip geo'>{geo}</span>{chips}</div>"
         f"{cont}"
@@ -1068,10 +1081,7 @@ def news_deck_html(c: dict, continuity: dict | None = None) -> str:
     if continuity is not None:
         links = same_fight_links(c, continuity)
         if links:
-            bits = [
-                f"<a class='same' href=\"{esc(link_url(u))}\" target=\"_blank\" rel=\"noopener\">{esc(t[:72])}</a>"
-                for t, u in links
-            ]
+            bits = same_fight_bits(links, 72)
             cont = (
                 "<div class='same-fight'>"
                 "<span class='same-label'>Same fight / Même combat</span> "
@@ -1082,7 +1092,7 @@ def news_deck_html(c: dict, continuity: dict | None = None) -> str:
         "<article class='deck-card news-card' data-kind='near'>"
         "<div class='kind-chip'>Near me</div>"
         f"<a class='deck-title' href=\"{url}\" target=\"_blank\" rel=\"noopener\">{title}</a>"
-        f"<div class='card-meta'><span class='chip source'>{source}</span>"
+        f"<div class='card-meta'><span class='chip source'>{source}</span>{author_chip(c)}"
         f"<span class='chip geo'>{geo}</span>{chips}"
         f"<span class='score'>score {score:.3f}</span></div>"
         f"<p class='lede-act'><a class='read' href=\"{url}\" target=\"_blank\" rel=\"noopener\">Read the approach</a></p>"
@@ -1324,18 +1334,19 @@ def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None
         for c in demoted_booth_items:
             cid = str(c.get("id") or "").strip()
             title = title_html(c.get("title"), 72)
+            by = by_html(author_of(c))
             if cid and cid in pinned_ids:
                 moved_bits.append(
-                    f"<li><a class='moved-pin' href=\"#pin-{esc(cid)}\">{title}</a></li>"
+                    f"<li><a class='moved-pin' href=\"#pin-{esc(cid)}\">{title}</a>{by}</li>"
                 )
                 continue
             url = esc(link_url(c.get("url")))
             if url:
                 moved_bits.append(
-                    f"<li><a href=\"{url}\" target=\"_blank\" rel=\"noopener\">{title}</a></li>"
+                    f"<li><a href=\"{url}\" target=\"_blank\" rel=\"noopener\">{title}</a>{by}</li>"
                 )
             else:
-                moved_bits.append(f"<li>{title}</li>")
+                moved_bits.append(f"<li>{title}{by}</li>")
         moved_list = (
             "<ul class='moved-list'>" + "".join(moved_bits) + "</ul>"
             if moved_bits
@@ -1741,6 +1752,8 @@ def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None
       border-radius: 4px; padding: .1rem .45rem; font-size: .7rem;
     }}
     .chip.source {{ background: var(--accent-soft); color: var(--accent); font-weight: 600; }}
+    .by {{ color: var(--muted); font-size: .72rem; margin-left: .35rem; }}
+    .voice-by {{ display: block; color: var(--muted); font-size: .72rem; margin: -.1rem 0 .25rem; }}
     .chip.geo {{ background: #dce6ec; color: var(--accent); }}
     .chip.unit {{ background: #e8f0e9; color: #1e4d2b; font-weight: 600; }}
     .chip.official {{ background: #e8f0e9; color: #1e4d2b; font-weight: 700; }}

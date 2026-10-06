@@ -678,6 +678,8 @@ def main() -> None:
                             "title": it.get("title"),
                             "url": it.get("url"),
                             "summary": it.get("summary"),
+                            # R1: the byline travels with the title it belongs to.
+                            "author": it.get("author"),
                             "published_at": it.get("published_at"),
                             "fetched_at": it.get("fetched_at"),
                             "source_name": it.get("source_name") or it.get("source_id") or iid,
@@ -726,7 +728,7 @@ def main() -> None:
                 used_previous.add(iid)
             label = min(items, key=lambda c: (published_when(c) or instant, str(c.get("id") or "")))
             question = str(label.get("title") or "Articles à comparer")
-            label_source = {k: label.get(k) for k in ("id", "title", "url", "source_id", "source_name")}
+            label_source = {k: label.get(k) for k in ("id", "title", "url", "source_id", "source_name", "author")}
         topic_counts = Counter(topic_of(it) for it in items if topic_of(it) != "other")
         topic = sorted(topic_counts, key=lambda t: (-topic_counts[t], t))[0] if topic_counts else "other"
         issues.append(

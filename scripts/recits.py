@@ -101,12 +101,12 @@ def _voice_block(tension: dict) -> str:
         url = brief.safe_url(entry.get("url"))
         if not url:
             continue
-        title = brief.plain(entry.get("title"))
-        if len(title) > brief.TITLE_CAP:
-            title = title[:brief.TITLE_CAP].rstrip() + "…"
+        title = brief.capped_title(entry.get("title"))
         if not title:
             continue
         source = brief.esc(entry.get("source_name") or entry.get("source_id") or "")
+        author = brief.author_of(entry)
+        byline = f"<span>Par {brief.esc(author)}</span>" if author else ""
         when = brief.date_html(entry.get("published_at"), fallback="Date non précisée")
         claims: list[str] = []
         for claim in (entry.get("claims") or [])[:3]:
@@ -125,7 +125,7 @@ def _voice_block(tension: dict) -> str:
             '<li class="recit-item">'
             f'<a href="{brief.esc(url)}" rel="noopener noreferrer">{brief.esc(title)}'
             '<span class="arrow" aria-hidden="true"> ↗</span></a>'
-            f'<span class="recit-item-meta"><span>{source}</span>{when}</span>'
+            f'<span class="recit-item-meta">{byline}<span>{source}</span>{when}</span>'
             f"{claims_html}</li>"
         )
     if not rows:
@@ -204,10 +204,9 @@ def render_recit(iss: dict, eligible: dict, ledger: dict, *, slug: str,
                  rw_ok: bool, edge_streets: dict, edge_issues: dict) -> str:
     """The complete record page of one dossier. Deterministic, zero scripts."""
     iss = iss if isinstance(iss, dict) else {}
-    question = brief.plain(iss.get("question"))[:300] or "Sujet suivi"
+    question = brief.capped_title(iss.get("question")) or "Sujet suivi"
     label_kind = str(iss.get("label_kind") or "")
     attributed = label_kind == "attributed_headline"
-    label_source = iss.get("label_source") if isinstance(iss.get("label_source"), dict) else {}
     ledger_entry = _ledger_entry(ledger, str(iss.get("issue_id") or ""))
     tensions = [t for t in (iss.get("tensions") or []) if isinstance(t, dict)]
     spoke_names = {
@@ -217,14 +216,8 @@ def render_recit(iss: dict, eligible: dict, ledger: dict, *, slug: str,
     spoke_names.discard("")
     spoke_count = brief.safe_int(iss.get("source_count"), len(spoke_names))
     voice_blocks = "".join(block for t in tensions if (block := _voice_block(t)))
-    attrib_html = ""
-    if attributed:
-        owner = brief.plain(label_source.get("source_name"))[:120]
-        attrib_html = (
-            '<p class="recit-attrib">Titre d’un éditeur, cité tel quel'
-            + (f" — {brief.esc(owner)}" if owner else "")
-            + ".</p>"
-        )
+    attrib = brief.label_attribution(iss)
+    attrib_html = f'<p class="recit-attrib">{brief.esc(attrib)}</p>' if attrib else ""
     why = (
         '<p class="recit-why">Pourquoi ici : rapprochement proposé — '
         f"{spoke_count} institution{'s' if spoke_count != 1 else ''}, même sujet. "
@@ -295,7 +288,9 @@ def render_index(dossiers: list[dict], slug_of: dict[str, str]) -> str:
     for iss in dossiers:
         iid = str(iss.get("issue_id") or "")
         slug = slug_of.get(iid) or brief.dossier_slug(iss)
-        question = brief.plain(iss.get("question"))[:220] or "Sujet suivi"
+        question = brief.capped_title(iss.get("question"), 220) or "Sujet suivi"
+        attrib = brief.label_attribution(iss)
+        attrib_html = f'<p class="recit-attrib">{brief.esc(attrib)}</p>' if attrib else ""
         spoke = brief.safe_int(iss.get("source_count"))
         silence = iss.get("silence") if isinstance(iss.get("silence"), dict) else {}
         silent = brief.safe_int(silence.get("silent_count"), len(silence.get("silent") or []))
@@ -315,7 +310,7 @@ def render_index(dossiers: list[dict], slug_of: dict[str, str]) -> str:
             '<article class="recit-index-item">'
             f'<h2 class="recit-index-title"><a href="/dossiers/{brief.esc(slug)}.html">{brief.esc(question)}'
             '<span class="arrow" aria-hidden="true"> ↗</span></a></h2>'
-            f'<p class="recit-index-meta">{meta}</p>'
+            f'{attrib_html}<p class="recit-index-meta">{meta}</p>'
             f'<a class="recit-more" href="/dossiers/{brief.esc(slug)}.html">Récit complet ↗</a>'
             "</article>"
         )

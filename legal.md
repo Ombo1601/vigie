@@ -34,6 +34,13 @@ licence **CC-BY 4.0** avec attribution (via Données Québec), conformément à
 cette licence. Les citations courtes affichées dans les dossiers proposés
 (≤ 200 caractères, attribuées à leur locuteur) relèvent du droit de citation.
 
+L'auteur est affiché à côté du titre relayé sur les pages de
+Vigie (le point, les dossiers, l'affiche et les fichiers pour machines) : « Par
+{auteur} » quand le flux de l'éditeur le donne. Les fichiers pour machines
+(`/index.html.md`, `/delta/latest.json`, `/llms.txt`) ne portent que l'éditeur,
+l'auteur, le titre et le lien — jamais d'extrait — et rappellent que les titres
+appartiennent à leurs éditeurs.
+
 Vigie ne reproduit **jamais** le corps des articles, ne revend rien, ne
 distribue aucun flux à des tiers et n'entraîne aucun modèle sur les contenus.
 

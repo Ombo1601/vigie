@@ -73,7 +73,7 @@ twin), from the same stores, with no second brain:
   `public/index.html.md` (Markdown twin, advertised with
   `rel="alternate" type="text/markdown"`; the brief also carries
   `rel="describedby" href="/llms.txt"`), `public/delta/latest.json`
-  (`delta-v1`, cursor = chain root).
+  (`delta-v1.1`, cursor = chain root; publisher, author, title and URL only, no excerpts).
 - `scripts/recits.py` — **Les Récits**: `public/dossiers.html` + one complete,
   addressable record page per current-edition dossier (`public/dossiers/<issue_id>.html`):
   every voice with every verbatim headline, the full silence roster, the
