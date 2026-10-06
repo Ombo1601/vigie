@@ -5,9 +5,13 @@ other failure is retried, then fails the job before a genesis can be sealed; a
 download must match a recorded digest and the public git anchor; a rolling
 asset that is missing, unverified or behind the anchor is answered from the
 newest vouched dated copy that holds the anchored seal, or refused with the
-runbook; the chain never shrinks or forks on upload; a dated copy exists before
-the rolling asset is clobbered; the digest sidecar goes up first and names the
-previous archive, so every interleaving of a killed persist stays restorable;
+runbook; both registre chains (editions and roadworks) answer the git anchor
+and the heads the last persist recorded in the sidecar, so no restore rolls the
+roads lane's published seals back; a malformed present anchor fails closed;
+the chain never shrinks or forks on upload; a dated copy exists before
+the rolling asset is clobbered; the digest sidecar goes up first, names the
+previous archive and carries earlier lines forward, so every interleaving of a
+killed persist stays restorable (or halts loudly, never rolls back);
 pruning never touches the rolling asset and never fails a run; a hung transfer
 fails inside the step's budget. Hermetic: `gh` is a scripted fake, nothing
 leaves the process.
@@ -28,9 +32,10 @@ from unittest import mock
 
 import harness  # noqa: F401 - puts scripts/ on sys.path
 
+import registre
 import state_pack
 import state_sync
-from state_sync import DIGEST, REGISTRE_MEMBER, ROLLING, Refused, Result
+from state_sync import DIGEST, REGISTRE_MEMBER, ROLLING, Refused, Result, Witness
 
 REPO, TAG = "owner/vigie-state", "state"
 NOW = datetime(2026, 10, 20, 6, 17, 0, tzinfo=timezone.utc)
@@ -47,29 +52,51 @@ def sidecar(*bodies: bytes) -> bytes:
     return "".join(f"{sha(b)}  {ROLLING}\n" for b in bodies).encode()
 
 
-def chain_doc(n: int, *, fork: bool = False) -> dict:
+def travaux_seals(n: int, *, fork: bool = False, first: int = 1) -> list[dict]:
+    """A roadworks chain as registre.py keeps it (capped: it may start after n° 1)."""
+    seals, prev = [], ""
+    for seq in range(1, n + 1):
+        root = hashlib.sha256(f"{'tfork' if fork else 'trav'}|{seq}|{prev}".encode()).hexdigest()
+        if seq >= first:
+            seals.append({"seq": seq, "fetched_at": f"2026-10-05T{seq % 24:02d}:00:00+00:00",
+                          "prev": prev, "leaf": "y", "root": root, "signal": "s", "active_count": 3})
+        prev = root
+    return seals
+
+
+def chain_doc(n: int, *, fork: bool = False, travaux: int = 0, travaux_fork: bool = False,
+              travaux_first: int = 1) -> dict:
     seals, prev = [], ""
     for seq in range(1, n + 1):
         root = hashlib.sha256(f"{'fork' if fork else 'main'}|{seq}|{prev}".encode()).hexdigest()
         seals.append({"seq": seq, "edition": f"e{seq}", "prev": prev, "leaf": "x",
                       "root": root, "record": {"edition": f"e{seq}"}})
         prev = root
-    return {"method": "registre-v1 sha256-chain", "seals": seals}
+    return {"method": "registre-v1 sha256-chain", "seals": seals,
+            "travaux": {"method": "registre-travaux-v1 sha256-chain", "latest_record": None,
+                        "seals": travaux_seals(travaux, fork=travaux_fork, first=travaux_first)}}
 
 
 def head_root(n: int) -> str:
     return chain_doc(n)["seals"][-1]["root"]
 
 
+def travaux_root(n: int) -> str:
+    return travaux_seals(n)[-1]["root"]
+
+
 def write_archive(path: Path, *, seals: int = 57, files: int = 8, filler: int = 1000,
-                  registre: bool = True, fork: bool = False, caches: int = 0) -> Path:
+                  registre: bool = True, fork: bool = False, caches: int = 0,
+                  travaux: int = 0, travaux_fork: bool = False, travaux_first: int = 1) -> Path:
     with tarfile.open(path, "w:gz") as tar:
         def add(name: str, payload: bytes) -> None:
             info = tarfile.TarInfo(name)
             info.size = len(payload)
             tar.addfile(info, io.BytesIO(payload))
         if registre:
-            add(REGISTRE_MEMBER, json.dumps(chain_doc(seals, fork=fork)).encode("utf-8"))
+            add(REGISTRE_MEMBER, json.dumps(chain_doc(
+                seals, fork=fork, travaux=travaux, travaux_fork=travaux_fork,
+                travaux_first=travaux_first)).encode("utf-8"))
         for i in range(files):
             add(f"data/raw/src{i}/snap.xml", bytes([65 + i % 26]) * filler)
         for i in range(caches):
@@ -258,9 +285,16 @@ class Base(unittest.TestCase):
         return quiet(state_sync.restore, REPO, TAG, self.work, gh=gh,
                      sleep=self.slept.append, unpack=self.unpack, anchor=self.anchor, **kwargs)
 
-    def write_anchor(self, seq: int, root: str | None = None) -> None:
+    def write_anchor(self, seq: int, root: str | None = None, *, travaux: int = 0,
+                     troot: str | None = None) -> None:
+        """anchors/checkpoint.txt exactly as registre.checkpoint_text writes it."""
         root = head_root(seq) if root is None else root
-        self.anchor.write_text(f"vigieqc.com/registre\n{seq}\n{root}\n\nedition e{seq}\n", encoding="utf-8")
+        lines = ["vigieqc.com/registre", str(seq), root, "", f"edition e{seq}"]
+        if travaux:
+            troot = travaux_root(travaux) if troot is None else troot
+            lines.append(f"travaux {travaux} {troot} 2026-10-05T22:32:38.096094+00:00")
+        lines.append("method registre-v1 sha256-chain")
+        self.anchor.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 class HttpAnswer(unittest.TestCase):
@@ -496,7 +530,9 @@ class DatedFallback(Base):
         self.assertEqual(baseline["sha256"], sha(dated58))
         self.assertEqual(self.unpacked, [self.work / NEW_DATED])
         self.assertIn(f"::warning::state: rolling asset behind the anchor; restored from {NEW_DATED}", out)
-        self.assertNotIn(f"download:{OLD_DATED}", gh.keys())   # newest first, stop at the first
+        # Every vouched copy is inspected; the highest head wins, the loser is not kept.
+        self.assertIn(f"download:{OLD_DATED}", gh.keys())
+        self.assertFalse((self.work / OLD_DATED).exists())
 
     def test_a_dated_copy_vouched_only_by_githubs_digest_is_accepted(self) -> None:
         # The persist died at the dated copy's confirm: the sidecar still names 57 only.
@@ -583,6 +619,7 @@ class PersistBase(Base):
         facts = state_sync.inspect_archive(path)
         doc = {"outcome": outcome, "release": True, "seal_count": facts["seal_count"],
                "head_seq": facts["head_seq"], "head_root": facts["head_root"],
+               "travaux_seq": facts["travaux_seq"], "travaux_root": facts["travaux_root"],
                "sha256": sha(path.read_bytes()), "members": facts["members"], "bytes": facts["bytes"],
                "durable_members": facts["durable_members"], "durable_bytes": facts["durable_bytes"],
                **extra}
@@ -842,27 +879,52 @@ class KilledPersist(PersistBase):
         self.packed["seals"] = 59
         result, _ = self.persist(gh2, when=datetime(2026, 10, 20, 12, 17, tzinfo=timezone.utc))
         self.assertNotIsInstance(result, Exception)
+        # New, restored, and the earlier line carried forward.
         self.assertEqual(state_sync.recorded_digests(gh2.assets[DIGEST].decode()),
-                         [sha(gh2.assets[ROLLING]), sha(gh2.assets[NEW_DATED])])
+                         [sha(gh2.assets[ROLLING]), sha(gh2.assets[NEW_DATED]), sha(assets[ROLLING])])
         self.work = self.tmp / "third-run"
         baseline, _ = self.restore(FakeGh(assets=gh2.assets))
         self.assertEqual((baseline["source"], baseline["seal_count"]), (ROLLING, 59))
 
-    def every_interleaving(self, *, dated: bool, packed: dict, anchor: int) -> list[tuple]:
+    def facts_of(self, body: bytes) -> dict:
+        self.made += 1
+        path = self.tmp / f"facts{self.made}.tar.gz"
+        path.write_bytes(body)
+        return state_sync.inspect_archive(path)
+
+    def every_interleaving(self, *, dated: bool, packed: dict, deployed: tuple | None = None,
+                           github_digests: bool = True, rolling: dict | None = None,
+                           earlier: dict | None = None) -> list[tuple]:
         """Kill the persist before each mutation in turn: [(k, restore result, out)].
 
-        The release starts as a normal one (rolling asset, its digest, a dated
-        copy from an earlier refresh) with GitHub listing its digests; the last
-        entry is the persist that completed.
+        The release starts as earlier persists leave it: the rolling asset, the
+        dated copy of the last full refresh (which the git anchor witnesses),
+        and the sidecar that sidecar_text writes (the rolling digest, the dated
+        copy's line carried forward, the rolling heads). The baseline is what
+        the real restore of that release returns. A full refresh then anchors
+        `deployed` (edition seq, travaux seq) before its persist; the roads lane
+        never anchors. With github_digests, GitHub lists its own digest of every
+        asset; without, only the sidecar vouches. The last entry is the persist
+        that completed.
         """
-        rolling = self.archive(seals=57)
-        earlier = self.archive(seals=57, files=7)
-        start = {ROLLING: rolling, DIGEST: sidecar(rolling), OLD_DATED: earlier}
+        rolling = self.archive(**(rolling or {"seals": 57}))
+        earlier = self.earlier = self.archive(**(earlier or {"seals": 57, "files": 7}))
+        first = self.facts_of(earlier)
+        start = {ROLLING: rolling, OLD_DATED: earlier, DIGEST: state_sync.sidecar_text(
+            sha(rolling), sha(earlier), restored_from=OLD_DATED,
+            witnesses=state_sync.heads(self.facts_of(rolling))).encode()}
         self.packed.update(packed)
         outcomes = []
         for k in range(32):
-            self.baseline(archive=rolling)
-            gh = FakeGh(assets=start, github_digests=True).vouch_all()
+            self.write_anchor(first["head_seq"], travaux=first["travaux_seq"])
+            self.work = self.tmp / f"run{k}"
+            seen = FakeGh(assets=start)
+            baseline, out = self.restore(seen.vouch_all() if github_digests else seen)
+            self.assertIsInstance(baseline, dict, out)
+            state_sync.store_io.write_json_atomic(self.work / state_sync.BASELINE, baseline)
+            gh = FakeGh(assets=start, github_digests=github_digests)
+            if github_digests:
+                gh.vouch_all()
             gh.crash_after = k
             try:
                 done, _ = self.persist(gh, dated=dated)
@@ -870,7 +932,8 @@ class KilledPersist(PersistBase):
                 done = None
             else:
                 self.assertNotIsInstance(done, Exception, f"persist failed outright: {done}")
-            self.write_anchor(anchor)
+            if deployed:
+                self.write_anchor(deployed[0], travaux=deployed[1])
             outcomes.append((k, *self.restore_after(gh)))
             if done is not None:
                 self.assertGreaterEqual(k, 4)   # it was killed at every step before
@@ -878,15 +941,21 @@ class KilledPersist(PersistBase):
         self.fail("the persist never completed")
 
     def test_every_interleaving_of_a_killed_roads_persist_restores(self) -> None:
-        for k, baseline, out in self.every_interleaving(dated=False, packed={"seals": 57, "files": 9},
-                                                        anchor=57):
-            with self.subTest(killed_after=k):
-                self.assertIsInstance(baseline, dict, f"killed after {k}: {baseline}")
-                self.assertEqual(baseline["outcome"], "restored")
-                self.assertEqual(baseline["seal_count"], 57)
+        for digests in (True, False):
+            for k, baseline, out in self.every_interleaving(
+                    dated=False, packed={"seals": 57, "files": 9}, github_digests=digests):
+                with self.subTest(github_digests=digests, killed_after=k):
+                    self.assertIsInstance(baseline, dict, f"killed after {k}: {baseline}")
+                    self.assertEqual(baseline["outcome"], "restored")
+                    self.assertEqual(baseline["seal_count"], 57)
+                    if k == 3:   # the rolling asset deleted: the dated copy, vouched for
+                        self.assertEqual(baseline["source"], OLD_DATED)
+                        if not digests:  # ... by its line, carried forward through the sidecar
+                            self.assertIn(OLD_DATED, out)
 
     def test_every_interleaving_of_a_killed_full_persist_restores_or_halts_loudly(self) -> None:
-        for k, baseline, out in self.every_interleaving(dated=True, packed={"seals": 58}, anchor=58):
+        for k, baseline, out in self.every_interleaving(dated=True, packed={"seals": 58},
+                                                        deployed=(58, 0)):
             with self.subTest(killed_after=k):
                 if k == 0:   # died before its dated copy existed: seal 58 is nowhere in the store
                     self.assertIsInstance(baseline, Refused)
@@ -895,6 +964,50 @@ class KilledPersist(PersistBase):
                     continue
                 self.assertIsInstance(baseline, dict, f"killed after {k}: {baseline}")
                 self.assertEqual(baseline["seal_count"], 58)
+
+    def test_full_persist_without_githubs_digests_restores_once_its_sidecar_landed(self) -> None:
+        # Without GitHub's digest only a sidecar line vouches for the new dated
+        # copy: until the new sidecar is on the release (k <= 2: before it, or
+        # its --clobber delete), the restore halts loudly with the runbook.
+        for k, baseline, out in self.every_interleaving(dated=True, packed={"seals": 58},
+                                                        deployed=(58, 0), github_digests=False):
+            with self.subTest(killed_after=k):
+                if k <= 2:
+                    self.assertIsInstance(baseline, Refused)
+                    self.assertIn("Manual recovery", str(baseline))
+                    self.assertIn(NEW_DATED if k else OLD_DATED, str(baseline))
+                    continue
+                self.assertIsInstance(baseline, dict, f"killed after {k}: {baseline}")
+                self.assertEqual(baseline["seal_count"], 58)
+
+    def test_a_killed_roads_persist_never_rolls_the_travaux_chain_back(self) -> None:
+        # The last full refresh (the dated copy, the anchor) sealed roadworks n° 8;
+        # the roads lane since sealed and deployed n° 9-10 (rolling) and now n° 11.
+        # Restoring the dated copy would re-mint n° 9 with a new root: a fork of
+        # the public travaux.json. Killed once the new sidecar is up (k = 2) or at
+        # the rolling asset's --clobber delete (k = 3), the restore must halt.
+        for digests in (True, False):
+            for k, baseline, out in self.every_interleaving(
+                    dated=False, packed={"seals": 57, "files": 9, "travaux": 11},
+                    rolling={"seals": 57, "travaux": 10},
+                    earlier={"seals": 57, "files": 7, "travaux": 8}, github_digests=digests):
+                with self.subTest(github_digests=digests, killed_after=k):
+                    if k in (2, 3):
+                        self.assertIsInstance(baseline, Refused, f"killed after {k}: rolled back")
+                        message = str(baseline)
+                        self.assertIn("Dated copies on release", message)
+                        self.assertIn(f"{OLD_DATED} ({len(self.earlier)} bytes): its chain stops "
+                                      f"at roadworks seal n° 8", message)
+                        self.assertIn("roadworks seal n° 11", message)
+                        self.assertIn("Manual recovery", message)
+                        self.assertIn(f"--sidecar recovery/{DIGEST}", message)
+                        continue
+                    self.assertIsInstance(baseline, dict, f"killed after {k}: {baseline}")
+                    # k <= 1: the new sidecar never landed, the old rolling asset is
+                    # whole (the seal this run deployed is witnessed nowhere: a
+                    # residual risk, AGENTS.md); k = 4: the new state.
+                    self.assertEqual(baseline["travaux_seq"], 11 if k >= 4 else 10)
+                    self.assertEqual(baseline["source"], ROLLING)
 
 
 class Budget(PersistBase):
@@ -1022,6 +1135,300 @@ class CommandLine(Base):
         junk = self.tmp / "junk.tar.gz"
         junk.write_bytes(b"not a tarball")
         self.assertEqual(self.run_main(["inspect", str(junk)], FakeGh(), {})[0], 1)
+
+
+class Anchor(Base):
+    """The git anchor witnesses both chains; a present anchor that does not parse fails closed."""
+
+    def test_reads_the_checkpoint_registre_writes(self) -> None:
+        edition, road = head_root(57), travaux_root(58)
+        state = {"seals": [{"seq": 57, "root": edition, "edition": "2026-10-06T00:03:00+00:00"}],
+                 "travaux": {"seals": [{"seq": 58, "root": road,
+                                        "fetched_at": "2026-10-05T22:32:38+00:00"}]}}
+        self.anchor.write_text(registre.checkpoint_text(state), encoding="utf-8")
+        self.assertEqual(state_sync.read_anchor(self.anchor), [
+            Witness(state_sync.EDITION, 57, edition, state_sync.ANCHORED),
+            Witness(state_sync.TRAVAUX, 58, road, state_sync.ANCHORED)])
+        self.write_anchor(57, travaux=58)   # the fixture writes the same shape
+        self.assertEqual(len(state_sync.read_anchor(self.anchor)), 2)
+
+    def test_the_committed_anchor_parses(self) -> None:
+        if not state_sync.ANCHOR.is_file():
+            self.skipTest("no committed anchor in this checkout")
+        found = state_sync.read_anchor(state_sync.ANCHOR)
+        self.assertEqual([w.chain for w in found][:1], [state_sync.EDITION])
+
+    def test_absent_or_genesis_anchor_witnesses_nothing(self) -> None:
+        self.assertEqual(state_sync.read_anchor(self.anchor), [])
+        self.anchor.write_text("vigieqc.com/registre\n0\n\n", encoding="utf-8")
+        self.assertEqual(state_sync.read_anchor(self.anchor), [])
+        self.write_anchor(57)       # an older anchor without a travaux line
+        self.assertEqual([w.chain for w in state_sync.read_anchor(self.anchor)], [state_sync.EDITION])
+
+    MALFORMED = {
+        "empty": "",
+        "no seal number": "vigieqc.com/registre\nfifty-seven\n" + "a" * 64 + "\n",
+        "no root": "vigieqc.com/registre\n57\n\n\nedition e57\n",
+        "short root": "vigieqc.com/registre\n57\nabc123\n",
+        "bad travaux": "vigieqc.com/registre\n57\n" + "a" * 64 + "\n\ntravaux  " + "b" * 64 + " t\n",
+        "travaux without root": "vigieqc.com/registre\n57\n" + "a" * 64 + "\n\ntravaux 58\n",
+        "two travaux": ("vigieqc.com/registre\n57\n" + "a" * 64 + "\n\n"
+                        + ("travaux 58 " + "b" * 64 + " t\n") * 2),
+    }
+
+    def test_a_present_malformed_anchor_is_refused(self) -> None:
+        for label, text in self.MALFORMED.items():
+            with self.subTest(label):
+                self.anchor.write_text(text, encoding="utf-8")
+                with self.assertRaises(Refused) as caught:
+                    state_sync.read_anchor(self.anchor)
+                self.assertIn("malformed", str(caught.exception))
+        self.anchor.write_bytes(b"vigieqc.com/registre\n57\n\xff\xfe\n")
+        with self.assertRaises(Refused):
+            state_sync.read_anchor(self.anchor)
+
+    def test_restore_and_inspect_refuse_under_a_malformed_anchor(self) -> None:
+        self.anchor.write_text(self.MALFORMED["no root"], encoding="utf-8")
+        gh = FakeGh(assets=self.published())
+        result, _ = self.restore(gh)
+        self.assertIsInstance(result, Refused)
+        self.assertIn("malformed", str(result))
+        self.assertEqual(gh.calls, [])          # refused before touching the release
+        self.assertEqual(self.unpacked, [])
+        copy = write_archive(self.tmp / NEW_DATED, seals=57)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(state_sync.inspect_local(copy, self.anchor), 1)
+        self.assertIn("malformed", out.getvalue())
+
+
+class TravauxWitness(Base):
+    """BLOCKING (r3): the roadworks chain is witnessed like the edition chain."""
+
+    def test_rolling_holding_the_edition_but_not_the_anchored_travaux_head_falls_back(self) -> None:
+        rolling = self.archive(seals=57, travaux=10)
+        dated = self.archive(seals=57, travaux=12, files=7)
+        self.write_anchor(57, travaux=12)
+        gh = FakeGh(assets={ROLLING: rolling, DIGEST: sidecar(rolling), NEW_DATED: dated}).vouch_all()
+        baseline, out = self.restore(gh)
+        self.assertEqual(baseline["source"], NEW_DATED)
+        self.assertEqual(baseline["travaux_seq"], 12)
+        self.assertIn("rolling asset behind the anchor", out)
+        self.assertIn("stops at roadworks seal n° 10 but the git anchor witnessed n° 12", out)
+
+    def test_a_forked_travaux_chain_on_the_rolling_asset_is_refused(self) -> None:
+        self.write_anchor(57, travaux=10)
+        result, _ = self.restore(FakeGh(assets=self.published(seals=57, travaux=10, travaux_fork=True)))
+        self.assertIsInstance(result, Refused)
+        self.assertIn("roadworks seal n° 10", str(result))
+        self.assertIn("forked", str(result))
+        self.assertEqual(self.unpacked, [])
+
+    def test_fallback_refuses_a_dated_copy_lacking_the_anchored_travaux_head(self) -> None:
+        rolling = self.archive(seals=57, travaux=12)
+        lacking = self.archive(seals=58, travaux=11)
+        forked = self.archive(seals=58, travaux=12, travaux_fork=True)
+        self.write_anchor(58, travaux=12)
+        gh = FakeGh(assets={ROLLING: rolling, DIGEST: sidecar(rolling),
+                            NEW_DATED: lacking, OLD_DATED: forked}).vouch_all()
+        result, _ = self.restore(gh)
+        self.assertIsInstance(result, Refused)
+        message = str(result)
+        self.assertIn(f"{NEW_DATED} ({len(lacking)} bytes): its chain stops at roadworks seal n° 11", message)
+        self.assertIn(f"{OLD_DATED} ({len(forked)} bytes): roadworks seal n° 12 differs", message)
+        self.assertIn(f"seal n° 58 ({head_root(58)[:12]}) and roadworks seal n° 12", message)
+        self.assertEqual(self.unpacked, [])
+
+    def test_fallback_accepts_a_dated_copy_holding_the_anchored_travaux_head(self) -> None:
+        rolling = self.archive(seals=57, travaux=12)
+        lacking, holding = self.archive(seals=58, travaux=11), self.archive(seals=58, travaux=12)
+        self.write_anchor(58, travaux=12)
+        gh = FakeGh(assets={ROLLING: rolling, DIGEST: sidecar(rolling),
+                            NEW_DATED: lacking, OLD_DATED: holding}).vouch_all()
+        baseline, _ = self.restore(gh)
+        self.assertEqual((baseline["source"], baseline["travaux_seq"]), (OLD_DATED, 12))
+        self.assertEqual(baseline["travaux_root"], travaux_root(12))
+
+    def test_a_lagging_or_capped_travaux_anchor_is_fine_behind_it_is_not(self) -> None:
+        self.write_anchor(57, travaux=9)        # the roads lane sealed 10-14 since
+        baseline, _ = self.restore(FakeGh(assets=self.published(seals=57, travaux=14)))
+        self.assertEqual(baseline["travaux_seq"], 14)
+        # registre caps the roadworks chain: an anchored seal older than every
+        # kept one means the archive is ahead, never behind.
+        baseline, _ = self.restore(FakeGh(assets=self.published(seals=57, travaux=30, travaux_first=11)))
+        self.assertEqual(baseline["outcome"], "restored")
+        self.write_anchor(57, travaux=31)
+        result, _ = self.restore(FakeGh(assets=self.published(seals=57, travaux=30, travaux_first=11)))
+        self.assertIsInstance(result, Refused)
+        self.assertIn("roadworks seal n° 30", str(result))
+
+
+class RecordedWitness(Base):
+    """The sidecar's heads witness what the roads lane deployed (the anchor never does)."""
+
+    def test_the_sidecar_round_trips_its_heads(self) -> None:
+        facts = state_sync.inspect_archive(write_archive(self.tmp / "a.tar.gz", seals=57, travaux=11))
+        text = state_sync.sidecar_text("1" * 64, "2" * 64, witnesses=state_sync.heads(facts))
+        self.assertEqual(state_sync.recorded_digests(text), ["1" * 64, "2" * 64])
+        self.assertEqual(state_sync.recorded_witnesses(text), [
+            Witness(state_sync.EDITION, 57, head_root(57), state_sync.RECORDED),
+            Witness(state_sync.TRAVAUX, 11, travaux_root(11), state_sync.RECORDED)])
+        self.assertEqual(state_sync.recorded_witnesses(f"{'1' * 64}  {ROLLING}\n"), [])
+
+    def test_an_unreadable_witness_line_is_refused(self) -> None:
+        for line in ("# travaux eleven " + "a" * 64, "# edition 57", "# travaux 0 " + "a" * 64,
+                     "# edition 57 " + "a" * 64 + "\n# edition 58 " + "b" * 64):
+            with self.subTest(line):
+                with self.assertRaises(Refused):
+                    state_sync.recorded_witnesses(f"{'1' * 64}  {ROLLING}\n{line}\n")
+        rolling = self.archive(seals=57)
+        bad = sidecar(rolling) + b"# travaux x y\n"
+        result, _ = self.restore(FakeGh(assets={ROLLING: rolling, DIGEST: bad}))
+        self.assertIsInstance(result, Refused)
+        self.assertIn("unreadable witness line", str(result))
+        self.assertIn("Manual recovery", str(result))
+        self.assertEqual(self.unpacked, [])
+
+    def test_line_two_behind_the_recorded_travaux_head_is_not_restored(self) -> None:
+        # The roads persist uploaded its sidecar (travaux 11) and died before the archive.
+        old, new = self.archive(seals=57, travaux=10), self.archive(seals=57, travaux=11, files=9)
+        facts = state_sync.inspect_archive(write_archive(self.tmp / "n.tar.gz", seals=57, travaux=11, files=9))
+        text = state_sync.sidecar_text(sha(new), sha(old), witnesses=state_sync.heads(facts))
+        result, _ = self.restore(FakeGh(assets={ROLLING: old, DIGEST: text.encode()}))
+        self.assertIsInstance(result, Refused)
+        self.assertIn("stops at roadworks seal n° 10 but the last persist", str(result))
+        self.assertIn("older than what the last persist recorded", str(result))
+        self.assertEqual(self.unpacked, [])
+
+
+class Selection(Base):
+    """(c) the highest head seal wins among qualifying dated copies, then the newest name."""
+
+    def test_a_clock_skewed_name_cannot_pick_a_shorter_chain(self) -> None:
+        rolling, short, longer = self.archive(seals=56), self.archive(seals=57), self.archive(seals=58)
+        self.write_anchor(57)
+        gh = FakeGh(assets={ROLLING: rolling, DIGEST: sidecar(rolling),
+                            NEW_DATED: short, OLD_DATED: longer}).vouch_all()
+        baseline, _ = self.restore(gh)
+        self.assertEqual((baseline["source"], baseline["seal_count"]), (OLD_DATED, 58))
+        self.assertFalse((self.work / NEW_DATED).exists())
+
+    def test_travaux_then_name_break_ties(self) -> None:
+        rolling = self.archive(seals=56)
+        fewer, more = self.archive(seals=58, travaux=3), self.archive(seals=58, travaux=5)
+        self.write_anchor(58)
+        gh = FakeGh(assets={ROLLING: rolling, DIGEST: sidecar(rolling),
+                            NEW_DATED: fewer, OLD_DATED: more}).vouch_all()
+        self.assertEqual(self.restore(gh)[0]["source"], OLD_DATED)
+        same, twin = self.archive(seals=58, travaux=5), self.archive(seals=58, travaux=5, files=7)
+        gh = FakeGh(assets={ROLLING: rolling, DIGEST: sidecar(rolling),
+                            NEW_DATED: same, OLD_DATED: twin}).vouch_all()
+        self.assertEqual(self.restore(gh)[0]["source"], NEW_DATED)
+
+
+class CarryForward(PersistBase):
+    """(a) the sidecar carries earlier lines forward, so GitHub's digest is never needed."""
+
+    def test_new_first_then_restored_then_carried_bounded(self) -> None:
+        new, old = "1" * 64, "2" * 64
+        rolling = [[f"{i:064x}", ROLLING] for i in range(100, 130)]
+        dated = [[f"{i:064x}", f"state-202610{i - 200 + 1:02d}T061700Z.tar.gz"] for i in range(200, 230)]
+        text = state_sync.sidecar_text(new, old, dated=NEW_DATED, carried=rolling + dated)
+        pairs = state_sync.recorded_lines(text)
+        self.assertEqual(pairs[:3], [(new, ROLLING), (new, NEW_DATED), (old, ROLLING)])
+        self.assertEqual(sum(1 for _, n in pairs if n == ROLLING), state_sync.SIDECAR_ROLLING)
+        self.assertEqual(sum(1 for _, n in pairs if n != ROLLING), state_sync.SIDECAR_DATED)
+        self.assertEqual(pairs[3], (rolling[0][0], ROLLING))   # the newest carried first
+        self.assertIn((dated[0][0], dated[0][1]), pairs)
+        self.assertNotIn((dated[-1][0], dated[-1][1]), pairs)
+
+    def test_a_restore_from_a_dated_copy_names_it(self) -> None:
+        text = state_sync.sidecar_text("1" * 64, "2" * 64, restored_from=OLD_DATED)
+        self.assertEqual(state_sync.recorded_lines(text), [("1" * 64, ROLLING), ("2" * 64, OLD_DATED)])
+
+    def test_the_dated_copys_line_survives_a_day_of_roads_persists(self) -> None:
+        earlier = self.archive(seals=57, files=7)
+        rolling = self.archive(seals=57)
+        assets = {ROLLING: rolling, OLD_DATED: earlier, DIGEST: state_sync.sidecar_text(
+            sha(rolling), sha(earlier), restored_from=OLD_DATED).encode()}
+        for hour in range(24):
+            self.work = self.tmp / f"hour{hour}"
+            baseline, out = self.restore(FakeGh(assets=assets))
+            self.assertIsInstance(baseline, dict, out)
+            state_sync.store_io.write_json_atomic(self.work / state_sync.BASELINE, baseline)
+            self.packed.update(seals=57, files=8 + hour % 2, filler=1000 + hour)
+            gh = FakeGh(assets=assets)
+            result, _ = self.persist(gh, dated=False)
+            self.assertNotIsInstance(result, Exception)
+            assets = gh.assets
+        self.assertIn((sha(earlier), OLD_DATED), state_sync.recorded_lines(assets[DIGEST].decode()))
+        del assets[ROLLING]   # then a persist dies at the rolling asset's delete
+        self.work = self.tmp / "after"
+        baseline, _ = self.restore(FakeGh(assets=assets))   # no GitHub digest anywhere
+        self.assertEqual(baseline["source"], OLD_DATED)
+
+    def test_persist_writes_the_dated_name_the_carried_lines_and_the_heads(self) -> None:
+        carried = [["9" * 64, OLDER_DATED]]
+        self.baseline(recorded=carried)
+        self.packed.update(seals=58, travaux=4)
+        gh = FakeGh(assets=self.published())
+        result, _ = self.persist(gh)
+        self.assertNotIsInstance(result, Exception)
+        text = gh.assets[DIGEST].decode()
+        pairs = state_sync.recorded_lines(text)
+        self.assertEqual(pairs[:2], [(result["sha256"], ROLLING), (result["sha256"], NEW_DATED)])
+        self.assertIn(("9" * 64, OLDER_DATED), pairs)
+        self.assertEqual([(w.chain, w.seq) for w in state_sync.recorded_witnesses(text)],
+                         [(state_sync.EDITION, 58), (state_sync.TRAVAUX, 4)])
+
+
+class PersistTravaux(PersistBase):
+    def test_refuses_a_travaux_chain_that_shrank_or_forked(self) -> None:
+        self.baseline(archive=self.archive(seals=57, travaux=11))
+        for packed, word in (({"travaux": 10}, "shrink"), ({"travaux": 11, "travaux_fork": True}, "fork")):
+            with self.subTest(word):
+                self.packed.update({"seals": 57, "travaux_fork": False, **packed})
+                gh = FakeGh(assets=self.published())
+                result, _ = self.persist(gh)
+                self.assert_untouched(gh, result)
+                self.assertIn("roadworks seal n° 11", str(result))
+                self.assertIn(word, str(result))
+        self.packed.update(seals=57, travaux=12, travaux_fork=False)
+        result, _ = self.persist(FakeGh(assets=self.published()))
+        self.assertNotIsInstance(result, Exception)
+
+    def test_the_dated_baseline_and_the_new_dated_copy_leave_no_file_behind(self) -> None:
+        self.baseline(source=OLD_DATED)
+        (self.work / OLD_DATED).write_bytes(b"restored from a dated copy")
+        result, _ = self.persist(FakeGh(assets=self.published()))
+        self.assertNotIsInstance(result, Exception)
+        self.assertFalse((self.work / OLD_DATED).exists())
+        self.assertFalse((self.work / NEW_DATED).exists())
+        self.assertTrue((self.work / ROLLING).exists())
+        # ... also when the persist is refused
+        self.baseline(source=OLD_DATED)
+        (self.work / OLD_DATED).write_bytes(b"x")
+        self.packed["seals"] = 3
+        result, _ = self.persist(FakeGh(assets=self.published()))
+        self.assertIsInstance(result, Refused)
+        self.assertFalse((self.work / OLD_DATED).exists())
+
+
+class InspectSidecar(Base):
+    def test_inspect_also_checks_the_heads_the_last_persist_recorded(self) -> None:
+        copy = write_archive(self.tmp / OLD_DATED, seals=57, travaux=10)
+        facts = state_sync.inspect_archive(write_archive(self.tmp / "n.tar.gz", seals=57, travaux=11))
+        side = self.tmp / DIGEST
+        side.write_text(state_sync.sidecar_text("1" * 64, "", witnesses=state_sync.heads(facts)),
+                        encoding="utf-8")
+        self.write_anchor(57, travaux=8)
+        args = ["inspect", str(copy), "--anchor", str(self.anchor)]
+        code, out = quiet(state_sync.main, args)
+        self.assertEqual(code, 0, out)
+        self.assertIn("roadworks seal n° 8", out)
+        code, out = quiet(state_sync.main, [*args, "--sidecar", str(side)])
+        self.assertEqual(code, 1)
+        self.assertIn("stops at roadworks seal n° 10", out)
 
 
 if __name__ == "__main__":

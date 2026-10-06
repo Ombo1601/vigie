@@ -15,28 +15,42 @@ restore   asks GitHub whether the `state` release exists. "fresh" is chosen only
           digest of the asset, when the API reports one) and one of the sha256
           lines recorded in state.tar.gz.sha256 (absent only for the one-time
           legacy archive or a persist killed while replacing the sidecar: then
-          accepted loudly), and its chain must hold the seal the anchor witnessed.
-          When the rolling asset is missing, unverified, or behind the anchor (a
-          persist that failed after the deploy and the anchor commit), the dated
-          copies are tried newest first: the first one that GitHub's digest or a
-          recorded line vouches for and whose chain holds the anchored seal is
-          restored with a warning, and this run's persist re-publishes it as the
-          rolling asset. Otherwise the refusal lists every dated copy (and why it
-          was passed over) with the manual recovery steps (AGENTS.md).
+          accepted loudly). Two witnesses then judge both chains of the
+          registre, the edition seals and the hourly roadworks (travaux) seals:
+          the git anchor (lines 2-3 and its `travaux` line; it may lag, since
+          only the full refresh commits it) and the heads the last persist wrote
+          into the sidecar (`# edition|travaux <seq> <root>`, written after its
+          deploy, so the roads lane is witnessed too). A chain that forks a
+          witness is refused; one that stops before a witnessed seal is
+          "behind". A capped travaux chain that kept only later seals is ahead.
+          When the rolling asset is missing, unverified, or behind (a persist
+          that failed after the deploy), every vouched dated copy (GitHub's
+          digest or a sidecar line) whose chains satisfy every witness
+          qualifies; the one with the highest head seal (then the newest name)
+          is restored with a warning, and this run's persist re-publishes it as
+          the rolling asset. Otherwise the refusal lists every dated copy (and
+          why it was passed over) with the manual recovery steps (AGENTS.md);
+          restoring an older copy would mint already-published seq numbers with
+          new roots, a fork of the public chain.
 persist   never writes over a restore that did not succeed, and refuses an
-          archive whose chain shrank or forked, that lost registre/registre.json,
-          or whose member count or size collapsed below half of the restored one,
-          regenerated caches excluded (VIGIE_STATE_ALLOW_SHRINK=1 overrides the
-          size check only, and says so). With --dated it uploads an immutable dated
-          copy FIRST and checks it on the release. Then the digest sidecar goes up
-          BEFORE the archive, listing the new digest AND the restored one:
+          archive whose edition or travaux chain shrank or forked, that lost
+          registre/registre.json, or whose member count or size collapsed below
+          half of the restored one, regenerated caches excluded
+          (VIGIE_STATE_ALLOW_SHRINK=1 overrides the size check only, and says so).
+          With --dated it uploads an immutable dated copy FIRST and checks it on
+          the release. Then the digest sidecar goes up BEFORE the archive: the
+          new digest, the restored one, the earlier lines carried forward
+          (bounded: the newest rolling digests and the dated copies' lines, so a
+          dated copy stays vouched without GitHub's digest), then the new heads.
           `gh release upload --clobber` deletes before it uploads, and with this
           order a run killed at any point leaves a rolling asset that a recorded
           line vouches for (the old one, the new one), or none at all, which the
-          restore answers from the dated copies. Dated copies beyond the newest
-          --keep are pruned; a prune failure is a warning, never a failed run.
-inspect   prints what a local archive holds and whether it carries the seal the git
-          anchor witnessed: the check of the manual recovery runbook.
+          restore answers from the dated copies, or refuses when they are behind
+          what the sidecar witnessed. Dated copies beyond the newest --keep are
+          pruned; a prune failure is a warning, never a failed run.
+inspect   prints what a local archive holds and whether it carries the seals the
+          git anchor (and, with --sidecar, the last persist) witnessed: the
+          check of the manual recovery runbook.
 
 Each restore or persist runs inside one time budget (DEADLINE): every gh call
 gets at most what is left, so a hung transfer fails the step loudly instead of
@@ -50,7 +64,7 @@ runner, so each failure mode is a unit test, never a production experiment.
 Usage:
   python scripts/state_sync.py restore --repo OWNER/REPO --tag state --dir DIR
   python scripts/state_sync.py persist --repo OWNER/REPO --tag state --dir DIR [--dated] [--keep 12]
-  python scripts/state_sync.py inspect FILE [--anchor anchors/checkpoint.txt]
+  python scripts/state_sync.py inspect FILE [--anchor anchors/checkpoint.txt] [--sidecar state.tar.gz.sha256]
 """
 from __future__ import annotations
 
@@ -90,6 +104,13 @@ BASELINE = "restore.json"
 RESTORED, FRESH, FAILED = "restored", "fresh", "failed"
 OUTPUT_KEYS = ("outcome", "source", "seal_count", "head_root", "sha256", "members", "bytes")
 BEHIND, FORK = "behind", "fork"
+EDITION, TRAVAUX = "edition", "travaux"           # the two chains of the registre
+NOUN = {EDITION: "seal", TRAVAUX: "roadworks seal"}
+ANCHORED = "the git anchor"
+RECORDED = f"the last persist ({DIGEST})"
+SEQ = re.compile(r"^[0-9]{1,9}$")
+SIDECAR_ROLLING = 8      # rolling digests carried forward in the sidecar
+SIDECAR_DATED = 24       # dated-copy lines carried forward (twice the default --keep)
 
 ATTEMPTS = 3
 BACKOFF = (5, 20)        # seconds between attempts: bounded, the next schedule retries anyway
@@ -117,6 +138,27 @@ Runner = Callable[[list, float], Result]
 
 class Refused(RuntimeError):
     """The state store must not be trusted or written this run: the job fails."""
+
+
+@dataclass(frozen=True)
+class Witness:
+    """A seal some record outside the archive says exists: (chain, seq, root, by whom)."""
+    chain: str      # EDITION | TRAVAUX
+    seq: int
+    root: str
+    source: str     # ANCHORED | RECORDED
+
+    def __str__(self) -> str:
+        return f"{NOUN[self.chain]} n° {self.seq} ({self.root[:12]})"
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """How an archive's chains answer the witnesses: kind "" (holds them), BEHIND or FORK."""
+    kind: str = ""
+    why: str = ""       # the refusal sentence
+    note: str = ""      # the short reason a dated copy was passed over
+    source: str = ""
 
 
 def run_gh(args: list[str], timeout: float) -> Result:
@@ -322,18 +364,54 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def recorded_digests(text: str) -> list[str]:
-    """The sha256 digests a sidecar vouches for, in its order (newest first), once each."""
-    found: list[str] = []
+def recorded_lines(text: str) -> list[tuple[str, str]]:
+    """(digest, asset name) of every sidecar line, in order (newest first), once each.
+
+    The name is the dated copy a line was written for, else the rolling asset
+    (a `sha256sum` line, or one naming anything else).
+    """
+    found: list[tuple[str, str]] = []
     for line in (text or "").splitlines():
-        token = (line.split() or [""])[0].lower()
-        if HEX64.match(token) and token not in found:
-            found.append(token)
+        tokens = line.split()
+        if not tokens or not HEX64.match(tokens[0].lower()):
+            continue
+        name = tokens[1].lstrip("*") if len(tokens) > 1 else ROLLING
+        pair = (tokens[0].lower(), name if DATED.match(name) else ROLLING)
+        if pair not in found:
+            found.append(pair)
     return found
 
 
+def recorded_digests(text: str) -> list[str]:
+    """The sha256 digests a sidecar vouches for, in its order (newest first), once each."""
+    found: list[str] = []
+    for digest, _ in recorded_lines(text):
+        if digest not in found:
+            found.append(digest)
+    return found
+
+
+def recorded_witnesses(text: str) -> list[Witness]:
+    """The chain heads the last persist recorded (`# edition|travaux <seq> <root>`).
+
+    A sidecar written by hand (`sha256sum`) has none. A witness line that does
+    not parse is refused: the sidecar is the only record of a roads-lane seal.
+    """
+    found: dict[str, Witness] = {}
+    for line in (text or "").splitlines():
+        tokens = line[1:].split() if line.startswith("#") else []
+        if not tokens or tokens[0] not in NOUN:
+            continue
+        ok = (len(tokens) >= 3 and SEQ.match(tokens[1]) and int(tokens[1]) > 0
+              and HEX64.match(tokens[2].lower()) and tokens[0] not in found)
+        if not ok:
+            raise Refused(f"{DIGEST} carries an unreadable witness line {line.strip()[:120]!r}")
+        found[tokens[0]] = Witness(tokens[0], int(tokens[1]), tokens[2].lower(), RECORDED)
+    return [found[c] for c in (EDITION, TRAVAUX) if c in found]
+
+
 def chain(doc: object) -> list[tuple[int, str]]:
-    """(seq, root) of every well-formed edition seal, in chain order."""
+    """(seq, root) of every well-formed seal of one chain document, in chain order."""
     seals = doc.get("seals") if isinstance(doc, dict) else None
     if not isinstance(seals, list):
         return []
@@ -344,7 +422,7 @@ def chain(doc: object) -> list[tuple[int, str]]:
 
 
 def inspect_archive(path: Path) -> dict:
-    """Members, bytes and the registre chain of a packed state, without extracting it."""
+    """Members, bytes and both registre chains of a packed state, without extracting it."""
     doc = None
     with tarfile.open(path, "r:gz") as tar:
         files = [m for m in tar.getmembers() if m.isfile()]
@@ -357,7 +435,9 @@ def inspect_archive(path: Path) -> dict:
                 doc = None
     durable = [m for m in files if not m.name.startswith(CACHE_PREFIXES)]
     seals = chain(doc)
+    travaux = chain(doc.get("travaux")) if isinstance(doc, dict) else []
     head = seals[-1] if seals else (0, "")
+    road = travaux[-1] if travaux else (0, "")
     return {
         "members": len(files),
         "bytes": sum(m.size for m in files),
@@ -368,39 +448,93 @@ def inspect_archive(path: Path) -> dict:
         "seal_count": len(seals),
         "head_seq": head[0],
         "head_root": head[1],
+        "travaux": travaux,
+        "travaux_seq": road[0],
+        "travaux_root": road[1],
     }
 
 
-def read_anchor(path: Path) -> tuple[int, str] | None:
-    """(seq, root) the public git anchor witnessed; None when it witnessed nothing."""
-    try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None
-    try:
-        seq = int(lines[1])
-    except (IndexError, ValueError):
-        _say("warning", f"anchor {Path(path).name} is unreadable; not compared")
-        return None
-    root = lines[2].strip() if len(lines) > 2 else ""
-    return (seq, root) if seq > 0 and root else None
+def heads(facts: dict, source: str = RECORDED) -> list[Witness]:
+    """The head seal of each non-empty chain of an archive, as witnesses."""
+    return [Witness(c, facts[f"{p}_seq"], facts[f"{p}_root"], source)
+            for c, p in ((EDITION, "head"), (TRAVAUX, "travaux")) if facts[f"{p}_seq"]]
 
 
-def witness(seals: list[tuple[int, str]], witnessed: tuple[int, str] | None,
-            label: str = "the restored chain") -> tuple[str, str]:
-    """(BEHIND|FORK|"", why) of a chain against the git anchor."""
-    if not witnessed:
-        return "", ""
-    seq, root = witnessed
+def read_anchor(path: Path) -> list[Witness]:
+    """The seals the public git anchor witnessed: its edition head, its travaux head.
+
+    An absent anchor witnessed nothing (a repository before its first anchor
+    commit), as does a genesis checkpoint (seal 0). An anchor that is present but
+    unreadable or malformed is refused: it would otherwise silently stop
+    witnessing, which is exactly the protection a fork needs.
+    """
+    path = Path(path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    except (OSError, UnicodeError) as exc:
+        raise Refused(f"anchor {path} is present but unreadable ({exc}); restore it from "
+                      f"git history, never delete it") from None
+
+    def bad(why: str) -> Refused:
+        return Refused(f"anchor {path.name} is present but malformed ({why}); refusing to "
+                       f"restore without its witness. Restore anchors/checkpoint.txt from git "
+                       f"history (git log -- anchors/checkpoint.txt), never delete it")
+
+    lines = text.splitlines()
+    if len(lines) < 2 or not SEQ.match(lines[1].strip()):
+        raise bad("line 2 is not a seal number")
+    found: list[Witness] = []
+    seq = int(lines[1].strip())
+    if seq:
+        root = lines[2].strip().lower() if len(lines) > 2 else ""
+        if not HEX64.match(root):
+            raise bad("line 3 is not the sha256 root of seal n° %d" % seq)
+        found.append(Witness(EDITION, seq, root, ANCHORED))
+    roads = [line.split() for line in lines[3:] if line.split()[:1] == [TRAVAUX]]
+    if len(roads) > 1:
+        raise bad("more than one travaux line")
+    if roads:
+        tokens = roads[0]
+        if not (len(tokens) >= 3 and SEQ.match(tokens[1]) and int(tokens[1]) > 0
+                and HEX64.match(tokens[2].lower())):
+            raise bad("the travaux line is not 'travaux <seq> <root> <time>'")
+        found.append(Witness(TRAVAUX, int(tokens[1]), tokens[2].lower(), ANCHORED))
+    return found
+
+
+def witness(facts: dict, w: Witness, label: str = "the restored chain") -> Verdict:
+    """How one chain of an archive answers one witness.
+
+    Lagging the archive is fine (the witness names an older seal of the same
+    chain). A travaux chain is capped (registre.ROADS_SEAL_CAP), so a witnessed
+    seq older than every kept seal means the archive is ahead, not behind.
+    """
+    seals = facts["seals"] if w.chain == EDITION else facts["travaux"]
+    noun = NOUN[w.chain]
     have = dict(seals)
-    if seq not in have:
+    if w.seq not in have:
+        if seals and w.seq < seals[0][0]:
+            return Verdict()
         last = seals[-1][0] if seals else 0
-        return BEHIND, (f"{label} stops at seal n° {last} but the git anchor witnessed "
-                        f"n° {seq}: this state is older than what was published")
-    if have[seq] != root:
-        return FORK, (f"seal n° {seq} is {have[seq][:12]} in {label} but {root[:12]} "
-                      f"in the git anchor: a forked chain")
-    return "", ""
+        later = "what was published" if w.source == ANCHORED else "what the last persist recorded"
+        return Verdict(BEHIND, f"{label} stops at {noun} n° {last} but {w.source} witnessed "
+                               f"n° {w.seq}: this state is older than {later}",
+                       f"its chain stops at {noun} n° {last} ({w.source} witnessed n° {w.seq})",
+                       w.source)
+    if have[w.seq] != w.root:
+        return Verdict(FORK, f"{noun} n° {w.seq} is {have[w.seq][:12]} in {label} but "
+                             f"{w.root[:12]} in {w.source}: a forked chain",
+                       f"{noun} n° {w.seq} differs from {w.source} (a fork)", w.source)
+    return Verdict()
+
+
+def judge(facts: dict, witnesses: list[Witness], label: str = "the restored chain") -> Verdict:
+    """The worst answer of an archive to every witness: a fork, else behind, else ""."""
+    verdicts = [witness(facts, w, label) for w in witnesses]
+    return (next((v for v in verdicts if v.kind == FORK), None)
+            or next((v for v in verdicts if v.kind), Verdict()))
 
 
 # --------------------------------------------------------------------------- #
@@ -429,41 +563,59 @@ def _download(gh: Runner, repo: str, tag: str, name: str, workdir: Path, asset: 
     return retrying(f"download {name}", attempt, sleep)
 
 
+def _wanted(witnesses: list[Witness]) -> str:
+    """The seals a usable copy must hold, for the runbook (each chain's highest witness)."""
+    best: dict[str, Witness] = {}
+    for w in witnesses:
+        if w.chain not in best or w.seq > best[w.chain].seq:
+            best[w.chain] = w
+    return " and ".join(str(best[c]) for c in (EDITION, TRAVAUX) if c in best) or "the longest chain"
+
+
 def recovery(repo: str, tag: str, assets: dict[str, dict], notes: dict[str, str],
-             witnessed: tuple[int, str] | None) -> str:
+             witnesses: list[Witness]) -> str:
     """What the release holds and the manual recovery steps, for a content refusal."""
     dated = _dated(assets)
     rows = [f"  - {name} ({_size(assets[name].get('size'))} bytes)"
             + (f": {notes[name]}" if name in notes else "") for name in dated]
     others = ", ".join(sorted(n for n in assets if not DATED.match(n))) or "nothing else"
-    want = f"seal n° {witnessed[0]} ({witnessed[1][:12]})" if witnessed else "the longest chain"
+    want = _wanted(witnesses)
+    sidecar = DIGEST in assets
     return "\n".join([
         "",
         f"Dated copies on release {tag!r} of {repo}, newest first ({len(dated)}):",
         *(rows or ["  (none)"]),
         f"Also on the release: {others}.",
         "Manual recovery (AGENTS.md, 'When the state restore refuses'):",
-        f"  1. gh release download {tag} --repo {repo} --pattern 'state-*.tar.gz' --dir recovery",
-        f"  2. python3 -X utf8 scripts/state_sync.py inspect recovery/<copy>  "
-        f"(newest first, until one holds {want})",
-        "  3. cp recovery/<copy> state.tar.gz && sha256sum state.tar.gz > state.tar.gz.sha256",
-        f"  4. gh release upload {tag} state.tar.gz.sha256 state.tar.gz --repo {repo} --clobber  "
-        f"(the digest first)",
+        f"  1. gh release download {tag} --repo {repo} --pattern 'state-*.tar.gz'"
+        + (f" --pattern '{DIGEST}'" if sidecar else "") + " --dir recovery",
+        f"  2. python3 -X utf8 scripts/state_sync.py inspect recovery/<copy>"
+        + (f" --sidecar recovery/{DIGEST}" if sidecar else "")
+        + f"  (highest seal first, until one holds {want})",
+        f"  3. cp recovery/<copy> {ROLLING} && sha256sum {ROLLING} > {DIGEST}",
+        f"  4. gh release upload {tag} {DIGEST} --repo {repo} --clobber, and only then "
+        f"gh release upload {tag} {ROLLING} --repo {repo} --clobber  (the digest must be on "
+        f"the release before the archive)",
         "  5. re-run the workflow.",
-        f"  No copy holds {want}? Never start fresh and never move the anchor back: the seal "
-        f"is public in https://vigieqc.com/registre/chain.json (AGENTS.md, last resort).",
+        f"  No copy holds {want}? Never start fresh, never move the anchor back and never "
+        f"upload an older copy: the missing seals are public in "
+        f"https://vigieqc.com/registre/chain.json and /registre/travaux.json (AGENTS.md, last resort).",
     ])
 
 
 def _dated_fallback(gh: Runner, repo: str, tag: str, workdir: Path, assets: dict[str, dict],
-                    recorded: list[str], rejected: set[str], witnessed, sleep,
+                    recorded: list[str], rejected: set[str], witnesses: list[Witness], sleep,
                     notes: dict[str, str]):
-    """(name, path, sha256, facts) of the newest vouched dated copy holding the anchored seal.
+    """(name, path, sha256, facts) of the best vouched dated copy that every witness accepts.
 
     A copy is vouched for by GitHub's digest of it when the API lists one (the
-    download is checked against it), otherwise by a line of the sidecar. Each
-    passed-over copy gets a note for the refusal; None when none qualifies.
+    download is checked against it), otherwise by a line of the sidecar. Every
+    candidate is inspected: among the qualifying ones the highest head seal wins
+    (edition, then travaux), then the newest name, so a clock-skewed name cannot
+    pick a shorter chain. Each passed-over copy gets a note for the refusal;
+    None when none qualifies.
     """
+    qualifying: list[tuple[tuple, str, Path, str, dict]] = []
     for name in _dated(assets):
         asset = assets[name]
         server = _server_digest(asset)
@@ -490,30 +642,39 @@ def _dated_fallback(gh: Runner, repo: str, tag: str, workdir: Path, assets: dict
             except UNREADABLE as exc:
                 verdict = f"unreadable archive ({exc})"
             else:
-                kind, _ = witness(facts["seals"], witnessed)
                 if not facts["registre"]:
                     verdict = f"no {REGISTRE_MEMBER}"
-                elif kind == BEHIND:
-                    verdict = f"its chain stops at seal n° {facts['head_seq']}"
-                elif kind == FORK:
-                    verdict = f"seal n° {witnessed[0]} differs from the git anchor (a fork)"
                 else:
-                    return name, path, digest, facts
+                    verdict = judge(facts, witnesses).note
+                    if not verdict:
+                        rank = (facts["head_seq"], facts["travaux_seq"], name)
+                        qualifying.append((rank, name, path, digest, facts))
+                        continue
         notes[name] = verdict
         path.unlink(missing_ok=True)
-    return None
+    if not qualifying:
+        return None
+    qualifying.sort(key=lambda row: row[0], reverse=True)
+    for _, _, other, _, _ in qualifying[1:]:
+        other.unlink(missing_ok=True)
+    _, name, path, digest, facts = qualifying[0]
+    return name, path, digest, facts
 
 
-def _restored(archive: Path, source: str, digest: str, facts: dict, unpack) -> dict:
+def _restored(archive: Path, source: str, digest: str, facts: dict, unpack,
+              lines: list[tuple[str, str]]) -> dict:
     count = (state_pack.unpack if unpack is None else unpack)(archive)
     print(f"state: restored {count} file(s) from {source} (sha256 {digest[:12]}, "
           f"{facts['members']} members, {facts['bytes']} bytes); registre "
-          f"{facts['seal_count']} seal(s), head {facts['head_root'][:12] or '-'}", flush=True)
+          f"{facts['seal_count']} seal(s), head {facts['head_root'][:12] or '-'}; travaux "
+          f"head n° {facts['travaux_seq']} {facts['travaux_root'][:12] or '-'}", flush=True)
     return {"outcome": RESTORED, "source": source, "release": True,
             "seal_count": facts["seal_count"], "head_seq": facts["head_seq"],
-            "head_root": facts["head_root"], "sha256": digest,
+            "head_root": facts["head_root"], "travaux_seq": facts["travaux_seq"],
+            "travaux_root": facts["travaux_root"], "sha256": digest,
             "members": facts["members"], "bytes": facts["bytes"],
-            "durable_members": facts["durable_members"], "durable_bytes": facts["durable_bytes"]}
+            "durable_members": facts["durable_members"], "durable_bytes": facts["durable_bytes"],
+            "recorded": [list(pair) for pair in lines]}
 
 
 def restore(repo: str, tag: str, workdir: Path, *, gh: Runner = run_gh, sleep=time.sleep,
@@ -524,26 +685,35 @@ def restore(repo: str, tag: str, workdir: Path, *, gh: Runner = run_gh, sleep=ti
     workdir.mkdir(parents=True, exist_ok=True)
     budget = Deadline(deadline, clock)
     gh, sleep = budget.bound(gh), budget.pace(sleep)
-    witnessed = read_anchor(ANCHOR if anchor is None else anchor)
+    anchored = read_anchor(ANCHOR if anchor is None else anchor)
     release = find_release(gh, repo, tag, sleep)
     assets = _assets(release)
     notes: dict[str, str] = {}
     if not (ROLLING in assets or DIGEST in assets or _dated(assets)):
-        if witnessed:
-            raise Refused(f"no state in {repo}, but the git anchor witnessed seal n° "
-                          f"{witnessed[0]}: a fresh start would fork the published chain"
-                          + recovery(repo, tag, assets, notes, witnessed))
+        if anchored:
+            raise Refused(f"no state in {repo}, but the git anchor witnessed "
+                          f"{_wanted(anchored)}: a fresh start would fork the published chain"
+                          + recovery(repo, tag, assets, notes, anchored))
         missing = f"release {tag!r}" if release is None else f"{ROLLING} in release {tag!r}"
         _say("warning", f"FRESH START: {repo} has no {missing}; collecting into an empty "
                         f"memory, the registre begins at seal n° 1")
         return {"outcome": FRESH, "source": "", "release": release is not None, "seal_count": 0,
-                "head_seq": 0, "head_root": "", "sha256": "", "members": 0, "bytes": 0,
-                "durable_members": 0, "durable_bytes": 0}
+                "head_seq": 0, "head_root": "", "travaux_seq": 0, "travaux_root": "",
+                "sha256": "", "members": 0, "bytes": 0,
+                "durable_members": 0, "durable_bytes": 0, "recorded": []}
 
     recorded: list[str] | None = None
+    lines: list[tuple[str, str]] = []
+    witnessed = list(anchored)
     if DIGEST in assets:
         sidecar = _download(gh, repo, tag, DIGEST, workdir, assets[DIGEST], sleep)
-        recorded = recorded_digests(sidecar.read_text(encoding="utf-8", errors="replace"))
+        text = sidecar.read_text(encoding="utf-8", errors="replace")
+        lines = recorded_lines(text)
+        recorded = recorded_digests(text)
+        try:
+            witnessed += recorded_witnesses(text)
+        except Refused as exc:
+            raise Refused(str(exc) + recovery(repo, tag, assets, notes, witnessed)) from None
     rejected: set[str] = set()
     if ROLLING not in assets:
         traces = sorted(n for n in assets if n == DIGEST or DATED.match(n))
@@ -575,13 +745,15 @@ def restore(repo: str, tag: str, workdir: Path, *, gh: Runner = run_gh, sleep=ti
             if not facts["registre"]:
                 raise Refused(f"the restored state carries no {REGISTRE_MEMBER}"
                               + recovery(repo, tag, assets, notes, witnessed))
-            kind, why = witness(facts["seals"], witnessed)
-            if kind == FORK:
-                raise Refused(why + recovery(repo, tag, assets, notes, witnessed))
-            if not kind:
-                return _restored(archive, ROLLING, digest, facts, unpack)
+            verdict = judge(facts, witnessed)
+            if verdict.kind == FORK:
+                raise Refused(verdict.why + recovery(repo, tag, assets, notes, witnessed))
+            if not verdict.kind:
+                return _restored(archive, ROLLING, digest, facts, unpack, lines)
             rejected.add(digest)
-            problem, cause = why, "rolling asset behind the anchor"
+            problem = verdict.why
+            cause = ("rolling asset behind the anchor" if verdict.source == ANCHORED
+                     else "rolling asset behind the last persist's record")
 
     found = _dated_fallback(gh, repo, tag, workdir, assets, recorded or [], rejected,
                             witnessed, sleep, notes)
@@ -589,9 +761,10 @@ def restore(repo: str, tag: str, workdir: Path, *, gh: Runner = run_gh, sleep=ti
         raise Refused(problem + recovery(repo, tag, assets, notes, witnessed))
     name, path, digest, facts = found
     _say("warning", f"{cause}; restored from {name} (sha256 {digest[:12]}, registre "
-                    f"{facts['seal_count']} seal(s), head n° {facts['head_seq']}): {problem}. "
+                    f"{facts['seal_count']} seal(s), head n° {facts['head_seq']}, travaux head "
+                    f"n° {facts['travaux_seq']}): {problem}. "
                     f"This run's persist re-publishes it as {ROLLING}")
-    return _restored(path, name, digest, facts, unpack)
+    return _restored(path, name, digest, facts, unpack, lines)
 
 
 def write_outputs(path: str | None, baseline: dict) -> None:
@@ -620,6 +793,13 @@ def persist_refusals(baseline: dict, facts: dict, *, allow_shrink: bool) -> tupl
     if head_seq and dict(facts["seals"]).get(head_seq) != head_root:
         refusals.append(f"the restored head seal n° {head_seq} ({head_root[:12]}) is not in the "
                         f"packed chain: refusing a fork")
+    road_seq, road_root = _int(baseline.get("travaux_seq")), str(baseline.get("travaux_root") or "")
+    if road_seq and road_root:
+        verdict = witness(facts, Witness(TRAVAUX, road_seq, road_root, "the restored state"))
+        if verdict.kind:
+            refusals.append(f"the restored roadworks seal n° {road_seq} ({road_root[:12]}) is not "
+                            f"in the packed travaux chain: refusing a "
+                            f"{'fork' if verdict.kind == FORK else 'shrink'}")
     for key, label in (("durable_members", "member count"), ("durable_bytes", "total size")):
         was, now = _int(baseline.get(key)), facts[key]
         if was and now < was * MIN_FRACTION:
@@ -681,17 +861,40 @@ def read_baseline(workdir: Path) -> dict:
     return doc if isinstance(doc, dict) else {}
 
 
-def sidecar_text(digest: str, previous: object) -> str:
-    """The digest sidecar: the new digest first, then the restored one (when there is one).
+def sidecar_text(digest: str, previous: object, *, dated: str = "", restored_from: str = "",
+                 carried=(), witnesses: list[Witness] = ()) -> str:
+    """The digest sidecar: what the rolling asset may be, newest first, then the new heads.
 
-    The second line keeps the rolling asset that is still on the release
-    verifiable if this run dies between the sidecar upload and the archive upload.
+    Line 1 is the new archive (and, with --dated, the same digest under its
+    dated name). The restored digest follows: it keeps the rolling asset still
+    on the release verifiable if this run dies between the sidecar upload and
+    the archive upload. The earlier lines are carried forward, bounded (the
+    newest SIDECAR_ROLLING rolling digests, the newest SIDECAR_DATED dated-copy
+    lines), so the dated copies stay vouched for without GitHub's own digest.
+    The `# edition|travaux <seq> <root>` lines record the heads of the new
+    archive: written after the deploy, they witness the roads lane's seals,
+    which the git anchor (full refresh only) never sees.
     """
-    lines = [digest]
+    pairs: list[tuple[str, str]] = [(digest, ROLLING)]
+    if dated:
+        pairs.append((digest, dated))
     prev = str(previous or "").strip().lower()
-    if HEX64.match(prev) and prev != digest:
-        lines.append(prev)
-    return "".join(f"{d}  {ROLLING}\n" for d in lines)
+    if HEX64.match(prev):
+        pairs.append((prev, restored_from if DATED.match(restored_from or "") else ROLLING))
+    for pair in carried if isinstance(carried, (list, tuple)) else ():
+        if (isinstance(pair, (list, tuple)) and len(pair) == 2 and isinstance(pair[0], str)
+                and HEX64.match(pair[0].lower()) and isinstance(pair[1], str)):
+            pairs.append((pair[0].lower(), pair[1] if DATED.match(pair[1]) else ROLLING))
+    kept: list[tuple[str, str]] = []
+    room = {True: SIDECAR_DATED, False: SIDECAR_ROLLING}
+    for pair in pairs:
+        is_dated = bool(DATED.match(pair[1]))
+        if pair in kept or not room[is_dated]:
+            continue
+        room[is_dated] -= 1
+        kept.append(pair)
+    return ("".join(f"{d}  {name}\n" for d, name in kept)
+            + "".join(f"# {w.chain} {w.seq} {w.root}\n" for w in witnesses))
 
 
 def _utcnow() -> datetime:
@@ -710,6 +913,21 @@ def persist(repo: str, tag: str, workdir: Path, *, dated: bool = False, keep: in
     if baseline.get("outcome") not in (RESTORED, FRESH):
         raise Refused(f"restore outcome was {baseline.get('outcome') or 'unknown'}: the store "
                       f"is only written over a state that was read")
+    # The dated copy a fallback restore left in the workdir is spent once this
+    # persist has packed data/ (successful or not); never carry it to a later step.
+    source = str(baseline.get("source") or "")
+    try:
+        return _persist(repo, tag, workdir, baseline, dated=dated, keep=keep, gh=gh,
+                        sleep=sleep, now=now, pack=pack, environ=environ,
+                        deadline=deadline, clock=clock)
+    finally:
+        if DATED.match(source):
+            (workdir / source).unlink(missing_ok=True)
+
+
+def _persist(repo: str, tag: str, workdir: Path, baseline: dict, *, dated: bool, keep: int,
+             gh: Runner, sleep, now, pack, environ, deadline: float,
+             clock: Callable[[], float]) -> dict:
     budget = Deadline(deadline, clock)
     gh, sleep = budget.bound(gh), budget.pace(sleep)
     archive = workdir / ROLLING
@@ -724,24 +942,29 @@ def persist(repo: str, tag: str, workdir: Path, *, dated: bool = False, keep: in
 
     digest = sha256_file(archive)
     size = archive.stat().st_size
+    copy = f"state-{now().astimezone(timezone.utc):%Y%m%dT%H%M%SZ}.tar.gz" if dated else ""
     sidecar = workdir / DIGEST
-    sidecar.write_bytes(sidecar_text(digest, baseline.get("sha256")).encode("ascii"))
+    sidecar.write_bytes(sidecar_text(
+        digest, baseline.get("sha256"), dated=copy, restored_from=str(baseline.get("source") or ""),
+        carried=baseline.get("recorded") or (), witnesses=heads(facts)).encode("ascii"))
     if not baseline.get("release"):
         res = gh(["release", "create", tag, "--repo", repo, "--title", RELEASE_TITLE,
                   "--notes", RELEASE_NOTES], API_TIMEOUT)
         if res.code != 0 and lookup_release(gh, repo, tag, sleep, absent_ok=True) is None:
             raise Refused(f"could not create release {tag!r}: {_tail(res.err)}")
-    copy = ""
     if dated:
-        copy = f"state-{now().astimezone(timezone.utc):%Y%m%dT%H%M%SZ}.tar.gz"
         shutil.copyfile(archive, workdir / copy)
-        _upload(gh, repo, tag, workdir / copy, sleep)
-        _confirm(gh, repo, tag, sleep, {copy: (size, digest)})
+        try:
+            _upload(gh, repo, tag, workdir / copy, sleep)
+            _confirm(gh, repo, tag, sleep, {copy: (size, digest)})
+        finally:
+            (workdir / copy).unlink(missing_ok=True)
     # Only now may the rolling pair be replaced (--clobber deletes, then uploads).
     # The digest goes first and still names the restored archive: a run killed
     # before the archive upload leaves the old archive vouched for by line 2,
     # after it the new one by line 1, in between no archive (the restore then
-    # takes the dated copy, which line 1 or GitHub's digest vouches for).
+    # takes a dated copy that a line or GitHub's digest vouches for, provided it
+    # holds the heads recorded here; the roads lane has none newer, so it halts).
     _upload(gh, repo, tag, sidecar, sleep)
     _upload(gh, repo, tag, archive, sleep)
     assets = _confirm(gh, repo, tag, sleep, {ROLLING: (size, digest),
@@ -762,8 +985,12 @@ def persist(repo: str, tag: str, workdir: Path, *, dated: bool = False, keep: in
 # --------------------------------------------------------------------------- #
 # Inspect (the manual runbook's check)
 # --------------------------------------------------------------------------- #
-def inspect_local(path: Path, anchor: Path) -> int:
-    """Print what a local state archive holds; 0 only when it is usable under the anchor."""
+def inspect_local(path: Path, anchor: Path, sidecar: Path | None = None) -> int:
+    """Print what a local state archive holds; 0 only when every witness accepts it.
+
+    The witnesses are the git anchor and, with --sidecar, the heads the last
+    persist recorded in the release's state.tar.gz.sha256 (the roads lane's).
+    """
     path = Path(path)
     try:
         facts = inspect_archive(path)
@@ -773,20 +1000,27 @@ def inspect_local(path: Path, anchor: Path) -> int:
         return 1
     print(f"state: {path.name}: sha256 {digest}, {facts['members']} members, {facts['bytes']} "
           f"bytes; registre {facts['seal_count']} seal(s), head n° {facts['head_seq']} "
-          f"{facts['head_root'][:12] or '-'}", flush=True)
+          f"{facts['head_root'][:12] or '-'}; travaux head n° {facts['travaux_seq']} "
+          f"{facts['travaux_root'][:12] or '-'}", flush=True)
     if not facts["registre"]:
         _say("error", f"{path.name} carries no {REGISTRE_MEMBER}")
         return 1
-    witnessed = read_anchor(anchor)
-    if not witnessed:
-        print("state: the git anchor witnesses no seal; nothing to compare", flush=True)
-        return 0
-    kind, why = witness(facts["seals"], witnessed, label=f"the chain in {path.name}")
-    if kind:
-        _say("error", why)
+    try:
+        witnessed = read_anchor(anchor)
+        if sidecar is not None:
+            witnessed += recorded_witnesses(Path(sidecar).read_text(encoding="utf-8"))
+    except (Refused, OSError, UnicodeError) as exc:
+        _say("error", str(exc))
         return 1
-    print(f"state: {path.name} holds seal n° {witnessed[0]} ({witnessed[1][:12]}), as the git "
-          f"anchor witnessed", flush=True)
+    if not witnessed:
+        print("state: no witness names a seal; nothing to compare", flush=True)
+        return 0
+    verdict = judge(facts, witnessed, label=f"the chain in {path.name}")
+    if verdict.kind:
+        _say("error", verdict.why)
+        return 1
+    print(f"state: {path.name} holds {_wanted(witnessed)}, as "
+          + " and ".join(sorted({w.source for w in witnessed})) + " witnessed", flush=True)
     return 0
 
 
@@ -810,10 +1044,12 @@ def main(argv: list[str] | None = None, *, gh: Runner = run_gh, sleep=time.sleep
     check = sub.add_parser("inspect", help="what a local state archive holds, against the git anchor")
     check.add_argument("file", type=Path)
     check.add_argument("--anchor", type=Path, default=None)
+    check.add_argument("--sidecar", type=Path, default=None,
+                       help=f"the release's {DIGEST}: also check the heads the last persist recorded")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
     if args.command == "inspect":
-        return inspect_local(args.file, ANCHOR if args.anchor is None else args.anchor)
+        return inspect_local(args.file, ANCHOR if args.anchor is None else args.anchor, args.sidecar)
 
     if args.command == "persist":
         try:
