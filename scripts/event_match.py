@@ -100,7 +100,14 @@ TIER_RANK = {"certain": 3, "probable": 2, "possible": 1, None: 0}
 #              above it are same_event or related (0.098424...)
 THRESHOLDS = {"certain": 0.8713, "probable": 0.3985, "possible": 0.0984}
 MERGE_TIER = "probable"     # a pair at this tier or above may group articles
-MERGE_MIN_CROSS_PAIRS = 2   # two events merge on at least this many such pairs
+MERGE_MIN_CROSS_PAIRS = 2   # two events merge on at least this many cross pairs
+MERGE_PAIR_TIER = "probable"  # at this tier or above
+# ... and an average cross score >= the probable threshold. Chosen on DEV:
+# the same dev induced F1 as the bare two-pair rule (0.812) with higher dev
+# precision (0.842 vs 0.800), and on an unlabelled replay of 49 stamped
+# editions the bare rule snowballed into a 100-member "event" of unrelated
+# stories (96 merges) while this one keeps the largest at 11 (11 merges).
+MERGE_AVERAGE = True
 
 TIME_SCALE_HOURS = 12.0
 FAR_HOURS = 7 * 24.0        # pairs further apart are never compared by the clusterer
@@ -916,7 +923,8 @@ def link_ok(compared: list[tuple[float, str | None]], link: str, threshold: floa
 
 def attach(events: list[dict], new_items: list[dict], ctx: MatchContext, *, edition: str,
            items_by_id: dict[str, dict] | None = None, link: str = LINK,
-           compatible: Callable[[dict, dict], bool] | None = None) -> tuple[list[dict], list[dict]]:
+           compatible: Callable[[dict, dict], bool] | None = None,
+           merge_tier: str | None = None, merge_average: bool | None = None) -> tuple[list[dict], list[dict]]:
     """Attach the new items of one edition to events; mint and merge.
 
     events     existing events, each {"event_id", "born_edition", "members":
@@ -936,15 +944,17 @@ def attach(events: list[dict], new_items: list[dict], ctx: MatchContext, *, edit
     members, at least one member at tier >= probable, guard included); ties
     by more matching members, then oldest born_edition, then smallest
     event_id. No link: it founds a new event. Then in-window events merge
-    when at least two cross pairs reach tier >= probable; the older event
-    keeps its id, the younger records lineage.merged_into. Existing members
-    never move.
+    when at least two cross pairs reach tier >= probable AND their average
+    cross score reaches the probable threshold; the older event keeps its
+    id, the younger records lineage.merged_into. Existing members never move.
 
     Returns (events sorted by (born_edition, event_id), decisions): ids,
     tiers and numbers only, safe to store.
     """
     if link not in LINKS:
         raise ValueError("unknown link %r" % (link,))
+    merge_tier = MERGE_PAIR_TIER if merge_tier is None else merge_tier
+    merge_average = MERGE_AVERAGE if merge_average is None else merge_average
     texts: dict[str, dict] = dict(items_by_id or {})
     clock = _clock(edition)
     window = timedelta(hours=WINDOW_HOURS)
@@ -1091,8 +1101,25 @@ def attach(events: list[dict], new_items: list[dict], ctx: MatchContext, *, edit
     for a, b in cand:
         if a in owner and b in owner and owner[a] != owner[b]:
             s, t = pair(a, b)
-            if at_least(t, MERGE_TIER):
+            if at_least(t, merge_tier):
                 strong.append((a, b, s))
+
+    def cross_mean(r1: str, r2: str) -> float:
+        """Average score over every comparable cross pair (unblocked = 0)."""
+        scores = []
+        for i in eff[r1]:
+            if i not in texts:
+                continue
+            ti = when.get(i)
+            for j in eff[r2]:
+                if j not in texts:
+                    continue
+                tj = when.get(j)
+                if ti is not None and tj is not None and abs((ti - tj).total_seconds()) > far:
+                    continue
+                scores.append(pair(i, j)[0] if j in neighbours.get(i, ()) else 0.0)
+        return math.fsum(scores) / len(scores) if scores else 0.0
+
     while strong and touched:
         counts: dict[tuple[str, str], list] = {}
         for a, b, s in strong:
@@ -1104,6 +1131,8 @@ def attach(events: list[dict], new_items: list[dict], ctx: MatchContext, *, edit
         best_merge = None
         for (r1, r2), hits in counts.items():
             if len(hits) < MERGE_MIN_CROSS_PAIRS:
+                continue
+            if merge_average and cross_mean(r1, r2) < probable:
                 continue
             older, younger = sorted((r1, r2), key=born)
             s_old, s_young = span.get(older), span.get(younger)
@@ -1158,9 +1187,11 @@ def groups(events: list[dict]) -> list[list[str]]:
     return sorted(sorted(g) for g in out.values())
 
 
-def cluster(items: list[dict], ctx: MatchContext, *, edition: str = "", link: str = LINK) -> list[list[str]]:
+def cluster(items: list[dict], ctx: MatchContext, *, edition: str = "", link: str = LINK,
+            merge_tier: str | None = None, merge_average: bool | None = None) -> list[list[str]]:
     """Cluster a batch from scratch (one edition): what the evaluation scores."""
-    events, _ = attach([], items, ctx, edition=edition, link=link)
+    events, _ = attach([], items, ctx, edition=edition, link=link, merge_tier=merge_tier,
+                       merge_average=merge_average)
     return groups(events)
 
 

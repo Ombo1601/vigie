@@ -340,19 +340,27 @@ class Rules(unittest.TestCase):
               "members": [{"item_id": "b1"}], "lineage": {"merged_into": "", "absorbed": []}}
         return [e1, e2]
 
-    def test_merge_needs_two_cross_pairs_at_probable(self):
+    def test_merge_needs_two_cross_pairs_at_probable_and_an_average_link(self):
         texts = self._items(["a1", "a2", "b1"])
         new = self._items(["n1"], day=20)
+        # n1 joins E2 (b1 0.95); E1's average for n1 is (0.5 + 0.05) / 2 < 0.4
         base = {("n1", "b1"): 0.95, ("n1", "a1"): 0.5, ("n1", "a2"): 0.05}
-        events, dec = self._run(self._events(), new, {**base, ("a1", "b1"): 0.6}, texts)
+        # three strong cross pairs, average (0.6 + 0.5 + 0.5 + 0.05) / 4 >= 0.4
+        events, dec = self._run(self._events(), new, {**base, ("a1", "b1"): 0.6, ("a2", "b1"): 0.5}, texts)
         by = {e["event_id"]: e for e in events}
         self.assertEqual(by["ev-" + "2" * 16]["lineage"]["merged_into"], "ev-" + "1" * 16, "older keeps its id")
         self.assertIn("ev-" + "2" * 16, by["ev-" + "1" * 16]["lineage"]["absorbed"])
         self.assertEqual(dec[-1]["action"], "merged")
         self.assertEqual(sorted(len(g) for g in em.groups(events)), [4])
-        events, dec = self._run(self._events(), new, {**base, ("a1", "b1"): 0.2}, texts)
+        self.assertEqual({m["item_id"] for m in by["ev-" + "2" * 16]["members"]}, {"b1", "n1"},
+                         "a merge moves no member: it records lineage")
+        # one strong cross pair (a1-n1): never a merge
+        events, _ = self._run(self._events(), new, {**base, ("a1", "b1"): 0.2, ("a2", "b1"): 0.35}, texts)
         self.assertFalse(any(e["lineage"]["merged_into"] for e in events), "one cross pair never merges")
         self.assertEqual(sorted(len(g) for g in em.groups(events)), [2, 2])
+        # two strong cross pairs but a weak average (0.45 + 0 + 0.5 + 0.05) / 4: no merge
+        events, _ = self._run(self._events(), new, {**base, ("a1", "b1"): 0.45}, texts)
+        self.assertFalse(any(e["lineage"]["merged_into"] for e in events), "two pairs cannot glue two stories")
 
     def test_average_link_and_tie_breaks(self):
         texts = self._items(["a1", "a2", "b1"])
