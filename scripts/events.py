@@ -44,10 +44,17 @@ House law carried here
     item belongs to one event, once.
   * R10: a member withdrawn by takedowns.yaml loses its URL and its display
     (the view omits it) in the same run; the event id and its counts stand.
-    A URL is kept only while its source is enabled.
-  * Fail-soft: any fault prints a diagnosis and exits 0. A corrupt store
-    yields no events this run (the store is left untouched for repair); an
-    absent store is a first run.
+    A URL is kept only while its source is enabled. This holds in a run that
+    does not rebuild the store too (see below): the withdrawn URLs are
+    removed from the store as it stands.
+  * Fail-soft: any fault prints a diagnosis and exits 0. A run that does not
+    rebuild the store (no readable edition, a damaged store, an edition older
+    than the store, sources.yaml unreadable, any fault in the build) clears
+    the current-edition view, records its status and reason in the ledger,
+    and applies R10 to the store; the store is otherwise left as it was (a
+    damaged one for repair). `check_store` checks every field the builder
+    reads back, so damage is refused before the build, never half-trusted.
+    An absent store is a first run.
   * Retention (EVENTS.md section 13): the newest 400 editions; media fact
     values only while the event is in window, then reduced to counts per
     slot (values stated by an official member are kept).
@@ -661,8 +668,100 @@ def empty_store() -> dict:
     return {"format": STORE_FORMAT, "schema": SCHEMA, "method": METHOD, "editions": [], "events": [], "items": {}}
 
 
+def _nonempty_str(value) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _str_list(value) -> bool:
+    return isinstance(value, list) and all(isinstance(x, str) for x in value)
+
+
+def member_problem(m) -> str | None:
+    """Why a stored member row cannot be trusted, or None. The builder writes
+    only complete rows (classes included), so a row missing what it reads
+    back is a damaged store, never something to guess around."""
+    if not isinstance(m, dict) or not ITEM_ID.match(_str(m.get("item_id"))):
+        return "a member without a valid item id"
+    for key in ("institution", "source_id"):
+        if not _nonempty_str(m.get(key)):
+            return f"a member without a {key}"
+    if m.get("language") not in ("fr", "en"):
+        return "a member whose language is not fr or en"
+    if not isinstance(m.get("first_seen"), str) or em._clock(m["first_seen"]) is None:
+        return "a member without a readable first_seen"
+    if m.get("published_at") is not None and not isinstance(m.get("published_at"), str):
+        return "a member whose published_at is not a string"
+    if m.get("origin_class") not in ORIGIN_CLASSES:
+        return "a member without an origin class"
+    for key in ("origin_rule", "ownership_class", "owner_group", "url"):
+        if key in m and not isinstance(m[key], str):
+            return f"a member whose {key} is not a string"
+    if "date_suspect" in m and not isinstance(m["date_suspect"], bool):
+        return "a member whose date_suspect is not a boolean"
+    return None
+
+
+def item_codes_problem(codes) -> str | None:
+    """Why a stored per-item code record cannot be trusted, or None."""
+    if not isinstance(codes, dict):
+        return "item codes that are not an object"
+    scores = codes.get("type_scores", {})
+    if not isinstance(scores, dict) or not all(isinstance(k, str) and _int(v) for k, v in scores.items()):
+        return "item type scores that are not code -> integer"
+    if not _str_list(codes.get("places", [])):
+        return "item places that are not a list of codes"
+    for key in ("geo", "host"):
+        if key in codes and not isinstance(codes[key], str):
+            return f"an item {key} that is not a string"
+    atoms = codes.get("facts", [])
+    if not isinstance(atoms, list) or not all(isinstance(a, dict) for a in atoms):
+        return "item facts that are not a list of atoms"
+    join = codes.get("join", {})
+    if not isinstance(join, dict) or not all(_int(join[k]) for k in ("link_e4", "matching", "compared") if k in join):
+        return "an item join record that is not an object of integers"
+    return None
+
+
+def event_problem(e: dict) -> str | None:
+    """Why a stored event's carried-over fields cannot be trusted, or None.
+    Only what the builder reads back is checked; every derived field is
+    recomputed each run."""
+    if not em._clock(e.get("born_edition")):
+        return "born_edition unreadable"
+    if e.get("last_edition") is not None and not em._clock(e.get("last_edition")):
+        return "last_edition unreadable"
+    lineage = e.get("lineage", {})
+    if not isinstance(lineage, dict):
+        return "lineage is not an object"
+    if not isinstance(lineage.get("merged_into", ""), str) or not isinstance(lineage.get("merged_at", ""), str):
+        return "lineage merged_into/merged_at is not a string"
+    if not _str_list(lineage.get("absorbed", [])) or not _str_list(lineage.get("detached", [])):
+        return "lineage absorbed/detached is not a list of ids"
+    for key in ("copies", "language_pairs", "anchors", "facts", "facts_reduced", "neighbours", "seals"):
+        if key in e and not isinstance(e[key], list):
+            return f"{key} is not a list"
+    for key in ("language_pairs", "anchors", "facts", "facts_reduced", "neighbours"):
+        if not all(isinstance(x, dict) for x in e.get(key) or []):
+            return f"{key} holds a row that is not an object"
+    for row in e.get("facts") or []:
+        if not isinstance(row.get("values", []), list) or not all(isinstance(v, dict) for v in row.get("values") or []):
+            return "facts values that are not a list of objects"
+    for p in e.get("language_pairs") or []:
+        if not all(isinstance(p.get(k), str) for k in ("fr", "en", "rule")) or not isinstance(p.get("same_owner"), bool):
+            return "a language pair that is not {fr, en, rule, same_owner}"
+    if e.get("facts_state", "live") not in ("live", "reduced"):
+        return "facts_state is neither live nor reduced"
+    return None
+
+
 def check_store(doc) -> dict:
-    """The previous store, structurally checked, or StoreUnreadable."""
+    """The previous store, structurally checked, or StoreUnreadable. Every
+    field the builder reads back is checked here, so a damaged store is
+    refused before the build (diagnosed), never half-trusted."""
     if not isinstance(doc, dict) or doc.get("format") != STORE_FORMAT:
         raise StoreUnreadable("not an events-store-v1 document")
     events = doc.get("events")
@@ -678,14 +777,22 @@ def check_store(doc) -> dict:
         if e["event_id"] in seen_events:
             raise StoreUnreadable("a duplicate event id")
         seen_events.add(e["event_id"])
-        if not isinstance(e.get("members"), list) or not em._clock(e.get("born_edition")):
-            raise StoreUnreadable(f"{e['event_id']}: members or born_edition unreadable")
+        if not isinstance(e.get("members"), list):
+            raise StoreUnreadable(f"{e['event_id']}: members unreadable")
+        problem = event_problem(e)
+        if problem:
+            raise StoreUnreadable(f"{e['event_id']}: {problem}")
         for m in e["members"]:
-            if not isinstance(m, dict) or not ITEM_ID.match(_str(m.get("item_id"))):
-                raise StoreUnreadable(f"{e['event_id']}: a member without a valid item id")
+            problem = member_problem(m)
+            if problem:
+                raise StoreUnreadable(f"{e['event_id']}: {problem}")
             if m["item_id"] in seen_items:
                 raise StoreUnreadable("an item owned by two events")
             seen_items.add(m["item_id"])
+    for key, codes in items.items():
+        problem = item_codes_problem(codes) if isinstance(key, str) else "an item key that is not an id"
+        if problem:
+            raise StoreUnreadable(problem)
     if not all(isinstance(x, str) and em._clock(x) for x in editions):
         raise StoreUnreadable("an edition clock is unreadable")
     return doc
@@ -742,7 +849,8 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
     edition = edition_clock(payload)
     if edition is None:
         raise EditionRefused("the edition has no usable normalized_at clock")
-    store = json.loads(json.dumps(previous)) if previous else empty_store()
+    # A copy, checked: whoever calls build gets the same refusal as a store read from disk.
+    store = check_store(json.loads(json.dumps(previous))) if previous else empty_store()
     known = sorted(store.get("editions") or [], key=lambda s: em._clock(s))
     if known and em._clock(edition) < em._clock(known[-1]):
         raise EditionRefused(f"edition {edition} is older than the store's newest edition {known[-1]}")
@@ -1218,40 +1326,156 @@ def _empty_outputs(edition: str | None, status: str, reason: str) -> tuple[dict,
     return view, ops
 
 
+# --------------------------------------------------------------------------- #
+# R10 in a run that does not rebuild the store
+# --------------------------------------------------------------------------- #
+_FLAT_OBJECT = re.compile(r"\{[^{}]*\}")
+_URL_FIELD = re.compile(r'("url"\s*:\s*")((?:[^"\\]|\\.)*)')
+
+
+def _scrub_row(row: dict, reg: Registry, hosts: dict) -> bool:
+    """Drop a withdrawn member's URL in place; True when one was dropped."""
+    url = row.get("url")
+    if not isinstance(url, str):
+        return False
+    if reg.withdrawn(row, hosts.get(_str(row.get("item_id"))) or article_host(url)):
+        del row["url"]
+        return True
+    return False
+
+
+def scrub_withdrawn(path: Path, reg: Registry | None) -> tuple[int, str]:
+    """R10 for a run that does not rebuild the store (store unreadable, edition
+    refused, build failed): every member row whose source, domain or article
+    is withdrawn loses its URL in this run; nothing else changes and the file
+    is rewritten only when a URL was removed. A store that does not even parse
+    is scrubbed object by object (member rows are flat objects), then any
+    remaining `"url"` value that a url or host takedown matches is emptied.
+    Returns (URLs removed, note)."""
+    if reg is None:
+        return 0, "takedowns unreadable: nothing scrubbed"
+    if not reg.rules:
+        return 0, "no active takedown"
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return 0, "no store"
+    except (OSError, UnicodeDecodeError) as exc:
+        return 0, f"store unreadable as text ({type(exc).__name__}): not scrubbed"
+    removed = 0
+    try:
+        doc = json.loads(text)
+    except (ValueError, RecursionError):
+        doc = None
+    if isinstance(doc, (dict, list)):
+        items = doc.get("items") if isinstance(doc, dict) else None
+        hosts = ({k: v["host"] for k, v in items.items() if isinstance(v, dict) and isinstance(v.get("host"), str)}
+                 if isinstance(items, dict) else {})
+        stack = [doc]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, dict):
+                removed += _scrub_row(x, reg, hosts)
+                stack.extend(x.values())
+            elif isinstance(x, list):
+                stack.extend(x)
+        new_text = _dump(doc, compact=True) if removed else text
+    else:
+        def one_row(m: re.Match) -> str:
+            nonlocal removed
+            try:
+                obj = json.loads(m.group(0))
+            except (ValueError, RecursionError):
+                return m.group(0)
+            if isinstance(obj, dict) and _scrub_row(obj, reg, {}):
+                removed += 1
+                return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            return m.group(0)
+
+        def one_url(m: re.Match) -> str:
+            nonlocal removed
+            if reg.rules.match_url(m.group(2)) is None:
+                return m.group(0)
+            removed += 1
+            return m.group(1)
+
+        new_text = _URL_FIELD.sub(one_url, _FLAT_OBJECT.sub(one_row, text))
+    if not removed:
+        return 0, "no withdrawn URL in the store"
+    store_io.write_text_atomic(Path(path), new_text)
+    return removed, f"{removed} withdrawn URL(s) removed; the rest of the store left as it was"
+
+
+def _rules_only(takedowns_path: Path) -> Registry | None:
+    """The takedown rules without sources.yaml (which may be what failed)."""
+    try:
+        entries, errors = takedown.load(Path(takedowns_path))
+        for err in errors:
+            _say(f"takedowns: {err}")
+        return Registry([], takedown.Rules(entries))
+    except Exception:  # noqa: BLE001 - then nothing can be scrubbed, and the ledger says so
+        return None
+
+
+def _not_built(data: Path, edition: str | None, status: str, reason: str, reg: Registry | None) -> int:
+    """Every run that does not rebuild the store ends here: R10 is applied to
+    the store as it stands, then the current-edition view is cleared (an
+    earlier edition is never left in place marked "ok") and the ledger says
+    why. Each step is guarded on its own; always 0."""
+    _say(reason)
+    try:
+        removed, note = scrub_withdrawn(data / "events" / "store.json", reg)
+    except Exception as exc:  # noqa: BLE001 - diagnosed in the ledger
+        removed, note = 0, f"scrub failed ({type(exc).__name__}: {exc})"
+    if removed:
+        _say(f"R10: {note}")
+    view, ops = _empty_outputs(edition, status, reason)
+    ops["r10_store_scrub"] = {"urls_removed": removed, "note": note}
+    try:
+        write_outputs(data, None, view, ops)
+    except Exception as exc:  # noqa: BLE001 - nothing more can be written
+        _say(f"could not clear the current-edition view ({type(exc).__name__}: {exc})")
+    return 0
+
+
 def run(in_path: Path = IN_PATH, data: Path = DATA, sources_path: Path = SOURCES_PATH,
         takedowns_path: Path = TAKEDOWNS_PATH) -> int:
-    """One pipeline step. Always returns 0; every refusal is written down."""
-    payload = _read_json(in_path)
-    if not isinstance(payload, dict):
-        _say(f"no readable edition at {in_path}: nothing built (the brief renders from dossiers)")
-        return 0
-    edition = edition_clock(payload)
-    reg = Registry.load(sources_path, takedowns_path)
+    """One pipeline step. Always returns 0; every refusal is written down. A
+    run that does not rebuild the store (no edition, store unreadable, edition
+    refused, any fault while reading sources.yaml or building) still applies
+    R10 to the store and clears the current-edition view (`_not_built`)."""
     store_path = data / "events" / "store.json"
+    edition: str | None = None
+    reg: Registry | None = None
     try:
-        previous = load_store(store_path)
-    except StoreUnreadable as exc:
-        reason = f"store unreadable ({exc}); left untouched for repair, no events this run"
-        _say(reason)
-        view, ops = _empty_outputs(edition, "store_unreadable", reason)
-        write_outputs(data, None, view, ops)
+        payload = _read_json(in_path)
+        if not isinstance(payload, dict):
+            return _not_built(data, None, "no_edition",
+                              f"no readable edition at {in_path}: nothing built (the brief renders from dossiers)",
+                              _rules_only(takedowns_path))
+        edition = edition_clock(payload)
+        reg = Registry.load(sources_path, takedowns_path)
+        try:
+            previous = load_store(store_path)
+            issues = _read_json(data / "issues" / "latest_issues.json")
+            store, view, ops = build(previous, payload, reg, issues=issues if isinstance(issues, dict) else None,
+                                     collection=collection_facts(payload, sources_path),
+                                     anchor_inputs=anchor_inputs_from(data, payload))
+        except StoreUnreadable as exc:
+            return _not_built(data, edition, "store_unreadable",
+                              f"store unreadable ({exc}); left for repair, no events this run", reg)
+        except EditionRefused as exc:
+            return _not_built(data, edition, "edition_refused", f"edition refused ({exc}); store unchanged", reg)
+        write_outputs(data, store, view, ops)
+        ev = ops["edition_view"]
+        _say(f"{ev['events']} event(s) in edition {edition} ({ev['multi_member']} multi-member, "
+             f"{ev['multi_institution']} multi-institution, {ev['bilingual']} bilingual, {ev['anchored']} anchored, "
+             f"{ev['unclassified']} unclassified); store {ops['store']['events']} event(s) -> {store_path}")
         return 0
-    issues = _read_json(data / "issues" / "latest_issues.json")
-    try:
-        store, view, ops = build(previous, payload, reg, issues=issues if isinstance(issues, dict) else None,
-                                 collection=collection_facts(payload, sources_path),
-                                 anchor_inputs=anchor_inputs_from(data, payload))
-    except EditionRefused as exc:
-        _say(f"edition refused ({exc}); store unchanged")
-        view, ops = _empty_outputs(edition, "edition_refused", str(exc))
-        write_outputs(data, None, view, ops)
-        return 0
-    write_outputs(data, store, view, ops)
-    ev = ops["edition_view"]
-    _say(f"{ev['events']} event(s) in edition {edition} ({ev['multi_member']} multi-member, "
-         f"{ev['multi_institution']} multi-institution, {ev['bilingual']} bilingual, {ev['anchored']} anchored, "
-         f"{ev['unclassified']} unclassified); store {ops['store']['events']} event(s) -> {store_path}")
-    return 0
+    except (Exception, SystemExit) as exc:  # noqa: BLE001 - any fault is diagnosed, never left stale
+        return _not_built(data, edition, "build_failed",
+                          f"build failed ({type(exc).__name__}: {exc}); store left as it was, no events this run",
+                          reg if reg is not None else _rules_only(takedowns_path))
 
 
 def snapshots(directory: Path) -> list[Path]:
@@ -1262,20 +1486,29 @@ def snapshots(directory: Path) -> list[Path]:
 def replay(paths: list[Path], reg: Registry, previous: dict | None = None, *, timings: list | None = None) -> tuple[dict, dict, dict, dict]:
     """Every snapshot as one edition, in order, from `previous` (empty by
     default). Each step round-trips the store through JSON exactly as the
-    pipeline does between runs. Returns (store, view, ops, counts)."""
+    pipeline does between runs; a refused or failed edition leaves the store
+    as it was and its outputs say so, as `run` does. Returns (store, view,
+    ops, counts)."""
     store = json.loads(_dump(previous or empty_store(), compact=True))
     view, ops = _empty_outputs(None, "no_edition", "nothing replayed")
-    counts = {"editions": 0, "refused": 0, "unreadable": 0}
+    counts = {"editions": 0, "refused": 0, "failed": 0, "unreadable": 0}
     for path in paths:
         payload = _read_json(path)
-        if not isinstance(payload, dict) or not payload.get("candidates"):
+        if not isinstance(payload, dict) or not isinstance(payload.get("candidates"), list):
             counts["unreadable"] += 1
             continue
         started = time.perf_counter()
         try:
             new_store, view, ops = build(store, payload, reg)
-        except EditionRefused:
+        except EditionRefused as exc:
             counts["refused"] += 1
+            view, ops = _empty_outputs(edition_clock(payload), "edition_refused", f"edition refused ({exc}); store unchanged")
+            continue
+        except Exception as exc:  # noqa: BLE001 - as run(): diagnosed, the store stays as it was
+            counts["failed"] += 1
+            reason = f"build failed ({type(exc).__name__}: {exc}); store left as it was, no events this run"
+            _say(f"replay {Path(path).name}: {reason}")
+            view, ops = _empty_outputs(edition_clock(payload), "build_failed", reason)
             continue
         if timings is not None:
             timings.append(time.perf_counter() - started)
@@ -1307,7 +1540,7 @@ def main(argv: list[str] | None = None) -> int:
         store, view, ops, counts = replay(snapshots(args.replay), reg, timings=timings)
         write_outputs(args.data_dir, store, view, ops)
         _say(f"replayed {counts['editions']} edition(s) ({counts['refused']} refused as out of order, "
-             f"{counts['unreadable']} unreadable); store {len(store['events'])} event(s); "
+             f"{counts['failed']} failed, {counts['unreadable']} unreadable); store {len(store['events'])} event(s); "
              f"seconds per edition max {max(timings, default=0.0):.2f} mean "
              f"{(sum(timings) / len(timings)) if timings else 0.0:.2f}")
         return 0

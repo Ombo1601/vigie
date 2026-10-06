@@ -166,6 +166,11 @@ def owner_map(store):
     return {m["item_id"]: e["event_id"] for e in store["events"] for m in e["members"]}
 
 
+def _strike_row(doc):
+    """The stored row of the strike's founding article (an event unrelated to the fire)."""
+    return next(m for m in by_id(doc)[STRIKE_ID]["members"] if m["item_id"] == S1["id"])
+
+
 # --------------------------------------------------------------------------- #
 # A hand-written checker for event-v1 (docs/EVENTS.md section 14), stdlib only
 # --------------------------------------------------------------------------- #
@@ -735,12 +740,13 @@ class Takedowns(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             files = Files(tmp)
-            files.run(E1)
-            files.takedowns.write_text(
-                "version: 1\ntakedowns:\n  - id: td-2026-09-20-a\n    kind: url\n"
-                f"    value: {F2['url']}\n    requested_at: 2026-09-20\n    by: Delta Quotidien\n    status: active\n",
-                encoding="utf-8", newline="\n")
-            files.run(E2)
+            with mock.patch("sys.stdout"):
+                files.run(E1)
+                files.takedowns.write_text(
+                    "version: 1\ntakedowns:\n  - id: td-2026-09-20-a\n    kind: url\n"
+                    f"    value: {F2['url']}\n    requested_at: 2026-09-20\n    by: Delta Quotidien\n    status: active\n",
+                    encoding="utf-8", newline="\n")
+                files.run(E2)
             store = json.loads((tmp / "data" / "events" / "store.json").read_text(encoding="utf-8"))
             latest = (tmp / "data" / "events" / "latest_events.json").read_text(encoding="utf-8")
             fire = by_id(store)[FIRE_ID]
@@ -928,17 +934,138 @@ class FailSoft(unittest.TestCase):
             self.assertEqual(ops["status"], "store_unreadable")
             self.assertTrue(ops["diagnosis"])
 
-    def test_a_bare_member_row_is_completed_not_lost(self):
+    # Damage the builder would otherwise trip over mid-build (KeyError, ValueError,
+    # AttributeError), leaving the previous edition's outputs in place.
+    DAMAGE = {
+        "member without institution": lambda d: _strike_row(d).pop("institution"),
+        "member language None": lambda d: _strike_row(d).update(language=None),
+        "member without language": lambda d: _strike_row(d).pop("language"),
+        "member language de": lambda d: _strike_row(d).update(language="de"),
+        "member without source_id": lambda d: _strike_row(d).update(source_id=""),
+        "member first_seen garbage": lambda d: _strike_row(d).update(first_seen="hier"),
+        "bare member row": lambda d: _strike_row(d).pop("origin_class"),
+        "member url not a string": lambda d: _strike_row(d).update(url=["x"]),
+        "lineage a string": lambda d: by_id(d)[STRIKE_ID].update(lineage="merged"),
+        "lineage absorbed a string": lambda d: by_id(d)[STRIKE_ID].update(lineage={"absorbed": "ev-x"}),
+        "item codes a string": lambda d: d["items"].update({S1["id"]: "codes"}),
+        "item type scores a list": lambda d: d["items"][S1["id"]].update(type_scores=["strike"]),
+        "item places an int": lambda d: d["items"][S1["id"]].update(places=3),
+        "item join a list": lambda d: d["items"][S1["id"]].update(join=["minted"]),
+        "item facts not atoms": lambda d: d["items"][S1["id"]].update(facts=[1]),
+        "facts rows not objects": lambda d: by_id(d)[STRIKE_ID].update(facts=["x"]),
+        "language pair a string": lambda d: by_id(d)[STRIKE_ID].update(language_pairs=["fr-en"]),
+        "facts_state unknown": lambda d: by_id(d)[STRIKE_ID].update(facts_state="partial"),
+    }
+
+    def test_every_damage_the_builder_would_trip_on_is_an_unreadable_store(self):
         stores, _, _ = build_all(EDITIONS[:1])
-        doc = json.loads(json.dumps(stores[0]))
-        x_event = by_id(doc)[em.event_id_for(X1["id"])]
-        x_event["members"] = [{"item_id": X1["id"], "published_at": X1["published_at"],
-                               "first_seen": E1["normalized_at"], "source_id": "delta"}]
-        store, _, _ = events.build(events.check_store(doc), E2, registry())
-        row = by_id(store)[em.event_id_for(X1["id"])]["members"][0]
-        self.assertEqual(row["first_seen"], E1["normalized_at"])
-        self.assertEqual((row["institution"], row["ownership_class"]), ("delta", "independent"))
-        self.assertEqual(check_v1(events.to_v1(by_id(store)[em.event_id_for(X1["id"])])), [])
+        events.check_store(json.loads(json.dumps(stores[0])))
+        for name, damage in self.DAMAGE.items():
+            doc = json.loads(json.dumps(stores[0]))
+            damage(doc)
+            with self.assertRaises(events.StoreUnreadable, msg=name):
+                events.check_store(doc)
+            with self.assertRaises(events.StoreUnreadable, msg=name):
+                events.build(doc, E2, registry())
+
+    def _takedown(self, kind="url", value=None):
+        value = value if value is not None else F2["url"]
+        self.files.takedowns.write_text(
+            "version: 1\ntakedowns:\n  - id: td-2026-09-20-b\n"
+            f"    kind: {kind}\n    value: {value}\n    requested_at: 2026-09-20\n    by: Delta Quotidien\n"
+            "    status: active\n", encoding="utf-8", newline="\n")
+
+    def _outputs(self):
+        latest = json.loads((self.files.data / "events" / "latest_events.json").read_text(encoding="utf-8"))
+        ops = json.loads((self.files.data / "ops" / "events_shadow.json").read_text(encoding="utf-8"))
+        return latest, ops
+
+    def _assert_cleared(self, status, edition):
+        latest, ops = self._outputs()
+        self.assertEqual((latest["status"], latest["edition"], latest["events"]), (status, edition, []),
+                         "the previous edition is never left in place marked ok")
+        self.assertEqual((ops["status"], ops["edition"]), (status, edition))
+        self.assertTrue(ops["diagnosis"])
+        return ops
+
+    def test_a_damaged_store_clears_the_view_and_still_withdraws_the_url(self):
+        self.assertEqual(self._run(E1), 0)
+        doc = json.loads(self.store.read_text(encoding="utf-8"))
+        self.assertIn(F2["url"], self.store.read_text(encoding="utf-8"))
+        _strike_row(doc).pop("institution")       # an unrelated row: check_store used to accept it
+        _strike_row(doc)["language"] = None
+        self.store.write_text(json.dumps(doc), encoding="utf-8")
+        self._takedown()
+        self.assertEqual(self._run(E2), 0)
+        ops = self._assert_cleared("store_unreadable", E2["normalized_at"])
+        self.assertEqual(ops["r10_store_scrub"]["urls_removed"], 1)
+        after = json.loads(self.store.read_text(encoding="utf-8"))
+        for e in doc["events"]:
+            for m in e["members"]:
+                if m["item_id"] == F2["id"]:
+                    m.pop("url")
+        self.assertEqual(after, doc, "only the withdrawn URL left; the rest is kept for repair")
+        self.assertNotIn(F2["url"], self.store.read_text(encoding="utf-8"))
+        self.assertIn(F1["url"], self.store.read_text(encoding="utf-8"))
+
+    def test_a_fault_while_building_clears_the_view_and_still_withdraws_the_url(self):
+        self.assertEqual(self._run(E1), 0)
+        self._takedown()
+        with mock.patch.object(events, "build", side_effect=KeyError("institution")):
+            self.assertEqual(self._run(E2), 0)
+        ops = self._assert_cleared("build_failed", E2["normalized_at"])
+        self.assertIn("KeyError", ops["diagnosis"][0])
+        text = self.store.read_text(encoding="utf-8")
+        self.assertNotIn(F2["url"], text)
+        self.assertIn(F1["url"], text)
+        self.assertEqual(ops["r10_store_scrub"]["urls_removed"], 1)
+
+    def test_an_unreadable_sources_file_clears_the_view_and_still_withdraws_by_source(self):
+        self.assertEqual(self._run(E1), 0)
+        self._takedown("source", "delta")
+        self.files.sources.write_text("version: 1\n", encoding="utf-8")   # no sources: block -> SystemExit
+        self.assertEqual(self._run(E2), 0)
+        ops = self._assert_cleared("build_failed", E2["normalized_at"])
+        self.assertIn("SystemExit", ops["diagnosis"][0])
+        text = self.store.read_text(encoding="utf-8")
+        self.assertNotIn(F2["url"], text)
+        self.assertNotIn(X1["url"], text, "every Delta URL goes, by source id alone")
+        self.assertIn(F1["url"], text)
+
+    def test_a_refused_edition_still_withdraws_the_url(self):
+        self.assertEqual(self._run(E2), 0)
+        self._takedown()
+        self.assertEqual(self._run(E1), 0)
+        self._assert_cleared("edition_refused", E1["normalized_at"])
+        self.assertNotIn(F2["url"], self.store.read_text(encoding="utf-8"))
+
+    def test_no_readable_edition_clears_the_view(self):
+        self.assertEqual(self._run(E1), 0)
+        before = self.store.read_bytes()
+        self.files.enriched.write_text("garbage", encoding="utf-8")
+        with mock.patch("sys.stdout"):
+            self.assertEqual(events.main(["--in", str(self.files.enriched), "--data-dir", str(self.files.data),
+                                          "--sources", str(self.files.sources), "--takedowns",
+                                          str(self.files.takedowns)]), 0)
+        self._assert_cleared("no_edition", None)
+        self.assertEqual(self.store.read_bytes(), before, "nothing withdrawn: the store is untouched")
+
+    def test_a_store_that_does_not_parse_is_scrubbed_row_by_row(self):
+        self.assertEqual(self._run(E1), 0)
+        text = self.store.read_text(encoding="utf-8")
+        row = next(m for e in json.loads(text)["events"] for m in e["members"] if m["item_id"] == F2["id"])
+        flat = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        self.assertIn(flat, text)
+        broken = text[:-40] + ',"url":"' + F2["url"]            # truncated, a dangling URL at the end
+        self.store.write_text(broken, encoding="utf-8")
+        self._takedown()
+        self.assertEqual(self._run(E2), 0)
+        self._assert_cleared("store_unreadable", E2["normalized_at"])
+        after = self.store.read_text(encoding="utf-8")
+        self.assertNotIn(F2["url"], after)
+        row.pop("url")
+        expected = broken.replace(flat, json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        self.assertEqual(after, expected[:-len(F2["url"])], "nothing else in the damaged file changes")
 
     def test_an_item_owned_twice_is_a_corrupt_store(self):
         stores, _, _ = build_all(EDITIONS[:1])
@@ -964,7 +1091,8 @@ class FailSoft(unittest.TestCase):
             self.assertEqual(events.main(["--in", str(self.tmp / "absent.json"), "--data-dir", str(self.files.data)]), 0)
             self.assertEqual(events.main(["--sources", str(self.tmp / "absent.yaml"), "--in", str(self.files.enriched),
                                           "--data-dir", str(self.files.data)]), 0)
-            self.assertEqual(events.main(["--bogus-flag"]), 0)
+            with mock.patch("sys.stderr"):
+                self.assertEqual(events.main(["--bogus-flag"]), 0)
         hostile = {"normalized_at": "2026-09-20T12:00:00+00:00",
                    "candidates": [F1, "not an item", {"id": "XYZ"}, {**F2, "published_at": "9999-12-31T23:59:59Z"}]}
         self.assertEqual(self._run(hostile), 0)
@@ -981,6 +1109,29 @@ class FailSoft(unittest.TestCase):
     def test_a_fault_inside_the_builder_exits_zero(self):
         with mock.patch.object(events, "build", side_effect=RuntimeError("boom")), mock.patch("sys.stdout"):
             self.assertEqual(self.files.run(E1), 0)
+        self._assert_cleared("build_failed", E1["normalized_at"])
+        self.assertFalse(self.store.exists(), "no store is invented")
+
+    def test_a_failed_edition_in_a_replay_leaves_the_store_as_a_live_run_does(self):
+        real_build = events.build
+
+        def flaky(previous, payload, reg, **kw):
+            if payload.get("normalized_at") == E2["normalized_at"]:
+                raise ValueError("damaged edition")
+            return real_build(previous, payload, reg, **kw)
+
+        snaps = self.tmp / "snaps"
+        snaps.mkdir()
+        for _, p in EDITIONS[:3]:
+            (snaps / f"{stamp(p['normalized_at'])}_candidates.json").write_text(json.dumps(p), encoding="utf-8")
+        out = Files(self.tmp / "replayed")
+        with mock.patch.object(events, "build", side_effect=flaky), mock.patch("sys.stdout"):
+            for _, p in EDITIONS[:3]:
+                self.files.run(p)
+            events.main(["--replay", str(snaps), "--data-dir", str(out.data), "--sources", str(out.sources),
+                         "--takedowns", str(out.takedowns)])
+        self.assertEqual(out.outputs()["events/store.json"], self.files.outputs()["events/store.json"])
+        self.assertNotIn(E2["normalized_at"], json.loads(self.store.read_text(encoding="utf-8"))["editions"])
 
 
 # --------------------------------------------------------------------------- #
