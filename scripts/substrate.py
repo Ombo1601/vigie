@@ -8,7 +8,7 @@ all deterministic, all attribution-preserving:
 
   public/llms.txt          curated map for agents (llms.txt v2; rel="describedby")
   public/index.html.md     Markdown twin of the front door (rel="alternate")
-  public/delta/latest.json cursor-addressed edition delta (delta-v1)
+  public/delta/latest.json cursor-addressed edition delta (delta-v1.1)
 
 House law holds for machines exactly as for people: titles verbatim, publisher
 name, author (when the publisher's feed gives one) and URL on every item, no
@@ -467,7 +467,7 @@ Current edition: {edition or "unknown"}. Rules for agents: cite the original pub
 ## Edition
 
 - [Le point (Markdown)]({SITE_URL}/index.html.md): the front door as plain Markdown — stories with publisher, author and URL (titles only, no excerpts), dossiers with their voices, official roadworks, the voice register.
-- [Delta]({SITE_URL}/delta/latest.json): machine-readable edition delta (delta-v1) — new / developed / quiet dossiers with items, per-institution state with collected item counts, roadworks diff, cursor = chain root.
+- [Delta]({SITE_URL}/delta/latest.json): machine-readable edition delta (delta-v1.1, additive over delta-v1) — new / developed / quiet dossiers with items, per-institution state with collected item counts, roadworks diff, cursor = chain root.
 - [Dossiers complets (HTML)]({SITE_URL}/dossiers.html): one record page per dossier of the current edition — every voice with every verbatim headline, the collection timeline, and the institutions absent from that dossier.
 
 ## Registre

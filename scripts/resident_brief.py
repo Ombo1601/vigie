@@ -109,7 +109,8 @@ def author_of(item: object) -> str:
     Attribution law (LEGAL_RISK.md R1): s. 29.2 requires source AND author for
     news reporting, so every surface that shows a publisher title shows this
     beside it, in the byline style "Par {author}"."""
-    return plain(item.get("author"))[:AUTHOR_CAP] if isinstance(item, dict) else ""
+    author = item.get("author") if isinstance(item, dict) else None
+    return plain(author)[:AUTHOR_CAP] if isinstance(author, str) else ""
 
 
 def by_html(author: str, cls: str = "by") -> str:

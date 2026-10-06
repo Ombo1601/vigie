@@ -250,9 +250,19 @@ class MachineLayer(unittest.TestCase):
         text = substrate.render_llms_txt(self.state, {"at": STAMP})
         self.assertIn("Titles belong to their publishers; see https://vigieqc.com/methode/legal.html.", text)
         self.assertLess(len(text.encode("utf-8")), 10_000)
+        self.assertIn("delta-v1.1", text)
+        self.assertNotIn("(delta-v1)", text)
 
     def test_no_summary_cap_survives_in_the_machine_layer(self):
         self.assertFalse(hasattr(substrate, "SUMMARY_CAP"))
+
+
+class AuthorOfIsFailSoft(unittest.TestCase):
+    def test_only_a_string_yields_a_byline(self):
+        from resident_brief import author_of
+        self.assertEqual(author_of({"author": "Jeanne Roy"}), "Jeanne Roy")
+        for bad in (42, {"name": "x"}, ["x"], None, True):
+            self.assertEqual(author_of({"author": bad}), "")
 
 
 class ClusterThreadsTheByline(unittest.TestCase):

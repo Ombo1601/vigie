@@ -153,7 +153,7 @@ URL only — the per-institution state (`spoke`, `published`,
 `no_items_collected`, `collection_gap`, `not_established`, with collected item
 counts), and the roadworks diff. `/llms.txt` maps these files; the front door
 advertises `/index.html.md` as its Markdown twin (`rel="alternate"`).
-`delta-v1.1` is `delta-v1` plus the optional `author` on items and on
+`delta-v1.1` is `delta-v1` plus an `author` on items (empty string when the feed gave none) and on
 `label_source`, and a top-level `attribution` notice; every v1 key keeps its
 meaning, so a v1 reader still works. Every machine file says that titles belong
 to their publishers and points to `/methode/legal.html`.
