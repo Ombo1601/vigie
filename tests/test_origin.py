@@ -8,6 +8,7 @@ import copy
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -22,6 +23,11 @@ from origin import (  # noqa: E402
     CLASSES, OFFICIAL, OWN_REPORTING, PRESS_RELEASE, RULE_IDS, UNKNOWN, WIRE,
     classify_batch, origin_of, tally,
 )
+
+# shadow-only guard (multiline: an import on any line counts; also lazy imports/calls)
+_SHADOW_IMPORT_RE = re.compile(r"(?m)^\s*(?:import\s+origin\b|from\s+origin\s+import)")
+_SHADOW_CALL_RE = re.compile(
+    r"""\bimport_module\(\s*['"]origin['"]|\borigin\.(?:origin_of|classify_batch)\(""")
 
 MEDIA = {"id": "journal-x", "name": "Journal X", "institution": "journal-x",
          "institution_name": "Journal X", "source_kind": "media", "language": "fr"}
@@ -92,6 +98,34 @@ class WireAuthorTests(unittest.TestCase):
         self.assertEqual(cls(item("Alice Tremblay-Roy, La Presse Canadienne")), (WIRE, "wire.author.cp"))
         self.assertEqual(cls(item("Alice Tremblay-Roy et Bob Lacasse, AFP")), (WIRE, "wire.author.afp"))
         self.assertEqual(cls(item("Carl Dupont with The Associated Press")), (WIRE, "wire.author.ap"))
+
+    def test_other_byline_shapes_with_wire_credit(self):
+        cases = {
+            "Alice Tremblay (AFP)": "afp",
+            "Alice Tremblay - La Presse Canadienne": "cp",
+            "Alice Tremblay – AFP": "afp",
+            "Alice Tremblay — Reuters": "reuters",
+            "Alice Tremblay | AFP": "afp",
+            "Alice Tremblay pour La Presse Canadienne": "cp",
+            "Alice Tremblay for The Canadian Press": "cp",
+            "Alice Tremblay, La Presse canadienne (Ottawa)": "cp",
+            "Alice Tremblay, Agence France-Presse (AFP)": "afp",
+            "Alice Tremblay [Reuters]": "reuters",
+            "La Presse Canadienne (Ottawa)": "cp",
+        }
+        for author, code in cases.items():
+            with self.subTest(author=author):
+                self.assertEqual(cls(item(author)), (WIRE, f"wire.author.{code}"))
+
+    def test_new_separators_do_not_invent_wire_or_split_names(self):
+        # hyphenated names and hyphenated agency names stay whole
+        self.assertEqual(cls(item("Jean-Pierre Tremblay-Roy")), (OWN_REPORTING, "own_reporting.named_byline"))
+        self.assertEqual(cls(item("Agence France-Presse"))[0], WIRE)
+        # no agency named: never wire, never own_reporting by accident
+        for author in ("Alice Tremblay (Politique)", "Alice Tremblay - Ottawa",
+                       "Alice Tremblay | Ottawa", "Alice Tremblay for Appleby"):
+            with self.subTest(author=author):
+                self.assertEqual(cls(item(author))[0], UNKNOWN)
 
     def test_repeated_credit_is_one_agency(self):
         self.assertEqual(cls(item("La Presse Canadienne, La Presse Canadienne")), (WIRE, "wire.author.cp"))
@@ -453,7 +487,17 @@ class DeterminismTests(unittest.TestCase):
             if path.name == "origin.py":
                 continue
             text = path.read_text(encoding="utf-8")
-            self.assertNotRegex(text, r"^\s*(?:import origin\b|from origin import)", path.name)
+            self.assertNotRegex(text, _SHADOW_IMPORT_RE, path.name)
+            self.assertNotRegex(text, _SHADOW_CALL_RE, path.name)
+
+    def test_shadow_guard_regexes_are_not_vacuous(self):
+        # regression: the guard once lacked (?m) and only inspected line 1
+        self.assertRegex("import json\nimport origin\n", _SHADOW_IMPORT_RE)
+        self.assertRegex("import json\n    from origin import origin_of\n", _SHADOW_IMPORT_RE)
+        self.assertRegex("def f():\n    import origin\n", _SHADOW_IMPORT_RE)
+        self.assertRegex("x = importlib.import_module('origin')\n", _SHADOW_CALL_RE)
+        self.assertRegex("y = origin.classify_batch(items)\n", _SHADOW_CALL_RE)
+        self.assertNotRegex("import json\n# origin is shadow only\n", _SHADOW_IMPORT_RE)
 
 
 class LiveDataGuardedTests(unittest.TestCase):

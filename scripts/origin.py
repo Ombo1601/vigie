@@ -207,7 +207,15 @@ def _segment_agencies(segment: str, table) -> set[str] | None:
     return _consume(tokens, table) if tokens else None
 
 
-_SPLIT_RE = re.compile(r"\s*(?:,|;|/|&|\bet\b|\band\b|\bwith\b|\bavec\b|\bpar\b|\bby\b)\s*", re.IGNORECASE)
+# Byline shapes seen in the wild: "A, AFP", "A et B", "A (AFP)", "A - AFP",
+# "A | AFP", "A pour La Presse Canadienne", "A, La Presse canadienne (Ottawa)".
+# A dash separates only when spaced, so "Agence France-Presse" and
+# "Jean-Pierre" stay whole; brackets always separate (the city or agency in
+# brackets becomes its own, harmless segment).
+_SPLIT_RE = re.compile(
+    r"\s*(?:,|;|/|&|\||[()\[\]]|(?<=\s)[-–—](?=\s)|"
+    r"\bet\b|\band\b|\bwith\b|\bavec\b|\bpar\b|\bby\b|\bpour\b|\bfor\b)\s*",
+    re.IGNORECASE)
 
 
 def _segments(author: str) -> list[str]:
