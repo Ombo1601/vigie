@@ -75,13 +75,27 @@ class VocabularyShape(unittest.TestCase):
         except OSError:
             self.skipTest("docs/I18N.md or docs/EVENTS.md not present")
         self.assertEqual(V.type_codes(), types)
-        # Table B as written in I18N.md, in order, plus exactly the additions
-        # docs/EVENTS.md records as deviations (with their kind and labels).
-        self.assertEqual([c for c in V.place_codes() if c in places], places)
-        self.assertEqual(sorted(set(V.place_codes()) - set(places)), sorted(c for c, *_ in added))
+        # Table B as written in I18N.md is the whole vocabulary, in order (it
+        # was synced with the additions docs/EVENTS.md records as deviations,
+        # which must stay in it, with the same kind and labels).
+        self.assertEqual(V.place_codes(), places)
         for code, kind, fr, en in added:
+            self.assertIn(code, places)
             self.assertEqual((V.place_kind(code), V.place_label(code, "fr"), V.place_label(code, "en")),
                              (kind, fr, en), code)
+
+    def test_table_b_rows_match_the_vocabulary_word_for_word(self) -> None:
+        try:
+            text = (ROOT / "docs" / "I18N.md").read_text(encoding="utf-8")
+        except OSError:
+            self.skipTest("docs/I18N.md not present")
+        block = text.split("### Table B")[1].split("Specificity for")[0]
+        heading = re.search(r"places and sectors \((\d+)\)", block)
+        rows = re.findall(r"^\| ([a-z0-9-]+) \| ([a-z]+) \| ([^|]+) \| ([^|]+) \|$", block, re.M)
+        self.assertEqual(int(heading.group(1)), len(V.place_codes()), "the heading counts the table")
+        for code, kind, fr, en in rows:
+            self.assertEqual((V.place_kind(code), V.place_label(code, "fr"), V.place_label(code, "en")),
+                             (kind, fr.strip(), en.strip()), code)
 
     def test_the_two_new_scopes(self) -> None:
         self.assertEqual(V.place_label("elsewhere", "fr"), "Hors Québec")

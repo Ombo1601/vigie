@@ -1075,5 +1075,83 @@ class CssAndScript(unittest.TestCase):
         subprocess.run([node, "--check", str(ROOT / "public" / "assets" / "evenements.js")], check=True, timeout=60)
 
 
+class WiringGaps(unittest.TestCase):
+    """The gaps the wiring tranche closed in the kit (invented data only)."""
+
+    def test_withdrawn_silence_is_said_never_no_linked_article(self):
+        import takedown
+
+        ev = dict(BYLAW, silence=[{"institution_name": "Radio Zorblax", "state": "withdrawn"},
+                                  {"institution_name": "Le Plimbourgeois", "state": "no_linked_item"}])
+        for lang in ("fr", "en"):
+            panel = ck.silence_panel(ev, lang)
+            self.assertIn(f"<b>Radio Zorblax</b><span>{ck.esc(i18n.t('sil.withdrawn', lang))}</span>", panel)
+            self.assertEqual(panel.count(ck.esc(i18n.t("sil.no_linked_item", lang))), 1, "only the voice that has none")
+        self.assertEqual(i18n.t("sil.withdrawn", "fr"), takedown.WITHDRAWN_LABEL_FR)
+        self.assertIn("withdrawn", ck.SILENCE_STATES)
+
+    def test_an_unknown_silence_state_is_not_established_never_no_linked_article(self):
+        for state in ("", "banana", None):
+            ev = dict(BYLAW, silence=[{"institution_name": "Radio Zorblax", "state": state}])
+            panel = ck.silence_panel(ev, "fr")
+            self.assertIn(i18n.t("sil.not_established", "fr"), panel, state)
+            self.assertNotIn(i18n.t("sil.no_linked_item", "fr"), panel, state)
+
+    def test_place_codes_are_worded_everywhere_they_appear(self):
+        self.assertEqual(ck.place_name("elsewhere", "fr"), "Hors Québec")
+        self.assertEqual(ck.place_name("elsewhere", "en"), "Outside Quebec")
+        self.assertEqual(ck.place_name("unplaced", "fr"), "Lieu non établi")
+        self.assertEqual(ck.place_name("unplaced", "en"), "Place not established")
+        self.assertEqual(ck.place_name("zz-not-a-place", "fr"), "zz-not-a-place", "unknown: the code, never a guess")
+        fact = {"slot": {"kind": "place", "unit": "place", "subject": "fire-building"},
+                "values": [{"value": "elsewhere", "stated_by": ["a1b2c3d4e5f60001"], "institutions": ["x"]},
+                           {"value": "limoilou", "stated_by": ["a1b2c3d4e5f60002"], "institutions": ["y"]}],
+                "divergent": True}
+        ev = dict(FIRE, facts=[fact])
+        for lang, words in (("fr", ("Hors Québec", "Limoilou")), ("en", ("Outside Quebec", "Limoilou"))):
+            panel = ck.numbers_panel(ev, lang)
+            for w in words:
+                self.assertIn(f"<code>{ck.esc(w)}</code>", panel)
+            self.assertNotIn("<code>elsewhere</code>", panel)
+
+    def test_unplaced_card_and_page_say_the_place_is_not_established(self):
+        ev = dict(BYLAW, places=["unplaced"], place_label={"fr": "Lieu non établi", "en": "Place not established"})
+        for lang in ("fr", "en"):
+            self.assertIn(ck.esc(ck.place_name("unplaced", lang)), ck.event_card(ev, lang))
+            self.assertIn(ck.esc(ck.place_name("unplaced", lang)), ck.event_page(ev, lang))
+
+    def test_official_rows_outside_the_window_are_marked_and_the_fill_is_said(self):
+        rows = [{"title": "Avis zorblaxien frais", "institution_name": "Ville Xénon", "published_at": "2026-09-22T10:00:00Z"},
+                {"title": "Avis zorblaxien ancien", "institution_name": "Ville Xénon",
+                 "published_at": "2026-09-10T10:00:00Z", "older": True}]
+        for lang in ("fr", "en"):
+            block = ck.official_block(rows, lang, 2, {"city": 1, "province": 0, "other": 0}, fresh=1, older=1)
+            self.assertEqual(block.count(ck.esc(i18n.t("off.older", lang, h="72"))), 1)
+            self.assertIn("data-off-fill", block)
+            self.assertIn(ck.esc(i18n.tn("off.fill", 1, lang, h="72")), block)
+            self.assertNotIn("data-off-cap", block, "everything that qualifies is shown")
+        fresh_only = ck.official_block(rows[:1], "fr", 1, None)
+        self.assertNotIn("data-off-fill", fresh_only)
+        self.assertNotIn(ck.esc(i18n.t("off.older", "fr", h="72")), fresh_only)
+
+    def test_the_live_front_door_links_the_river_and_anchors_the_roadworks(self):
+        ed = dict(VIEWS["edition"], river="/le-point.html", roads_id="travaux")
+        for lang in ("fr", "en"):
+            page = ck.edition_page(ed, lang, roadworks=VIEWS["roadworks"], fr_path="/")
+            dom = parse(page)
+            river = [a for a in dom.find("a", href="/le-point.html")]
+            self.assertEqual(len(river), 1, lang)
+            if lang == "en":
+                self.assertEqual(river[0].get("lang"), "fr", "an English page flags the French-only brief")
+            self.assertIn("travaux", dom.ids)
+            self.assertIn('<section class="card panel roads" id="travaux"', page)
+            self.assertIn('<link rel="canonical" href="https://vigieqc.com/' + ("en/" if lang == "en" else "") + '">', page)
+        plain = ck.edition_page(VIEWS["edition"], "fr", roadworks=VIEWS["roadworks"])
+        self.assertNotIn("data-river", plain, "no river link unless the live front door asks for it")
+        self.assertNotIn('id="travaux"', plain)
+        self.assertEqual(ck.roadworks_block(VIEWS["roadworks"], "fr", anchor='x" onload="y'),
+                         ck.roadworks_block(VIEWS["roadworks"], "fr", anchor="xonloady"), "the id is sanitised")
+
+
 if __name__ == "__main__":
     unittest.main()

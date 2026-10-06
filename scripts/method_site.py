@@ -265,7 +265,54 @@ def _rules_scalars() -> dict:
     return out
 
 
-def _sources_html() -> str:
+# Ownership as FACTUAL STRUCTURE (who owns, in what legal form), as each row's
+# public reference (sources.yaml `ownership_ref`, read on `ownership_asof`)
+# states it. Never a judgement of the source: the word "indépendant" is not a
+# structure and is never printed. Keyed by sources.yaml `owner_group`, then
+# (owner_group, institution) where one owner holds bodies of different forms.
+OWNERSHIP_STRUCTURE_FR = {
+    "cbc-radio-canada": "Société d’État fédérale (Loi sur la radiodiffusion)",
+    "quebecor": "Société par actions cotée en bourse (Québecor)",
+    "cn2i": "Coopérative (CN2i)",
+    "le-devoir": "Contrôle détenu par une fiducie",
+    "la-presse": "Organisme sans but lucratif",
+    "ville-quebec": "Administration municipale (Ville de Québec)",
+    ("etat-quebec", "gouv-quebec"): "Gouvernement du Québec",
+    ("etat-quebec", "hydro-quebec"): "Société d’État ; actionnaire unique : le gouvernement du Québec",
+}
+# A group the table does not word yet: the declared class, in structure words
+# (never "indépendant": that class is worded by its reference only).
+OWNERSHIP_CLASS_FR = {
+    "public_broadcaster": "Diffuseur public",
+    "cooperative": "Coopérative",
+    "quebecor": "Groupe Québecor",
+    "government": "Organisme public",
+}
+OWNERSHIP_UNSTATED_FR = "Structure non établie : voir la référence publique"
+
+
+def ownership_structure(src: dict) -> str:
+    """The structure words of one sources.yaml record (see the table)."""
+    group = str(src.get("owner_group") or "")
+    inst = str(src.get("institution") or "")
+    return (OWNERSHIP_STRUCTURE_FR.get((group, inst)) or OWNERSHIP_STRUCTURE_FR.get(group)
+            or OWNERSHIP_CLASS_FR.get(str(src.get("ownership_class") or "")) or OWNERSHIP_UNSTATED_FR)
+
+
+def _ownership_cell(src: dict) -> str:
+    structure = brief.esc(ownership_structure(src))
+    ref = brief.safe_url(src.get("ownership_ref"))
+    asof = brief.plain(src.get("ownership_asof")) if src.get("ownership_asof") else ""
+    when = f" (lue le {brief.esc(asof)})" if asof else ""
+    if ref:
+        return f'{structure} — <a href="{brief.esc(ref)}" rel="noopener noreferrer">référence publique</a>{when}'
+    return f"{structure} — référence publique non déclarée"
+
+
+def _sources_html(ownership: bool = False) -> str:
+    """The sources page. `ownership` (the event surfaces are not off,
+    scripts/surfaces.py) adds the ownership column: the factual structure of
+    each source's owner, with its public reference and the date it was read."""
     sources = (
         ingest_rss.load_enabled_by_type(ROOT / "sources.yaml", "rss")
         + ingest_rss.load_enabled_by_type(ROOT / "sources.yaml", "wzdx")
@@ -289,21 +336,32 @@ def _sources_html() -> str:
             f'<span class="methode-chip official">officiel</span>' if kind == "officiel"
             else '<span class="methode-chip">média</span>'
         )
+        owner = f"<td>{_ownership_cell(src)}</td>" if ownership else ""
         rows.append(
             "<tr>"
             f"<td>{title}{chips}</td>"
             f"<td>{brief.esc(nest)}</td>"
             f"<td>{brief.esc(str(src.get('institution_name') or '—'))}</td>"
+            f"{owner}"
             f"<td>{lang}</td>"
             f"<td>{brief.esc(str(src.get('license_note') or '—'))}</td>"
             "</tr>"
         )
+    owner_head = "<th>Propriété</th>" if ownership else ""
     table = (
-        "<table><thead><tr><th>Flux</th><th>Échelle</th><th>Institution</th><th>Langue</th>"
+        f"<table><thead><tr><th>Flux</th><th>Échelle</th><th>Institution</th>{owner_head}<th>Langue</th>"
         "<th>Note de licence</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
     )
+    if ownership:
+        table = (
+            '<p id="propriete">La colonne <strong>Propriété</strong> décrit la structure de propriété '
+            "de chaque source telle que sa référence publique l’énonce (forme juridique, actionnaire), "
+            "avec la date où Vigie l’a lue : un fait vérifiable, jamais un jugement sur la source. "
+            "Les articles de sources qui partagent un même propriétaire comptent pour une seule "
+            "origine dans les événements.</p>" + table
+        )
     cut_rows = []
     for src in deferred:
         cut_rows.append(
@@ -419,14 +477,14 @@ def _body(eyebrow: str, title: str, intro: str, content: str, *, link_index: boo
     )
 
 
-def render_page(slug: str, file: str, title: str, eyebrow: str, intro: str) -> str:
+def render_page(slug: str, file: str, title: str, eyebrow: str, intro: str, *, ownership: bool = False) -> str:
     path = ROOT / file
     # utf-8-sig: a BOM must never turn the file's first `#` heading into a
     # paragraph (ranking.md / RENT.md shipped with one; the BOM is stripped
     # here even if it reappears).
     text = path.read_text(encoding="utf-8-sig")
     if file == "sources.yaml":
-        content = _sources_html()
+        content = _sources_html(ownership=ownership)
     else:
         content = md_to_html(text)
     return _chrome(
@@ -463,13 +521,19 @@ def render_index(rendered: set[str] | None = None) -> str:
     )
 
 
-def emit(out_dir: Path = OUT_DIR) -> dict:
-    """Render every method page + the index. Fail-soft per file."""
+def emit(out_dir: Path = OUT_DIR, *, mode: str | None = None) -> dict:
+    """Render every method page + the index. Fail-soft per file.
+
+    `mode` is the switch of the event surfaces (scripts/surfaces.py): the
+    sources page prints ownership only when it is "preview" or "live" (the
+    event pages count origins by owner); "off" or None renders the pages as
+    they were before the event layer."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    ownership = mode in ("preview", "live")
     rendered: list[str] = []
     for slug, file, title, eyebrow, intro in PAGES:
         try:
-            page = render_page(slug, file, title, eyebrow, intro)
+            page = render_page(slug, file, title, eyebrow, intro, ownership=ownership)
         except (OSError, ValueError, SystemExit) as exc:
             # SystemExit included: a malformed sources.yaml must skip one page,
             # never terminate the render (BaseException would escape every

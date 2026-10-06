@@ -57,28 +57,53 @@ ROBOTS_TEXT = f"User-agent: *\nAllow: /\n\nSitemap: {SITE_URL}/sitemap.xml\n"
 SITEMAP_PATHS = ("/",)
 
 
-def sitemap_xml(directory: Path) -> str:
-    """A small sitemap with the edition's build date as lastmod."""
+# Live (scripts/surfaces.py): the index pages listed with their hreflang
+# alternates (docs/I18N.md section 1). Each language version carries the full
+# set, x-default pointing at the French page.
+LIVE_ALTERNATES = (("fr-CA", "/"), ("en-CA", "/en/"), ("x-default", "/"))
+LIVE_SITEMAP_PATHS = ("/", "/en/", "/le-point.html")
+
+
+def _surfaces_mode(mode: str | None) -> str:
+    import surfaces  # noqa: PLC0415 - lazy: staging stays importable alone
+
+    return surfaces.mode() if mode is None else surfaces.validate(mode, "stage_public mode")
+
+
+def sitemap_xml(directory: Path, mode: str = "off") -> str:
+    """A small sitemap with the edition's build date as lastmod.
+
+    Off and preview: the front door, the record pages and the method pages,
+    byte-identical in both (a preview is never sitemapped). Live: the French
+    and English front doors with their xhtml:link hreflang alternates, and the
+    full brief at /le-point.html."""
     try:
         lastmod = datetime.fromtimestamp(
             (directory / "index.html").stat().st_mtime, tz=timezone.utc
         ).date().isoformat()
     except OSError:
         lastmod = None
+    live = mode == "live"
     optional = tuple(f"/{name}" for name in OPTIONAL_PAGES if (directory / name).is_file())
     methode_pages = (
         tuple(f"/methode/{slug}.html" for slug in METHOD_PAGES
               if (directory / "methode" / f"{slug}.html").is_file())
     )
-    paths = (*SITEMAP_PATHS, *optional, *methode_pages)
+    paths = ((*LIVE_SITEMAP_PATHS,) if live else SITEMAP_PATHS) + (*optional, *methode_pages)
     parts = []
     for path in paths:
         loc = f"{SITE_URL}/" if path == "/" else f"{SITE_URL}{path}"
         stamp = f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
-        parts.append(f"<url><loc>{loc}</loc>{stamp}</url>")
+        links = ""
+        if live and path in ("/", "/en/"):
+            links = "".join(f'<xhtml:link rel="alternate" hreflang="{lang}" href="{SITE_URL}{href}"/>'
+                            for lang, href in LIVE_ALTERNATES)
+        parts.append(f"<url><loc>{loc}</loc>{stamp}{links}</url>")
+    xmlns = ('xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml"'
+             if live else 'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"')
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        f'<urlset {xmlns}>'
         + "".join(parts)
         + "</urlset>\n"
     )
@@ -105,8 +130,116 @@ class PageLinks(HTMLParser):
                 self.links.append((attr, values[attr]))
 
 
-def validate_site(directory: Path) -> list[str]:
-    """Check local navigation and anchors without making network requests."""
+class PageHead(HTMLParser):
+    """What the release gate reads in a page head: robots, canonical,
+    hreflang alternates, the event-surface marker."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.robots: list[str] = []
+        self.canonical: list[str] = []
+        self.alternates: list[tuple[str, str]] = []
+        self.event_view = ""
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        values = {k: (v or "") for k, v in attrs}
+        if tag == "meta" and values.get("name", "").lower() == "robots":
+            self.robots.append(values.get("content", "").lower())
+        if tag == "meta" and values.get("name") == "vigie-view":
+            self.event_view = values.get("content", "")
+        if tag == "link" and values.get("rel", "").lower() == "canonical":
+            self.canonical.append(values.get("href", ""))
+        if tag == "link" and values.get("rel", "").lower() == "alternate" and values.get("hreflang"):
+            self.alternates.append((values["hreflang"], values.get("href", "")))
+
+
+# Event surfaces (scripts/surfaces.py): what each mode must ship.
+SURFACE_REQUIRED = {
+    "preview": ("evenements.html", "en/evenements.html", "evenements/latest.json", "qualite.json"),
+    "live": ("index.html", "en/index.html", "evenements.html", "en/evenements.html",
+             "evenements/latest.json", "qualite.json", "le-point.html"),
+}
+FRONT_DOORS = {"preview": ("evenements.html", "en/evenements.html"), "live": ("index.html", "en/index.html")}
+
+
+def _head(path: Path) -> PageHead:
+    head = PageHead()
+    head.feed(path.read_text(encoding="utf-8"))
+    head.close()
+    return head
+
+
+def surface_errors(directory: Path, mode: str) -> list[str]:
+    """The release gate of the event surfaces in `mode` ("preview" | "live";
+    "off" checks nothing new). Every problem is a diagnosed refusal:
+
+      required   the artefacts of the mode exist (a fault of the event emitter
+                 blocks the release, like a missing registre page);
+      hreflang   every hreflang alternate of every page names a staged file;
+      robots     preview: every event page says noindex, and / is still the
+                 brief; live: no event page says noindex, / is the events front
+                 door, it links the full river, whose canonical is its own URL;
+      budget     each front door is at most surfaces.FRONT_DOOR_BUDGET bytes;
+      sitemap    live: every <loc> and alternate of sitemap.xml is staged."""
+    import surfaces  # noqa: PLC0415
+
+    if mode not in SURFACE_REQUIRED:
+        return []
+    base = Path(directory)
+    errors: list[str] = []
+    for rel in SURFACE_REQUIRED[mode]:
+        if not (base / rel).is_file():
+            errors.append(f"{rel}: required event-surface artefact missing (surfaces {mode})")
+    for path in sorted(base.rglob("*.html")):
+        rel = path.relative_to(base).as_posix()
+        head = _head(path)
+        for lang, href in head.alternates:
+            target = surfaces.path_of_url(href)
+            if target is None:
+                errors.append(f"{rel}: hreflang {lang} points outside the site: {href}")
+            elif not (base / target).is_file():
+                errors.append(f"{rel}: hreflang {lang} target missing: {href}")
+        is_event = bool(head.event_view) or (rel in surfaces.EVENT_FILES
+                                             or any(rel.startswith(d) for d in surfaces.EVENT_DIRS))
+        if not is_event:
+            continue
+        noindex = any("noindex" in r for r in head.robots)
+        if mode == "preview" and not noindex:
+            errors.append(f"{rel}: a preview event page must carry noindex")
+        if mode == "live" and noindex:
+            errors.append(f"{rel}: a live event page must not carry noindex")
+    for rel in FRONT_DOORS[mode]:
+        path = base / rel
+        if path.is_file() and path.stat().st_size > surfaces.FRONT_DOOR_BUDGET:
+            errors.append(f"{rel}: front door is {path.stat().st_size} bytes, over the "
+                          f"{surfaces.FRONT_DOOR_BUDGET} byte budget")
+    index = base / "index.html"
+    if mode == "preview" and index.is_file() and _head(index).event_view:
+        errors.append("index.html: in preview the front door at / stays the brief")
+    if mode == "live":
+        if index.is_file():
+            if _head(index).event_view != "current":
+                errors.append("index.html: in live the front door at / must be the events front door")
+            if f'href="{surfaces.RIVER_PATH}"' not in index.read_text(encoding="utf-8"):
+                errors.append(f"index.html: the front door must link the full river {surfaces.RIVER_PATH}")
+        point = base / "le-point.html"
+        if point.is_file():
+            want = f"{SITE_URL}{surfaces.RIVER_PATH}"
+            if _head(point).canonical != [want]:
+                errors.append(f"le-point.html: canonical must be {want} (the brief moved off /)")
+        sitemap = base / "sitemap.xml"
+        if sitemap.is_file():
+            text = sitemap.read_text(encoding="utf-8")
+            for url in sorted(set(re.findall(r"<loc>([^<]+)</loc>", text)) | set(re.findall(r'href="([^"]+)"', text))):
+                target = surfaces.path_of_url(html.unescape(url))
+                if target is None or not (base / target).is_file():
+                    errors.append(f"sitemap.xml: {url} is not staged")
+    return errors
+
+
+def validate_site(directory: Path, mode: str = "off") -> list[str]:
+    """Check local navigation and anchors without making network requests;
+    with an event-surface `mode` other than "off", also `surface_errors`."""
     base = directory.resolve()
     pages: dict[Path, PageLinks] = {}
     errors: list[str] = []
@@ -140,6 +273,8 @@ def validate_site(directory: Path) -> list[str]:
                 errors.append(f"{path.relative_to(base)}: missing local target {raw}")
             elif link.fragment and target in pages and unquote(link.fragment) not in pages[target].ids:
                 errors.append(f"{path.relative_to(base)}: missing anchor {raw}")
+    if mode != "off":
+        errors.extend(surface_errors(base, mode))
     return sorted(set(errors))
 
 
@@ -210,6 +345,22 @@ def takedown_violations(directory: Path, root: Path = ROOT) -> list[str]:
                 problems.append(f"{rel}: still references a withdrawn {hit['kind']} (takedown {hit['id']})")
                 break
     return problems
+
+
+def staged_vercel_config(data: bytes, mode: str) -> bytes:
+    """The deploy config (public/vercel.json, kept in canonical JSON: indent 2,
+    LF, a test holds it) as staged in `mode`. Off: the event-surface rules
+    (surfaces.EVENT_HEADER_SOURCES) are left out, so the staged config is the
+    one from before the wiring, byte for byte; no other rule is touched, so no
+    existing header is weakened. Preview and live: as committed."""
+    import surfaces  # noqa: PLC0415
+
+    if mode != "off":
+        return data
+    doc = json.loads(data.decode("utf-8"))
+    doc["headers"] = [rule for rule in doc.get("headers") or []
+                      if not (isinstance(rule, dict) and rule.get("source") in surfaces.EVENT_HEADER_SOURCES)]
+    return (json.dumps(doc, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
 def _safe_remove(path: Path, parent: Path) -> None:
@@ -343,7 +494,15 @@ def _sweep_stale_siblings(parent: Path, output_name: str) -> None:
         return
 
 
-def stage(root: Path = ROOT, output: Path = OUT) -> dict:
+def stage(root: Path = ROOT, output: Path = OUT, *, mode: str | None = None) -> dict:
+    """Stage and validate a release. `mode` is the switch of the event
+    surfaces (scripts/surfaces.py; None reads it): "off" leaves every event
+    surface file out of the release, so a stale preview page in public/ can
+    never ship; "preview" leaves out the live-only files (le-point.html,
+    en/index.html); "live" stages everything."""
+    import surfaces  # noqa: PLC0415
+
+    current = _surfaces_mode(mode)
     root = root.resolve()
     public = root / "public"
     if public.is_symlink():
@@ -361,6 +520,7 @@ def stage(root: Path = ROOT, output: Path = OUT) -> dict:
         if not source.is_file() or source.is_symlink():
             raise ValueError(f"Missing or unsafe method file: {name}")
     assets: list[Path] = []
+    left_out = 0
     for source in sorted(public.rglob("*")):
         relative = source.relative_to(public)
         if source.is_symlink() or not source.resolve().is_relative_to(public.resolve()):
@@ -372,7 +532,12 @@ def stage(root: Path = ROOT, output: Path = OUT) -> dict:
         if source.is_file():
             if source.suffix.lower() not in ASSET_EXTENSIONS:
                 raise ValueError(f"Unsupported public asset: {relative}")
+            if not surfaces.staged(relative.as_posix(), current):
+                left_out += 1
+                continue
             assets.append(source)
+    if left_out:
+        print(f"stage: {left_out} event-surface file(s) left out of the release (surfaces {current})")
     output.parent.mkdir(parents=True, exist_ok=True)
     _sweep_stale_siblings(output.parent, output.name)
     temporary = Path(tempfile.mkdtemp(prefix=".vigie-stage-", dir=output.parent))
@@ -381,6 +546,9 @@ def stage(root: Path = ROOT, output: Path = OUT) -> dict:
         for source in assets:
             target = temporary / source.relative_to(public)
             target.parent.mkdir(parents=True, exist_ok=True)
+            if source.relative_to(public).as_posix() == "vercel.json" and current == "off":
+                target.write_bytes(staged_vercel_config(source.read_bytes(), current))
+                continue
             shutil.copy2(source, target)
         for name in METHODS:
             shutil.copy2(root / name, temporary / name)
@@ -401,8 +569,8 @@ def stage(root: Path = ROOT, output: Path = OUT) -> dict:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
         (temporary / "robots.txt").write_text(ROBOTS_TEXT, encoding="utf-8")
-        (temporary / "sitemap.xml").write_text(sitemap_xml(temporary), encoding="utf-8")
-        errors = validate_site(temporary)
+        (temporary / "sitemap.xml").write_text(sitemap_xml(temporary, current), encoding="utf-8")
+        errors = validate_site(temporary, current)
         if errors:
             raise ValueError("Invalid static site:\n" + "\n".join(errors))
         withdrawn = takedown_violations(temporary, root)

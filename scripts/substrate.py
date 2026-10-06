@@ -29,6 +29,12 @@ count, institution list, origin group and anchor derived from it. When the event
 data is absent or not built, delta-v2 is omitted (and a stale one removed) with a
 printed diagnosis, and every other artefact is byte-identical to a build without
 the event layer.
+
+The render passes the switch of the event surfaces (scripts/surfaces.py,
+`events_mode`): "off" omits delta-v2 even when the event stores exist (the
+shadow builder runs every full edition) and keeps llms.txt and delta-v1 as they
+were; "preview" writes delta-v2 without listing or announcing it; "live"
+publishes it (llms.txt lists the event surfaces, delta-v1 is marked deprecated).
 """
 from __future__ import annotations
 
@@ -741,11 +747,21 @@ def llms_events_section(state: dict) -> str:
 """
 
 
-def render_llms_txt(state: dict, status: dict, *, events: bool = False) -> str:
+def render_llms_txt(state: dict, status: dict, *, events: bool = False, front_door: bool = False) -> str:
+    """llms.txt. `events`: list the event surfaces (delta-v2 published);
+    `front_door`: the events page is the front door at / (surfaces "live"),
+    so the brief is described at its own address, /le-point.html."""
     seals = state.get("seals") or []
     last = seals[-1] if seals else {}
     edition = last.get("edition") or status.get("at") or ""
     events_block = llms_events_section(state) if events else ""
+    if front_door:
+        twin = f"the full brief ({SITE_URL}/le-point.html) as plain Markdown"
+        front = (f"- [Front door (HTML)]({SITE_URL}/): the events front door (English: {SITE_URL}/en/); "
+                 f"the full brief is at {SITE_URL}/le-point.html.")
+    else:
+        twin = "the front door as plain Markdown"
+        front = f"- [Front door (HTML)]({SITE_URL}/): the resident brief."
     return f"""# Vigie
 
 > Vigie is a free, non-commercial lookout for Québec City (French-first). It aggregates a finite, published list of sources, never rewrites them, groups articles into dossiers where several institutions speak, relays the City's official roadworks feed, and keeps a sealed register (sha256 chain) of every edition: what each followed institution published, and what Vigie's own collection missed. Vigie never asserts that an institution was silent — a dossier needs a named subject and two institutions, so absence from dossiers is a property of Vigie's clustering, not of the institution. Judgment stays with the reader.
@@ -756,7 +772,7 @@ Current edition: {edition or "unknown"}. Rules for agents: cite the original pub
 
 ## Edition
 
-- [Le point (Markdown)]({SITE_URL}/index.html.md): the front door as plain Markdown — stories with publisher, author and URL (titles only, no excerpts), dossiers with their voices, official roadworks, the voice register.
+- [Le point (Markdown)]({SITE_URL}/index.html.md): {twin} — stories with publisher, author and URL (titles only, no excerpts), dossiers with their voices, official roadworks, the voice register.
 - [Delta]({SITE_URL}/delta/latest.json): machine-readable edition delta (delta-v1.1, additive over delta-v1) — new / developed / quiet dossiers with items, per-institution state with collected item counts, roadworks diff, cursor = chain root.
 - [Dossiers complets (HTML)]({SITE_URL}/dossiers.html): one record page per dossier of the current edition — every voice with every verbatim headline, the collection timeline, and the institutions absent from that dossier.
 
@@ -782,7 +798,7 @@ Current edition: {edition or "unknown"}. Rules for agents: cite the original pub
 
 ## Optional
 
-- [Front door (HTML)]({SITE_URL}/): the resident brief.
+{front}
 - [Avant de partir]({SITE_URL}/partir.html): the departure screen — declared obstructions, followed corridors (on-device), what changed.
 - [La mémoire]({SITE_URL}/memoire.html): every sealed edition, readable — dossiers, voices, published items and collection gaps, edition by edition.
 - [Registre (HTML)]({SITE_URL}/registre.html): the human view of the register.
@@ -801,14 +817,32 @@ _AUTO = object()
 def emit(ranked: list[dict], issues: list[dict], ledger: dict | None, roadworks: dict | None,
          state: dict, generated_at: str, *, run: dict | None = None,
          out_llms: Path = OUT_LLMS, out_md: Path = OUT_MD, out_delta: Path = OUT_DELTA,
-         out_delta_v2: Path = OUT_DELTA_V2, events_input: dict | None | object = _AUTO) -> None:
+         out_delta_v2: Path = OUT_DELTA_V2, events_input: dict | None | object = _AUTO,
+         events_mode: str | None = None) -> None:
     """Write the machine files. `events_input` is {"view", "texts", "reg"} (tests),
-    None (no event layer), or left alone to read the stored files."""
+    None (no event layer), or left alone to read the stored files.
+
+    `events_mode` is the switch of the event surfaces (scripts/surfaces.py),
+    as the render read it:
+      "off"      delta-v2 is not written (a stale one is removed), llms.txt
+                 lists no event page and delta-v1 carries no deprecation: the
+                 machine files are what they were before the event layer, even
+                 when the shadow event stores exist;
+      "preview"  delta-v2 is written (reachable), but llms.txt does not list
+                 the event surfaces and delta-v1 is not marked deprecated: a
+                 preview is not a publication;
+      "live"     delta-v2 is published: llms.txt lists the event surfaces
+                 (the front door at / is the events page, the full brief is at
+                 /le-point.html) and delta-v1 carries its deprecation notice;
+      None       no switch (direct use, tests): delta-v2 whenever its inputs
+                 are built, as before the wiring."""
     now = brief.parse_date(generated_at) or datetime.now(timezone.utc)
     run = brief.latest_run() if run is None else run
     status = brief.collection_status(run, now)
     rows = story_rows(ranked, now)
-    if events_input is _AUTO:
+    if events_mode is not None and events_mode not in ("preview", "live"):
+        events_input, why = None, f"event surfaces {str(events_mode)[:20]} (scripts/surfaces.py)"
+    elif events_input is _AUTO:
         try:
             events_input, why = load_events_input()
         except Exception as exc:  # noqa: BLE001 - fail-soft: delta-v2 omitted, everything else unchanged
@@ -821,12 +855,16 @@ def emit(ranked: list[dict], issues: list[dict], ledger: dict | None, roadworks:
             v2 = build_delta_v2(events_input["view"], events_input["texts"], events_input["reg"], state, status)
         except Exception as exc:  # noqa: BLE001 - fail-soft: delta-v2 omitted, everything else unchanged
             why = f"build failed ({type(exc).__name__}: {exc})"
+    # published = listed for agents and announced as delta-v1's successor:
+    # never in preview (reachable is not published), always without a switch
+    published = v2 is not None and events_mode in (None, "live")
     for path in (out_llms, out_md, out_delta):
         path.parent.mkdir(parents=True, exist_ok=True)
-    store_io.write_text_atomic(out_llms, render_llms_txt(state, status, events=v2 is not None))
+    store_io.write_text_atomic(out_llms, render_llms_txt(state, status, events=published,
+                                                         front_door=events_mode == "live"))
     store_io.write_text_atomic(out_md, render_markdown(rows, issues, ledger, roadworks, state, status))
     delta = build_delta(issues, ledger, roadworks, state, status)
-    if v2 is not None:
+    if published:
         # delta-v1 is marked deprecated only when its successor is published.
         delta["deprecation"] = v1_deprecation(state)
     store_io.write_json_atomic(out_delta, delta)

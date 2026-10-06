@@ -13,6 +13,14 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+# The event-surface switch (scripts/surfaces.py) follows its committed
+# constant in the suite: a developer's local VIGIE_EVENTS_SURFACES must never
+# change what the existing tests stage. Tests of other modes pass them
+# explicitly.
+import os  # noqa: E402
+
+os.environ.pop("VIGIE_EVENTS_SURFACES", None)
+
 # Hermetic robots.txt: article-page and image fetches read the host's
 # robots.txt first, and no test may touch the network for it. By default every
 # host answers 404 (absent = allowed), so fetch tests see only their own mocked

@@ -62,7 +62,11 @@ EventView (one event, from docs/EVENTS.md plus the render fields)::
   words          [{"k": str, "label": str, "forms": [str], "alias": bool}]
                                            shared words for the highlight panel
   silence        [{"institution_name": str, "state": "no_linked_item" |
-                   "collection_gap" | "not_established"}]
+                   "collection_gap" | "not_established" | "withdrawn"}]
+                                           "withdrawn": the voice's article here
+                                           was withdrawn at the publisher's
+                                           request (R10); worded as such, never
+                                           as "no linked article"
   neighbours     [{"member": MemberView, "reason": "shared_word" |
                    "same_thread" | "outside_window", "why": {fr,en}|None}]
   ledger         {"changes": [{"at", "institution_name", "before", "after"}]}
@@ -116,18 +120,30 @@ EditionView (the front door)::
                         "declared" count measured against the cards shown)}]
   seal                {"seq": int, "root": hex} | None   a PUBLISHED seal
   official            [{"institution_name", "ownership_class", "published_at",
-                        "title", "url", "language"}]
-                      declared items linked to no event shown above
+                        "title", "url", "language", "older": bool}]
+                      declared items linked to no event shown above, in the
+                      published order (inside the freshness window first);
+                      `older` marks a release outside the window that only
+                      completes a list the window could not fill
+  official_fresh, official_older   int | None   how many of official_total
+                      are dated inside / outside the window
+  official_window_hours  int        the freshness window (the event window)
+  river               str | absent           site path of the full river (live:
+                                             "/le-point.html"), one link under
+                                             the edition head
+  roads_id            str | absent           id of the roadworks block (live:
+                                             "travaux", linked as /#travaux)
   suggestions         [str]                  examples for the on-device search
   events_total        int | None             events of the whole collection,
                                              when more than the cards shown
   official_total      int | None             declared items of the collection
                                              linked to no card (prints the cap)
   official_groups     {"city": int, "province": int, "other": int} | None
-                                             how many of official_total the
-                                             method places in Québec City, in
-                                             Quebec, elsewhere: the real values
-                                             of the order the cap line states
+                                             how many of the releases inside
+                                             the window the method places in
+                                             Québec City, in Quebec, elsewhere:
+                                             the real values of the order the
+                                             cap line states
   status              "not_built" | absent   the builder did not establish this
                                              collection: never printed as "no event"
   ranking             "fallback" | absent    the published ranking rule could not
@@ -211,7 +227,7 @@ ORIGINS = ("official", "wire", "press_release", "own_reporting", "unknown")
 OWNERSHIPS = ("public_broadcaster", "quebecor", "cooperative", "independent", "government")
 ACTIVITIES = ("new", "developed", "quiet")
 ANCHOR_TYPES = ("official_item", "roadwork", "consultation", "outage", "edition_seal")
-SILENCE_STATES = ("no_linked_item", "collection_gap", "not_established")
+SILENCE_STATES = ("no_linked_item", "collection_gap", "not_established", "withdrawn")
 NEIGHBOUR_REASONS = ("shared_word", "same_thread", "outside_window")
 ROSTER_STATES = ("in_events", "outside", "declared", "no_items", "collection_gap", "not_established")
 PERIODS = ("morning", "afternoon", "evening", "night")
@@ -1168,6 +1184,22 @@ def origins_panel(ev: dict, lang: str) -> str:
     return _panel(t("orig.h", lang), body, hid="op-h")
 
 
+def place_name(code: object, lang: str) -> str:
+    """Vigie's label of a place code (docs/I18N.md table B, scopes included:
+    "elsewhere" is "Hors Québec", "unplaced" is "Lieu non établi"), in `lang`.
+    A code the vocabulary does not know is printed as the code itself, never
+    dropped and never guessed."""
+    text = str(code or "")
+    try:
+        import vocabulaire  # noqa: PLC0415 - lazy: the kit renders without it
+
+        if vocabulaire.place_kind(text) is not None:
+            return vocabulaire.place_label(text, lang) or text
+    except Exception:  # noqa: BLE001 - an unreadable vocabulary leaves the code
+        pass
+    return text
+
+
 def _fact_value(slot: dict, value: object, lang: str) -> str:
     kind, unit = str(slot.get("kind") or ""), str(slot.get("unit") or "")
     if kind == "count":
@@ -1176,6 +1208,11 @@ def _fact_value(slot: dict, value: object, lang: str) -> str:
         return i18n.fmt_percent_bp(value, lang) if unit == "percent_bp" else i18n.fmt_money(value, lang)
     if kind == "date":
         return i18n.fmt_ymd(value, lang, short=False) or str(value)
+    if kind == "place":
+        # place facts are vocabulary codes (docs/EVENTS.md 17.5): their label
+        return place_name(value, lang) if isinstance(value, str) else loc(value, lang)
+    if isinstance(value, dict):
+        return loc(value, lang)
     return str(value)
 
 
@@ -1259,11 +1296,15 @@ def why_panel(ev: dict, lang: str) -> str:
 
 def silence_panel(ev: dict, lang: str) -> str:
     """Institutions followed with no linked article in this collection: a
-    measured fact of our feeds, never an accusation, never a proof of silence."""
+    measured fact of our feeds, never an accusation, never a proof of silence.
+
+    A state the kit does not know is "not established", never "no linked
+    article" (that would assert an absence nobody measured); "withdrawn" says
+    the publisher asked for the article's removal (R10)."""
     rows = []
     for s in _dicts(ev.get("silence")):
-        state = str(s.get("state") or "no_linked_item")
-        state = state if state in SILENCE_STATES else "no_linked_item"
+        state = str(s.get("state") or "")
+        state = state if state in SILENCE_STATES else "not_established"
         rows.append(f'<li><b>{esc(loc(s.get("institution_name"), lang))}</b><span>{esc(t("sil." + state, lang))}</span></li>')
     if not rows:
         return ""
@@ -1563,7 +1604,7 @@ def _rw_dates(row: dict, lang: str) -> str:
     return text
 
 
-def roadworks_block(rw: dict | None, lang: str) -> str:
+def roadworks_block(rw: dict | None, lang: str, *, anchor: str = "") -> str:
     """"Before you leave": the City's declared obstructions, as published.
 
     Its own view model (see the module docstring): the official lane is
@@ -1574,12 +1615,17 @@ def roadworks_block(rw: dict | None, lang: str) -> str:
 
     R10: a view marked `withdrawn` (the lane's source is withdrawn, or the
     takedown register could not be read) prints only that fact: no
-    declaration, no count, no credit, no outbound link."""
+    declaration, no count, no credit, no outbound link.
+
+    `anchor` gives the section an id (the live front door: "travaux", the
+    anchor the other surfaces link as /#travaux)."""
     rw = rw if isinstance(rw, dict) else {}
+    anchor = _ID_UNSAFE.sub("", str(anchor or ""))[:80]
+    ident = f' id="{esc(anchor)}"' if anchor else ""
     withdrawn = str(rw.get("withdrawn") or "")
     if withdrawn:
         key = "roads.withheld" if withdrawn == "register_unreadable" else "roads.withdrawn"
-        return ('<section class="card panel roads" aria-labelledby="road-h" data-roadworks data-rw-withdrawn>'
+        return (f'<section class="card panel roads"{ident} aria-labelledby="road-h" data-roadworks data-rw-withdrawn>'
                 f'<h2 class="h-panel" id="road-h">{esc(t("roads.h", lang))}</h2>'
                 f'<p class="small m0">{esc(t(key, lang))}</p></section>')
     rows = _dicts(rw.get("rows"))
@@ -1649,7 +1695,7 @@ def roadworks_block(rw: dict | None, lang: str) -> str:
         links.append(f'<a class="btn" href="{esc(map_url)}" target="_blank" rel="noopener noreferrer" lang="fr">{esc(t("roads.map", lang))}</a>')
     attribution = str(rw.get("attribution") or "") or t("roads.attr", lang)
     return (
-        '<section class="card panel roads" aria-labelledby="road-h" data-roadworks>'
+        f'<section class="card panel roads"{ident} aria-labelledby="road-h" data-roadworks>'
         f'<h2 class="h-panel" id="road-h">{esc(t("roads.h", lang))}</h2>'
         f'<p class="small muted">{esc(t("roads.sub", lang, inst=inst))}</p>'
         f'<p class="small rw-when"><b>{time_html}</b> · {counts}</p>'
@@ -1659,14 +1705,29 @@ def roadworks_block(rw: dict | None, lang: str) -> str:
     )
 
 
+def _count(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
 def official_block(items: list[dict] | None, lang: str, total: int | None = None,
-                   groups: dict | None = None) -> str:
-    """Official releases, as published, none linked to an event above. `total`
-    (all such releases of the collection) prints the cap when more exist, with
-    the order the builder applied (geography first, then date: never "the most
-    recent", which it is not) and, when `groups` gives them, the real counts
-    per geography behind that order."""
+                   groups: dict | None = None, *, fresh: int | None = None, older: int | None = None,
+                   window_hours: int = EVENT_SPAN_HOURS) -> str:
+    """Official releases, as published, none linked to an event above, in the
+    order of the published rule (ranking.md, "Déclaré par les autorités"):
+    first the releases dated inside the edition's freshness window
+    (`window_hours`, the event window), by geography (Québec City, Quebec,
+    everything else) then newest first; a release outside the window (or with
+    no established date) is listed only when fewer than the cap remain inside
+    it: each such row (`older: True`) carries an "outside the window" chip and
+    the block says in words that older releases complete the list.
+
+    `total` (every such release of the collection) prints the cap when more
+    exist, with that order (never "the most recent", which it is not) and,
+    when `groups` ({city, province, other}, counted over the releases inside
+    the window), `fresh` and `older` give them, the real counts behind it."""
     rows = []
+    n_older = 0
+    h = _int(window_hours, EVENT_SPAN_HOURS) or EVENT_SPAN_HOURS
     for o in _dicts(items):
         if not o.get("title"):
             continue
@@ -1674,20 +1735,30 @@ def official_block(items: list[dict] | None, lang: str, total: int | None = None
         color = OWN_COLOR.get(str(o.get("ownership_class") or "government"), "c-gov")
         inst = loc(o.get("institution_name"), lang)
         link = _link(o.get("url"), str(o.get("title")), lang_code=code) or f'<span lang="{esc(code)}">{esc(o.get("title"))}</span>'
+        aged = ""
+        if o.get("older") is True:
+            n_older += 1
+            aged = chip(t("off.older", lang, h=i18n.fmt_int(h, lang)), "note")
         rows.append(
             f'<li><span class="m"><span class="chip own {color}"><span class="sw" aria-hidden="true"></span>{esc(inst)}</span>'
-            f'{esc(i18n.fmt_day(o.get("published_at"), lang))}</span>{link}</li>'
+            f'{esc(i18n.fmt_day(o.get("published_at"), lang))}{aged}</span>{link}</li>'
         )
     body = (f'<ul class="off-list mt-s">{"".join(rows)}</ul>' if rows
             else f'<p class="small m0 mt-s">{esc(t("off.empty", lang))}</p>')
     sub = f'<p class="small muted">{esc(t("off.sub", lang))}</p>' if rows else ""
+    if n_older:
+        fill = tn("off.fill", n_older, lang, h=i18n.fmt_int(h, lang))
+        body += f'<p class="small muted mt-s" data-off-fill>{esc(fill)}</p>'
     if rows and _int(total) > len(rows):
-        cap = tn("off.cap", len(rows), lang, total=i18n.fmt_int(_int(total), lang))
+        cap = tn("off.cap", len(rows), lang, total=i18n.fmt_int(_int(total), lang), h=i18n.fmt_int(h, lang))
         g = groups if isinstance(groups, dict) else {}
-        if all(isinstance(g.get(k), int) and not isinstance(g.get(k), bool) for k in ("city", "province", "other")):
-            cap += " " + t("off.groups", lang, total=i18n.fmt_int(_int(total), lang),
-                           city=i18n.fmt_int(g["city"], lang), province=i18n.fmt_int(g["province"], lang),
-                           other=i18n.fmt_int(g["other"], lang))
+        counts = [_count(g.get(k)) for k in ("city", "province", "other")] + [_count(fresh), _count(older)]
+        if all(c is not None for c in counts):
+            city, province, other, n_fresh, n_old = counts
+            cap += " " + t("off.groups", lang, total=i18n.fmt_int(_int(total), lang), h=i18n.fmt_int(h, lang),
+                           fresh=i18n.fmt_int(n_fresh, lang), older=i18n.fmt_int(n_old, lang),
+                           city=i18n.fmt_int(city, lang), province=i18n.fmt_int(province, lang),
+                           other=i18n.fmt_int(other, lang))
         body += f'<p class="small muted mt-s" data-off-cap>{esc(cap)}</p>'
     return (f'<section class="card panel" aria-labelledby="off-h"><h2 class="h-panel" id="off-h">{esc(t("off.h", lang))}</h2>'
             f'{sub}{body}</section>')
@@ -1792,12 +1863,17 @@ def edition_page(ed: dict, lang: str, *, roadworks: dict | None = None, fr_path:
              institutions=tn("n.institutions", followed, lang), tm=i18n.fmt_time(clock, lang))
     rules = "".join(f"<li><b>{esc(t(f'rules.{i}.h', lang))}</b>{esc(t(f'rules.{i}.p', lang))}</li>" for i in (1, 2, 3))
     pledge = "".join(chip(t(f"pledge.{i}", lang)) for i in (1, 2, 3))
+    # the live front door links the former brief as the edition's full river
+    river_path = str(ed.get("river") or "")
+    river = ""
+    if river_path.startswith("/") and not river_path.startswith("//"):
+        river = f'<p class="mt-s" data-river>{internal_link(lang, river_path, t("ed.river", lang), cls="btn")}</p>'
     head = (
         '<section class="edition" aria-labelledby="h1">'
         f'<p class="eyebrow">{esc(eyebrow)}</p><h1 id="h1" tabindex="-1">{esc(t("ed.h1", lang))}</h1>'
         f'<p class="lede">{esc(lede)}</p>'
         f'<details class="disc rules-d" open data-rules><summary>{esc(t("rules.sum", lang))}</summary><ul class="rules mt-xs">{rules}</ul></details>'
-        f'<div class="pledge">{pledge}</div></section>'
+        f'<div class="pledge">{pledge}</div>{river}</section>'
     )
     if events:
         cards = "".join(event_card(e, lang) for e in events)
@@ -1808,8 +1884,8 @@ def edition_page(ed: dict, lang: str, *, roadworks: dict | None = None, fr_path:
         cards = f'<p class="card panel">{esc(t("ed.empty", lang))}</p>'
     suggestions = [str(s) for s in (ed.get("suggestions") if isinstance(ed.get("suggestions"), (list, tuple)) else [])][:6]
     aside = (f'<aside class="aside stack" aria-label="{esc(t("roads.h", lang))}">'
-             f'{mine_panel(lang, suggestions)}{roadworks_block(roadworks, lang)}'
-             f'{official_block(ed.get("official"), lang, ed.get("official_total"), ed.get("official_groups"))}</aside>')
+             f'{mine_panel(lang, suggestions)}{roadworks_block(roadworks, lang, anchor=str(ed.get("roads_id") or ""))}'
+             f'{official_block(ed.get("official"), lang, ed.get("official_total"), ed.get("official_groups"), fresh=ed.get("official_fresh"), older=ed.get("official_older"), window_hours=_int(ed.get("official_window_hours"), EVENT_SPAN_HOURS))}</aside>')
     main = (f'{head}<div class="grid"><div class="stack" id="cards">{cards}</div>{aside}</div>{end_card(ed, lang)}')
     return document(lang=lang, fr_path=fr_path, title=t("ed.h1", lang), description=t("meta.desc.home", lang),
                     main=main, robots=robots, home=home, footer_note=footer_note, view="current")

@@ -2716,6 +2716,11 @@ def main() -> None:
     import recits
     import registre
     import substrate
+    import surfaces
+
+    # The three-position switch of the event surfaces (scripts/surfaces.py):
+    # read once, so every view of this render agrees on what ships.
+    mode = surfaces.mode()
 
     # Each emitter is independently fail-soft: one fault is printed and the
     # others still run, so a registre fault can never leave a fresh brief
@@ -2740,17 +2745,17 @@ def main() -> None:
         OUT_HTML.parent / "explorer.html",
         render_html(ranked, now.isoformat(), issues, clock, clustered_at=store_clustered_at),
     )
-    store_io.write_text_atomic(
-        OUT_HTML,
+    brief_target = write_brief(
         resident_brief.render_brief(ranked, now.isoformat(), issues, ledger=ledger,
                                     roadworks=roadworks, anomalies=anomalies, edges=edges,
                                     civic=civic, register=register),
+        mode, OUT_HTML.parent,
     )
     near = sum(1 for c in ranked if section_for(c) == "near")
     prov = sum(1 for c in ranked if section_for(c) == "province")
     linked = sum(1 for c in ranked if section_for(c) == "linked")
     print(f"ranked {len(ranked)} -> {OUT_JSON}")
-    print(f"lookout -> {OUT_HTML}")
+    print(f"lookout -> {brief_target}")
     print(f"nests: near={near} province={prov} linked={linked}")
     print(f"display: province/linked cap={30} (full set in ranked JSON)")
     booth_n = sum(1 for c in ranked if section_for(c) == "near" and is_booth_or_brief(c))
@@ -2774,11 +2779,62 @@ def main() -> None:
     # Idempotent on the collection clock, so the hourly roads-only re-render
     # never mints a new edition seal.
     _emit("memoire", lambda: memoire.emit(state, issues))
-    _emit("substrate", lambda: substrate.emit(ranked, issues, ledger, roadworks, state, now.isoformat()))
+    _emit("substrate", lambda: substrate.emit(ranked, issues, ledger, roadworks, state, now.isoformat(),
+                                              events_mode=mode))
     _emit("recits", lambda: recits.emit(issues, ranked, ledger, roadworks, edges))
-    _emit("methode", method_site.emit)
+    _emit("methode", lambda: method_site.emit(mode=mode))
     _emit("depart", lambda: depart.emit(roadworks, issues, ledger, state, now.isoformat()))
     _emit("affiche", lambda: affiche.emit(ranked, issues, roadworks, state, now.isoformat()))
+    # The event surfaces, last: they read this edition's seal (registre) and
+    # link the memoire pages. Off: nothing at all. In the hourly roads-only
+    # lane too (render-only), so the roadworks block and R10 stay fresh
+    # between editions; it reads the stored event view and never runs the
+    # event builder (events.py is a full-run stage).
+    if mode != "off":
+        _emit("evenements", lambda: emit_event_surfaces(mode))
+
+
+def write_brief(html: str, mode: str, public_dir: Path) -> Path:
+    """Write the brief where `mode` serves it: index.html, or /le-point.html
+    in live mode (its canonical and og:url say so; the release gate refuses
+    another canonical there). In live mode the previous front door files are
+    removed first, so an event emitter that faults leaves no stale page at /
+    and the release is refused, diagnosed (index.html missing), instead of
+    serving an old one."""
+    import surfaces
+
+    target = surfaces.brief_path(public_dir, mode)
+    if mode == "live":
+        html, problems = surfaces.relocate_brief(html)
+        for problem in problems:
+            print(f"brief: {problem}")
+        for stale in (public_dir / "index.html", public_dir / "en" / "index.html"):
+            try:
+                stale.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                print(f"brief: could not remove the previous front door {stale.name} ({type(exc).__name__})")
+    store_io.write_text_atomic(target, html)
+    return target
+
+
+def emit_event_surfaces(mode: str, *, public_dir: Path | None = None, data_dir: Path | None = None,
+                        sources_path: Path | None = None, takedowns_path: Path | None = None) -> dict:
+    """The record layer's event emitter (scripts/evenements.py), for `mode`
+    "preview" or "live" (scripts/surfaces.py). Reads only stored files (the
+    event view and store, the edition's enriched candidates, roadworks,
+    consultations, registre state, takedowns.yaml) and applies R10 itself;
+    never runs events.py. Fail-soft: evenements.emit never raises."""
+    import evenements
+
+    return evenements.emit(
+        public_dir=public_dir if public_dir is not None else OUT_HTML.parent,
+        data_dir=data_dir if data_dir is not None else ROOT / "data",
+        sources_path=sources_path if sources_path is not None else ROOT / "sources.yaml",
+        takedowns_path=takedowns_path if takedowns_path is not None else ROOT / "takedowns.yaml",
+        mode=mode,
+    )
 
 
 if __name__ == "__main__":

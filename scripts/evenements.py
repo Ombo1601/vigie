@@ -1,17 +1,28 @@
 """evenements — the event surfaces: French at the site root, English under /en/.
 
-docs/MIGRATION.md steps 9-11, BUILT AND NOT WIRED: nothing calls `emit()` yet.
-A later integrator adds it to the render step (`rank_display`, record layer),
-AFTER `registre` and `memoire` so this edition's seal is readable and every
-seal link it prints has its page; then `stage_public`, `vercel.json` and the
-sitemap learn the new paths. The approved prototype is implemented by
-`scripts/composants.py` (the kit); this module only turns the real stores into
-the kit's views, applies the house law at render time and writes the files.
+docs/MIGRATION.md steps 9-11, WIRED BEHIND A SWITCH (scripts/surfaces.py):
+`rank_display` calls `emit(mode=...)` in the record layer, after registre,
+memoire, depart and affiche (so this edition's seal is readable and every seal
+link it prints has its page), in the full edition and in the hourly roads-only
+re-render alike, and only when the switch is not "off". It never runs the
+event builder (events.py stays a full-run stage): it reads the stored view.
+The approved prototype is implemented by `scripts/composants.py` (the kit);
+this module only turns the real stores into the kit's views, applies the house
+law at render time and writes the files.
+
+Modes: "preview" renders every page `noindex, nofollow` (the sitemap omits
+them and the brief keeps /); "live" also writes the front door at
+index.html and en/index.html (the same page as evenements.html, whose
+canonical and alternates then name / and /en/), linking the former brief at
+/le-point.html as the full river and giving the roadworks block the id the
+other surfaces link as /#travaux.
 
 Outputs (under `public_dir`, through store_io; identical inputs give identical
 bytes; no wall clock, only the edition clock and the roadworks collection
 clock):
 
+  index.html, en/index.html (live only)
+      the front door: the page below, at / and /en/.
   evenements.html, en/evenements.html
       the front door content: edition head and stamp, the three rules, at most
       12 ranked event cards with the ranking's own explanation ("Pourquoi
@@ -68,11 +79,17 @@ docs/AUTONOMY.md):
             the survivor while the survivor has one. Pages outside the rule
             are removed on the next render.
   Official  the collection's official releases that no card shown contains or
-            cites as an official record (item anchors); the method's proposed
-            geography first (Québec City, then Quebec, then everything else as
-            one group), newest first within each group (declared time, then
-            id); at most OFFICIAL_MAX = 6. When capped, the block prints that
-            order (never "the most recent") and the count in each group.
+            cites as an official record (item anchors). First those inside
+            the edition's freshness window (declared time at most
+            OFFICIAL_WINDOW_HOURS = 72 h, the event window, before the
+            edition clock; a missing or suspect stamp is not inside), by the
+            method's proposed geography (Québec City, then Quebec, then
+            everything else as one group), newest first within each group
+            (declared time, then id); at most OFFICIAL_MAX = 6. Only when
+            fewer than 6 remain inside the window is the list completed with
+            older releases, in the same order, each marked as outside the
+            window, and the block says so. When capped, the block prints that
+            order (never "the most recent") and the counts behind it.
   Roster    the institutions followed this collection (enabled feeds, minus
             withdrawn ones), in the registry's order, each with the state the
             registre's own measurement gives (registre.institution_collection
@@ -95,8 +112,13 @@ docs/AUTONOMY.md):
             a withdrawn lane's block says so and quotes, counts, credits and
             links nothing, and every anchor pointing into it goes, for the
             ranking too. An unreadable takedowns.yaml withholds them as well.
-            The events module's own apply_takedowns helper is called too when
-            it exists.
+            events.apply_takedowns is applied first to the stored view (with
+            this render's rules, sources.yaml and the store's article
+            domains), so every derived field describes the members present
+            and a voice whose article was withdrawn reads "retiré à la
+            demande de l'éditeur" in the silence panel (a voice withdrawn
+            whole is named nowhere here); a fault is diagnosed and this
+            module's own filter still applies.
 
     python -X utf8 scripts/evenements.py [--data-dir DIR] [--public-dir DIR]
 """
@@ -122,6 +144,7 @@ if str(SCRIPTS) not in sys.path:
 import composants as ck  # noqa: E402
 import i18n  # noqa: E402
 import store_io  # noqa: E402
+import surfaces  # noqa: E402
 import takedown  # noqa: E402
 import vocabulaire  # noqa: E402
 
@@ -134,6 +157,18 @@ TAKEDOWNS_PATH = ROOT / "takedowns.yaml"
 CARDS_MAX = 12
 PAGES_MAX = 500
 OFFICIAL_MAX = 6
+# The freshness window of "declared by the authorities": the event window
+# itself (composants.EVENT_SPAN_HOURS = event_match.WINDOW_HOURS = 72 h; a
+# test holds them equal), and the tolerance for a stamp later than the edition
+# clock (events.DATE_SUSPECT_HOURS).
+OFFICIAL_WINDOW_HOURS = ck.EVENT_SPAN_HOURS
+OFFICIAL_FUTURE_HOURS = 6
+# Live front door (scripts/surfaces.py): the former brief, linked as the full
+# river, and the id the other surfaces' "/#travaux" links land on.
+RIVER_PATH = surfaces.RIVER_PATH
+ROADS_ANCHOR = "travaux"
+MODES = ("preview", "live")
+ROBOTS = surfaces.ROBOTS
 SUGGESTIONS_MAX = 6
 NEIGHBOURS_MAX = 3
 SHARED_MAX = 8
@@ -363,11 +398,15 @@ def _host_of(url: object) -> str:
         return ""
 
 
-def _helper_takedowns(doc: dict, law: Law, diagnosis: list[str]) -> dict:
-    """events.apply_takedowns when the events module offers one (a later
-    tranche may): applied to a copy, its result used only when it keeps the
-    document's shape. This module's own R10 filter runs afterwards in every
-    case, so the helper can only remove more, never less."""
+def _helper_takedowns(doc: dict, law: Law, hosts: dict[str, str], diagnosis: list[str]) -> dict:
+    """events.apply_takedowns (docs/EVENTS.md 17.4): the stored view as a
+    rebuild of its edition under the active takedowns would give it, with the
+    rules this render enforces, the registry it was given (feed-domain rules,
+    voices withdrawn whole) and the store's article domains (a domain rule on
+    a member whose URL is gone). Applied to a copy; its result is used only
+    when it keeps the document's shape, and a fault is diagnosed and leaves
+    the stored view (never a crash). This module's own R10 filter runs
+    afterwards in every case, so the helper can only remove more, never less."""
     try:
         import events  # noqa: PLC0415
     except Exception:  # noqa: BLE001
@@ -376,7 +415,7 @@ def _helper_takedowns(doc: dict, law: Law, diagnosis: list[str]) -> dict:
     if not callable(fn):
         return doc
     try:
-        out = fn(copy.deepcopy(doc), law.reg if law.reg is not None else law.rules)
+        out = fn(copy.deepcopy(doc), law.rules, sources_path=law.sources_path, hosts=dict(hosts))
     except Exception as exc:  # noqa: BLE001
         diagnosis.append(f"events.apply_takedowns faulted ({type(exc).__name__}); local R10 filter only")
         return doc
@@ -591,13 +630,15 @@ class Render:
         self.quality = doc("quality", data_dir / "ops" / "events_quality.json")
         state = doc("registre_state", data_dir / "registre" / "registre.json")
         self.robots = _str(given.get("robots")) or "index, follow"
+        self.mode = _str(given.get("mode"))   # "", "preview" or "live" (scripts/surfaces.py)
         self.ranking = ranking_module(given.get("ranking_module"))
 
         # ---- the edition ----------------------------------------------------
         self.enriched = enriched if isinstance(enriched, dict) else {}
         self.view = view if isinstance(view, dict) else {}
+        self.hosts = _store_hosts(store)
         if isinstance(self.view, dict) and self.view:
-            self.view = _helper_takedowns(self.view, self.law, diagnosis)
+            self.view = _helper_takedowns(self.view, self.law, self.hosts, diagnosis)
         enriched_clock = _str(self.enriched.get("normalized_at"))
         view_clock = _str(self.view.get("edition"))
         self.view_ok = (self.view.get("status", "ok") == "ok" and isinstance(self.view.get("events"), list)
@@ -626,7 +667,6 @@ class Render:
             self.texts.setdefault(c["id"], c)
 
         # ---- the store --------------------------------------------------------
-        self.hosts = _store_hosts(store)
         self.store_events = _store_events(store, diagnosis)
         self.roots = _roots(self.store_events)
         self.store_by_id = {e["event_id"]: e for e in self.store_events}
@@ -967,7 +1007,14 @@ def build_view(r: Render, e: dict, rows: list[dict], *, current: bool, in_curren
     type_code = _str(e.get("type")) or vocabulaire.UNCLASSIFIED
     label = e.get("label") if isinstance(e.get("label"), dict) else {}
     label = {lang: _str(label.get(lang)) or vocabulaire.label(type_code, None, lang) for lang in LANGS}
-    place_label = _labels_of(places[0], "place") if places and basis != "fallback" else None
+    # The place is always worded: a named or geo place by its label ("Hors
+    # Québec" included); an event no evidence places (basis "fallback", or no
+    # place at all) by the place twin of "unclassified", "Lieu non établi",
+    # never by a code it may still carry from before that rule (EVENTS.md 17.1).
+    if places and basis != "fallback":
+        place_label = _labels_of(places[0], "place")
+    else:
+        place_label = _labels_of(vocabulaire.FALLBACK_PLACE, "place")
     pairs = [p for p in _dicts(e.get("language_pairs")) if p.get("fr") in by_id and p.get("en") in by_id]
     facts_rows = []
     if current:
@@ -998,12 +1045,16 @@ def build_view(r: Render, e: dict, rows: list[dict], *, current: bool, in_curren
     if current:
         for s in _dicts(e.get("silence")):
             inst = _str(s.get("institution"))
-            if inst and inst in r.law.withdrawn_institutions:
+            # a voice withdrawn whole is named nowhere on these pages (the
+            # registre and the sources page say it was withdrawn on request)
+            if (inst and inst in r.law.withdrawn_institutions) or _str(s.get("scope")) == "institution":
                 continue
             if inst in {_str(m.get("institution")) for m in rows}:
                 continue
+            # the state as measured: "withdrawn" (its article here was
+            # withdrawn on request) is said as such, never as "no linked article"
             silence.append({"institution_name": plain(s.get("institution_name") or inst, NAME_CAP),
-                            "state": _str(s.get("state")) or "no_linked_item"})
+                            "state": _str(s.get("state"))})
     neighbours = []
     if current:
         for n in _dicts(e.get("neighbours")):
@@ -1119,9 +1170,36 @@ def card_records(cards: list[dict]) -> set[str]:
     return out
 
 
-def official_items(r: Render, card_items: set[str]) -> tuple[list[dict], int, dict]:
-    """(rows shown, how many qualify, how many of those per geography group):
-    the published rule.official, with the real values the cap line prints."""
+def in_official_window(c: dict, clock: object) -> bool:
+    """A release is inside the edition's freshness window when its declared
+    publication time is at most OFFICIAL_WINDOW_HOURS (the event window)
+    before the edition clock, and not more than OFFICIAL_FUTURE_HOURS after it
+    (later than that is a suspect stamp, the events layer's DATE_SUSPECT_HOURS).
+    No declared time, or no edition clock: freshness is not established, so
+    the release counts as outside (never guessed inside)."""
+    when, edition = _instant(c.get("published_at")), _instant(clock)
+    if when is None or edition is None:
+        return False
+    age = (edition - when).total_seconds()
+    return -OFFICIAL_FUTURE_HOURS * 3600 <= age <= OFFICIAL_WINDOW_HOURS * 3600
+
+
+def official_items(r: Render, card_items: set[str]) -> dict:
+    """The published rule.official (ranking.md, « Déclaré par les autorités »),
+    with the real values the block prints:
+
+      1. the official releases of the collection that no card shown contains
+         or cites as an official record;
+      2. first those inside the edition's freshness window
+         (`in_official_window`), ordered by the method's proposed geography
+         (Québec City, Quebec, everything else as one group), then newest
+         first (declared time), then id; at most OFFICIAL_MAX;
+      3. only when fewer than OFFICIAL_MAX remain inside the window, the rest
+         is completed with releases outside it (or with no established date),
+         in the same order, each marked `older` (the block says so in words).
+
+    Returns {"rows", "total", "fresh", "older", "groups" (of the fresh ones),
+    "window_hours"}."""
     rows = []
     for iid in sorted(r.texts):
         c = r.texts[iid]
@@ -1132,19 +1210,28 @@ def official_items(r: Render, card_items: set[str]) -> tuple[list[dict], int, di
         if not title:
             continue
         rows.append(c)
-    rows.sort(key=lambda c: (_geo_rank(c), -(_epoch(c.get("published_at")) or 0.0), _str(c.get("id"))))
+
+    def order(c: dict) -> tuple:
+        return (_geo_rank(c), -(_epoch(c.get("published_at")) or 0.0), _str(c.get("id")))
+
+    fresh = sorted((c for c in rows if in_official_window(c, r.clock)), key=order)
+    older = sorted((c for c in rows if not in_official_window(c, r.clock)), key=order)
     groups = {g: 0 for g in GEO_GROUPS}
-    for c in rows:
+    for c in fresh:
         groups[GEO_GROUPS[_geo_rank(c)]] += 1
+    shown = [(c, False) for c in fresh[:OFFICIAL_MAX]]
+    shown += [(c, True) for c in older[:max(0, OFFICIAL_MAX - len(shown))]]
     out = []
-    for c in rows[:OFFICIAL_MAX]:
+    for c, aged in shown:
         sid = _str(c.get("source_id"))
         out.append({"institution_name": r.law.name_of(sid, _str(c.get("institution_name"))),
                     "ownership_class": _str((r.law.by_id.get(sid) or {}).get("ownership_class")) or "government",
                     "published_at": _str(c.get("published_at")), "title": plain(c.get("title"), TITLE_CAP),
                     "url": _str(c.get("url")) if ck.safe_url(c.get("url")) else "",
-                    "language": _str(c.get("language")) or _str((r.law.by_id.get(sid) or {}).get("language")) or "fr"})
-    return out, len(rows), groups
+                    "language": _str(c.get("language")) or _str((r.law.by_id.get(sid) or {}).get("language")) or "fr",
+                    "older": aged})
+    return {"rows": out, "total": len(rows), "fresh": len(fresh), "older": len(older), "groups": groups,
+            "window_hours": OFFICIAL_WINDOW_HOURS}
 
 
 def roster(r: Render, cards: list[dict]) -> list[dict]:
@@ -1153,7 +1240,7 @@ def roster(r: Render, cards: list[dict]) -> list[dict]:
         import registre  # noqa: PLC0415
 
         collection = registre.institution_collection(self_status(r), r.law.sources_path)
-    except Exception as exc:  # noqa: BLE001
+    except (Exception, SystemExit) as exc:  # noqa: BLE001 - a malformed sources.yaml exits in its parser
         r.diag.append(f"collection facts unavailable ({type(exc).__name__}): states not established")
     names: dict[str, str] = {}
     try:
@@ -1280,6 +1367,8 @@ def latest_doc(r: Render, entries: list[dict], pages: dict[str, str], ranking_na
             "path": {"fr": ck.event_path(v["event_id"]), "en": ck.en_path(ck.event_path(v["event_id"]))},
             "type": v["type"], "type_label": v["type_label"],
             "places": v["places"], "place_label": v["place_label"], "label": v["label"],
+            # every place code with its words ("elsewhere", "unplaced" included)
+            "place_labels": [{"code": p, **_labels_of(p, "place")} for p in v["places"]],
             "born_edition": v["born_edition"], "last_edition": v["last_edition"],
             "window_state": v["window_state"], "activity": v["activity"],
             "tier": v["tier"], "tier_chip": (v.get("tier_view") or {}).get("kind") or "none",
@@ -1304,6 +1393,7 @@ def latest_doc(r: Render, entries: list[dict], pages: dict[str, str], ranking_na
         "ranking": ranking_name,
         "rules": {
             "cards_max": CARDS_MAX, "pages_max": PAGES_MAX, "official_max": OFFICIAL_MAX,
+            "official_window_hours": OFFICIAL_WINDOW_HOURS,
             "pages": {lang: i18n.t("rule.pages", lang, n=i18n.fmt_int(PAGES_MAX, lang)) for lang in LANGS},
             "ownership": "ownership_class, owner_group and ownership_ref are the declarations of sources.yaml, each with its public reference; members sharing an owner_group count as one origin",
         },
@@ -1317,9 +1407,11 @@ def latest_doc(r: Render, entries: list[dict], pages: dict[str, str], ranking_na
 # --------------------------------------------------------------------------- #
 # Assembly
 # --------------------------------------------------------------------------- #
-def _home(lang: str) -> str:
-    # "/" exists in French (the current brief); the English front door is this
-    # surface until MIGRATION step 11 switches the root.
+def _home(lang: str, mode: str = "") -> str:
+    # Live: / and /en/ are the front door in both languages. Otherwise "/"
+    # exists in French only (the brief), and the English home is this surface.
+    if mode == "live":
+        return ck.path_for(lang, "/")
     return "/" if lang == "fr" else ck.path_for("en", "/evenements.html")
 
 
@@ -1340,7 +1432,7 @@ def _merged_page(r: Render, e: dict, survivor_view: dict, lang: str, note: str) 
     desc = i18n.t("meta.desc.event.merged", lang, label=title)
     return ck.document(lang=lang, fr_path=ck.event_path(eid), title=title, description=desc, main=main,
                        robots=r.robots, mine_href=ck.path_for(lang, "/evenements.html") + "#chez-moi",
-                       page_type="article", home=_home(lang), footer_note=note, view="permanent")
+                       page_type="article", home=_home(lang, r.mode), footer_note=note, view="permanent")
 
 
 def build_site(r: Render) -> tuple[dict[str, str], dict]:
@@ -1463,7 +1555,7 @@ def build_site(r: Render) -> tuple[dict[str, str], dict]:
     # ---- files -----------------------------------------------------------------
     files: dict[str, str] = {}
     pages: dict[str, str] = {}
-    official, official_total, official_groups = official_items(r, card_records(cards))
+    official = official_items(r, card_records(cards))
     seal = r.seal_of(r.clock)
     edition = {
         "clock": r.clock, "period": "", "next_collection": None,
@@ -1471,18 +1563,34 @@ def build_site(r: Render) -> tuple[dict[str, str], dict]:
         "events_total": len(current_raw) if len(current_raw) > len(cards) else None,
         "roster": roster(r, cards),
         "seal": {"seq": seal["seq"], "root": seal["root"]} if seal else None,
-        "official": official, "official_total": official_total, "official_groups": official_groups,
+        "official": official["rows"], "official_total": official["total"], "official_groups": official["groups"],
+        "official_fresh": official["fresh"], "official_older": official["older"],
+        "official_window_hours": official["window_hours"],
         "suggestions": suggestions(cards),
         "status": "" if r.view_ok else "not_built",
         # the lede says the published ranking was not applied when it was not
         "ranking": "fallback" if cards and ranking_name == FALLBACK_RANKING else "",
     }
+    live = r.mode == "live"
+    if live:
+        # the live front door: the former brief is its full river, and the
+        # other surfaces' /#travaux links land on the roadworks block
+        edition["river"] = RIVER_PATH
+        edition["roads_id"] = ROADS_ANCHOR
     for lang in LANGS:
         base = "" if lang == "fr" else "en/"
         note = i18n.t("rule.pages", lang, n=i18n.fmt_int(PAGES_MAX, lang))
-        front_note = note + " " + i18n.t("rule.official", lang, n=i18n.fmt_int(OFFICIAL_MAX, lang))
-        files[f"{base}evenements.html"] = ck.edition_page(edition, lang, roadworks=rw_view, fr_path="/evenements.html",
-                                                         robots=r.robots, home=_home(lang), footer_note=front_note)
+        front_note = note + " " + i18n.t("rule.official", lang, n=i18n.fmt_int(OFFICIAL_MAX, lang),
+                                         h=i18n.fmt_int(OFFICIAL_WINDOW_HOURS, lang))
+        # live: / and /en/ are the front door; /evenements.html keeps serving
+        # the same page (every crumb and "Chez moi" link points there), with
+        # the front door's canonical and alternates, so one URL is indexed
+        index_path = "/" if live else "/evenements.html"
+        front = ck.edition_page(edition, lang, roadworks=rw_view, fr_path=index_path,
+                                robots=r.robots, home=_home(lang, r.mode), footer_note=front_note)
+        files[f"{base}evenements.html"] = front
+        if live:
+            files[f"{base}index.html"] = front
         for _key, eid, kind in chosen:
             name = f"{base}evenements/{eid}.html"
             if kind == "merged":
@@ -1496,7 +1604,7 @@ def build_site(r: Render) -> tuple[dict[str, str], dict]:
             if v is None:
                 continue
             files[name] = ck.event_page(v, lang, edition=edition if not v["permanent"] else None, followed=followed,
-                                        robots=r.robots, home=_home(lang), footer_note=note)
+                                        robots=r.robots, home=_home(lang, r.mode), footer_note=note)
             pages[eid] = "permanent" if v["permanent"] else "current"
     counts = {
         "events_current": len(current_raw),
@@ -1505,7 +1613,8 @@ def build_site(r: Render) -> tuple[dict[str, str], dict]:
         "pages_current": sum(1 for k in pages.values() if k == "current"),
         "pages_permanent": sum(1 for k in pages.values() if k == "permanent"),
         "pages_merged": sum(1 for k in pages.values() if k == "merged"),
-        "official_shown": len(official), "official_total": official_total,
+        "official_shown": len(official["rows"]), "official_total": official["total"],
+        "official_fresh": official["fresh"], "official_older_shown": sum(1 for o in official["rows"] if o["older"]),
         "withdrawn_items_known": len(r.gone),
     }
     files["evenements/latest.json"] = _dump(latest_doc(r, entries, pages, ranking_name, counts))
@@ -1515,10 +1624,19 @@ def build_site(r: Render) -> tuple[dict[str, str], dict]:
 
 def write_site(files: dict[str, str], public_dir: Path) -> int:
     """Write every file, then remove the event pages this render did not
-    produce (outside the rule, withdrawn, or merged away). Returns removed."""
+    produce (outside the rule, withdrawn, or merged away), and an English
+    front door a live render left behind when this render is not live (the
+    French root is the brief's to write). Returns removed."""
     for rel, text in files.items():
         store_io.write_text_atomic(public_dir / rel, text)
     removed = 0
+    stale_front = public_dir / "en" / "index.html"
+    if "en/index.html" not in files and stale_front.is_file():
+        try:
+            stale_front.unlink()
+            removed += 1
+        except OSError:
+            pass
     for base in ("evenements", "en/evenements"):
         folder = public_dir / base
         if not folder.is_dir():
@@ -1534,20 +1652,36 @@ def write_site(files: dict[str, str], public_dir: Path) -> int:
 
 
 def emit(ctx: dict | None = None, *, public_dir: Path | str | None = None, data_dir: Path | str | None = None,
-         sources_path: Path | str | None = None, takedowns_path: Path | str | None = None) -> dict:
+         sources_path: Path | str | None = None, takedowns_path: Path | str | None = None,
+         mode: str | None = None) -> dict:
     """Render the event surfaces. Fail-soft: any fault prints a diagnosis and
     returns a status; it never raises and never stops the render.
 
     `ctx` (optional): already-loaded documents the integrator may hand over
     instead of re-reading them (`events_view`, `events_store`, `enriched`,
     `roadworks`, `civic`, `quality`, `registre_state`), `robots`, and
-    `ranking_module` (a module object honouring contract R, for tests)."""
+    `ranking_module` (a module object honouring contract R, for tests).
+
+    `mode` (scripts/surfaces.py): "preview" renders every page `noindex,
+    nofollow`; "live" also writes the front door (index.html, en/index.html)
+    linking the full river (/le-point.html), every page indexable; "off"
+    writes nothing; None keeps the robots given in `ctx` (direct use, tests)."""
     diagnosis: list[str] = []
     public = Path(public_dir) if public_dir is not None else PUBLIC
     data = Path(data_dir) if data_dir is not None else DATA
+    if mode == "off":
+        _say("event surfaces off (scripts/surfaces.py): nothing written")
+        return {"method": METHOD, "status": "off", "diagnosis": []}
+    ctx = dict(ctx or {})
+    if mode is not None:
+        if mode not in MODES:
+            _say(f"unknown mode {str(mode)[:40]!r}: nothing written")
+            return {"method": METHOD, "status": "off", "diagnosis": [f"unknown mode {str(mode)[:40]!r}"]}
+        ctx["mode"] = mode
+        ctx["robots"] = ROBOTS[mode]
     try:
         r = Render(data, Path(sources_path) if sources_path else SOURCES_PATH,
-                   Path(takedowns_path) if takedowns_path else TAKEDOWNS_PATH, ctx or {}, diagnosis)
+                   Path(takedowns_path) if takedowns_path else TAKEDOWNS_PATH, ctx, diagnosis)
         files, counts = build_site(r)
         removed = write_site(files, public)
         for d in sorted(set(diagnosis)):
@@ -1555,7 +1689,8 @@ def emit(ctx: dict | None = None, *, public_dir: Path | str | None = None, data_
         _say(f"{counts['cards']} card(s) of {counts['events_current']} current event(s); {counts['pages']} record(s) "
              f"({counts['pages_current']} current, {counts['pages_permanent']} permanent, {counts['pages_merged']} merged) "
              f"x 2 languages; ranking {counts['ranking']}; {removed} stale page(s) removed -> {public}")
-        return {"method": METHOD, "status": "ok", **counts, "removed": removed, "diagnosis": sorted(set(diagnosis))}
+        return {"method": METHOD, "status": "ok", "mode": r.mode, **counts, "removed": removed,
+                "files": len(files), "diagnosis": sorted(set(diagnosis))}
     except (Exception, SystemExit) as exc:  # noqa: BLE001 - fail-soft: the brief still renders
         _say(f"skipped ({type(exc).__name__}: {str(exc)[:160]}); the event surfaces were not rendered")
         tail = traceback.format_exc(limit=3).strip().splitlines()[-3:]
@@ -1570,11 +1705,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--public-dir", type=Path, default=PUBLIC)
     ap.add_argument("--sources", type=Path, default=SOURCES_PATH)
     ap.add_argument("--takedowns", type=Path, default=TAKEDOWNS_PATH)
+    ap.add_argument("--mode", choices=MODES, default=None,
+                    help="render as the switch would (scripts/surfaces.py); default: no switch")
     try:
         args = ap.parse_args(argv)
     except SystemExit as exc:
         return 0 if exc.code in (0, None) else 0
-    emit(public_dir=args.public_dir, data_dir=args.data_dir, sources_path=args.sources, takedowns_path=args.takedowns)
+    emit(public_dir=args.public_dir, data_dir=args.data_dir, sources_path=args.sources, takedowns_path=args.takedowns,
+         mode=args.mode)
     return 0
 
 

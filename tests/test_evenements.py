@@ -490,17 +490,61 @@ class Takedowns(unittest.TestCase):
         finally:
             fx.close()
 
-    def test_the_events_helper_is_applied_when_it_exists(self):
+    def test_the_events_helper_is_applied_with_its_own_contract(self):
         calls = []
 
-        def apply_takedowns(doc, reg):
-            calls.append(type(reg).__name__)
+        def apply_takedowns(doc, rules=None, *, sources_path=None, hosts=None):
+            calls.append((type(rules).__name__, Path(sources_path), isinstance(hosts, dict)))
             return doc
 
-        with mock.patch.object(events, "apply_takedowns", apply_takedowns, create=True):
+        with mock.patch.object(events, "apply_takedowns", apply_takedowns):
             _, result = FX.emit("helper")
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(calls, ["Registry"])
+        self.assertEqual(calls, [("Rules", FX.sources, True)],
+                         "the rules this render enforces and the registry it was given, never a Registry as rules")
+
+    def test_the_events_helper_does_not_fault_under_a_takedown(self):
+        # Before the wiring tranche the helper was handed a Registry where it
+        # takes takedown.Rules and faulted (AttributeError) on every takedown.
+        fx = Fixture(takedowns=[("url", URLS["s2"])])
+        try:
+            _, result = fx.emit()
+            self.assertEqual(result["status"], "ok")
+            self.assertFalse([d for d in result["diagnosis"] if "apply_takedowns faulted" in d], result["diagnosis"])
+        finally:
+            fx.close()
+
+    def test_a_faulting_helper_is_diagnosed_and_the_local_filter_still_applies(self):
+        fx = Fixture(takedowns=[("url", URLS["s2"])])
+        try:
+            with mock.patch.object(events, "apply_takedowns", side_effect=RuntimeError("boom")):
+                public, result = fx.emit()
+            self.assertEqual(result["status"], "ok")
+            self.assertTrue(any("apply_takedowns faulted (RuntimeError)" in d for d in result["diagnosis"]))
+            for name, text in files_of(public).items():
+                self.assertNotIn(URLS["s2"], text, name)
+                self.assertNotIn(S2["id"], text, name)
+        finally:
+            fx.close()
+
+    def test_an_article_withdrawn_voice_reads_withdrawn_never_no_linked_article(self):
+        # S3 (gamma-fr) is the strike's only Gamma article: withdrawing it
+        # leaves Gamma Radio in the roster of that event as "withdrawn".
+        fx = Fixture(takedowns=[("url", URLS["s3"])])
+        try:
+            public, _ = fx.emit()
+            for lang, name in (("fr", f"evenements/{STRIKE}.html"), ("en", f"en/evenements/{STRIKE}.html")):
+                page = html.unescape((public / name).read_text(encoding="utf-8"))
+                self.assertNotIn(S3["title"], page)
+                self.assertNotIn(URLS["s3"], page)
+                panel = page.split('aria-labelledby="sl-h"', 1)[1].split("</section>", 1)[0]
+                self.assertIn(f"<b>Gamma Radio</b><span>{i18n.t('sil.withdrawn', lang)}</span>", panel)
+                self.assertNotIn(f"<b>Gamma Radio</b><span>{i18n.t('sil.no_linked_item', lang)}", panel)
+            import takedown as td
+
+            self.assertEqual(i18n.t("sil.withdrawn", "fr"), td.WITHDRAWN_LABEL_FR, "one wording, house-wide")
+        finally:
+            fx.close()
 
 
 class English(unittest.TestCase):
@@ -971,10 +1015,12 @@ class OfficialBlock(unittest.TestCase):
             self.assertNotIn(O_PROV["title"], block, "a newer release placed in Quebec waits for its group")
             cap = re.search(r"<p [^>]*data-off-cap>(.*?)</p>", block, re.S).group(1)
             self.assertNotRegex(cap, r"(?i)most recent|plus récent")
-            expected = (i18n.tn("off.cap", 1, lang, total=i18n.fmt_int(4, lang)) + " "
-                        + i18n.t("off.groups", lang, total="4", city="1", province="1", other="2"))
+            expected = (i18n.tn("off.cap", 1, lang, total=i18n.fmt_int(4, lang), h="72") + " "
+                        + i18n.t("off.groups", lang, total="4", h="72", fresh="4", older="0",
+                                 city="1", province="1", other="2"))
             self.assertEqual(cap, expected, "the order and the count of each group, as applied")
-            self.assertIn(i18n.t("rule.official", lang, n="1"), html.unescape(page), "the footer says the same rule")
+            self.assertIn(i18n.t("rule.official", lang, n="1", h="72"), html.unescape(page),
+                          "the footer says the same rule")
 
     def test_linked_and_unplaced_releases_are_one_group_newest_first(self):
         _public, pages = self.render("off-groups", 3)
@@ -996,10 +1042,87 @@ class OfficialBlock(unittest.TestCase):
 
     def test_the_kit_prints_the_order_and_its_counts(self):
         rows = [{"title": "Avis zorblaxien", "institution_name": "Ville Xénon", "published_at": "2026-09-22T10:00:00Z"}]
-        block = html.unescape(ck.official_block(rows, "en", 9, {"city": 2, "province": 5, "other": 2}))
-        self.assertIn(i18n.tn("off.cap", 1, "en", total="9"), block)
-        self.assertIn(i18n.t("off.groups", "en", total="9", city="2", province="5", other="2"), block)
+        block = html.unescape(ck.official_block(rows, "en", 9, {"city": 2, "province": 5, "other": 1},
+                                                fresh=8, older=1))
+        self.assertIn(i18n.tn("off.cap", 1, "en", total="9", h="72"), block)
+        self.assertIn(i18n.t("off.groups", "en", total="9", h="72", fresh="8", older="1",
+                             city="2", province="5", other="1"), block)
         self.assertNotIn("most recent", block)
+        self.assertNotIn("data-off-fill", block, "no older release shown: nothing to say about one")
+
+    # ---- the freshness window (ranking.md, « Déclaré par les autorités ») ----
+    def window_rows(self, ages_hours: list[tuple[str, str, float | None]]) -> list[dict]:
+        """Invented releases, one per (name, geo, age in hours before the
+        current edition clock; None = no declared time)."""
+        from datetime import datetime, timedelta, timezone
+
+        clock = datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc)
+        rows = []
+        for name, geo, age in ages_hours:
+            when = None if age is None else (clock - timedelta(hours=age)).isoformat()
+            row = item(f"w-{name}", "ville-x", f"Avis zorblaxien numéro {name} du quartier Plimbourg", when,
+                       "Un avis inventé pour le test.")
+            row["enrich"] = {"geo": {"geo": geo}}
+            rows.append(row)
+        return rows
+
+    def render_window(self, out: str, rows: list[dict], cap: int) -> dict[str, str]:
+        enriched = json.loads((FX.data / "normalized" / "latest_enriched.json").read_text(encoding="utf-8"))
+        enriched["candidates"] = enriched["candidates"] + rows
+        with mock.patch.object(evenements, "OFFICIAL_MAX", cap):
+            public, result = FX.emit(out, {"enriched": enriched})
+        self.assertEqual(result["status"], "ok", result)
+        return {lang: official_block_of((public / name).read_text(encoding="utf-8"))
+                for lang, name in (("fr", "evenements.html"), ("en", "en/evenements.html"))}
+
+    def test_the_window_is_the_event_window(self):
+        import event_match
+
+        self.assertEqual(evenements.OFFICIAL_WINDOW_HOURS, ck.EVENT_SPAN_HOURS)
+        self.assertEqual(evenements.OFFICIAL_WINDOW_HOURS, int(event_match.WINDOW_HOURS))
+        self.assertEqual(evenements.OFFICIAL_FUTURE_HOURS, events.DATE_SUSPECT_HOURS)
+        clock = "2026-09-22T12:00:00+00:00"
+        self.assertTrue(evenements.in_official_window({"published_at": "2026-09-19T12:00:00+00:00"}, clock))
+        self.assertFalse(evenements.in_official_window({"published_at": "2026-09-19T11:59:00+00:00"}, clock))
+        self.assertTrue(evenements.in_official_window({"published_at": "2026-09-22T18:00:00+00:00"}, clock))
+        self.assertFalse(evenements.in_official_window({"published_at": "2026-09-22T18:01:00+00:00"}, clock),
+                         "a stamp more than 6 h after the edition is suspect: freshness not established")
+        self.assertFalse(evenements.in_official_window({"published_at": None}, clock), "no date: not inside")
+        self.assertFalse(evenements.in_official_window({"published_at": "0001-01-01T00:00:00Z"}, clock))
+        self.assertFalse(evenements.in_official_window({"published_at": "2026-09-22T10:00:00Z"}, ""))
+
+    def test_inside_the_window_first_then_geography_then_newest(self):
+        # a fresh release placed elsewhere beats an older one placed in the city
+        rows = self.window_rows([("a", "quebec-city", 100), ("b", "linked", 50), ("c", "quebec", 10),
+                                 ("d", "quebec-city", 70), ("e", "quebec-city", 2)])
+        blocks = self.render_window("win-order", rows, 3)
+        shown = sorted((blocks["fr"].index(r["title"]), r["title"]) for r in rows if r["title"] in blocks["fr"])
+        self.assertEqual([t for _i, t in shown], [rows[4]["title"], rows[3]["title"], rows[2]["title"]])
+        for lang, block in blocks.items():
+            self.assertNotIn(rows[0]["title"], block, f"{lang}: older than 72 h, and the window filled the cap")
+            self.assertNotIn(rows[1]["title"], block, f"{lang}: inside the window but beyond the cap")
+            self.assertNotIn("data-off-fill", block)
+            self.assertNotIn(i18n.t("off.older", lang, h="72"), block)
+            cap = re.search(r"<p [^>]*data-off-cap>(.*?)</p>", block, re.S).group(1)
+            self.assertIn(i18n.tn("off.cap", 3, lang, total="5", h="72"), cap)
+            self.assertIn(i18n.t("off.groups", lang, total="5", h="72", fresh="4", older="1",
+                                 city="2", province="1", other="1"), cap)
+
+    def test_older_releases_only_complete_a_list_the_window_cannot_fill_and_say_so(self):
+        rows = self.window_rows([("f", "quebec-city", 200), ("g", "quebec", 90), ("h", "linked", None)])
+        # the fixture's own releases: the notice in a card (excluded) and none else;
+        # O_* are not in this render, so the window holds nothing but what we add
+        blocks = self.render_window("win-fill", rows, 2)
+        for lang, block in blocks.items():
+            self.assertIn(rows[0]["title"], block, "the list is completed, geography first")
+            self.assertIn(rows[1]["title"], block)
+            self.assertNotIn(rows[2]["title"], block, "beyond the cap")
+            self.assertEqual(block.count(i18n.t("off.older", lang, h="72")), 2, "each older row is marked")
+            fill = re.search(r"<p [^>]*data-off-fill>(.*?)</p>", block, re.S).group(1)
+            self.assertEqual(fill, i18n.tn("off.fill", 2, lang, h="72"), "said plainly")
+        latest = json.loads((FX.dir / "win-fill" / "evenements" / "latest.json").read_text(encoding="utf-8"))
+        self.assertEqual(latest["rules"]["official_window_hours"], 72)
+        self.assertEqual(latest["counts"]["official_older_shown"], 2)
 
 
 class LaneTakedowns(unittest.TestCase):
