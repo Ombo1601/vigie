@@ -2,7 +2,7 @@
 
 Runs: ingest (RSS + official WZDX roadworks + civic HTML) -> takedowns (R10 purge)
 -> feed health -> normalize ->
-enrich -> cluster -> edge atlas + anomaly rules -> brief media -> rank/display
+enrich -> cluster -> events (shadow store) -> edge atlas + anomaly rules -> brief media -> rank/display
 -> edition metrics -> watchdog. Stdlib only. Does not start the server (open a
 second terminal for that). Offline mode reuses raw snapshots and makes no
 network requests.
@@ -31,6 +31,9 @@ SCRIPTS = [
     "normalize.py",
     "enrich.py",
     "cluster_issues.py",
+    # Shadow (docs/MIGRATION.md step 5): the event store, beside the dossiers.
+    # Full and offline runs only; it writes nothing under public/.
+    "events.py",
     "edge_atlas.py",
     "compile_anomalies.py",
     "fetch_brief_media.py",
@@ -44,6 +47,10 @@ SCRIPTS = [
 RENDER_ONLY = ("rank_display.py",)
 OFFLINE_SKIP = frozenset({"ingest_rss.py"})
 OFFLINE_FLAGGED = frozenset({"ingest_wzdx.py", "ingest_civic.py", "fetch_brief_media.py"})
+# Shadow stages feed no page yet: a crash there (even one that escapes the
+# stage's own fail-soft, such as an import error) is diagnosed and the
+# edition goes on, rendered from the dossiers as before.
+SHADOW = frozenset({"events.py"})
 
 
 def run(script: str, *extra: str) -> None:
@@ -52,6 +59,9 @@ def run(script: str, *extra: str) -> None:
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
     proc = subprocess.run([sys.executable, str(path), *extra], cwd=str(ROOT), env=env)
     if proc.returncode != 0:
+        if script in SHADOW:
+            print(f"{script} (shadow) failed with code {proc.returncode}: diagnosed; the edition continues", flush=True)
+            return
         raise SystemExit(f"{script} failed with code {proc.returncode}")
 
 

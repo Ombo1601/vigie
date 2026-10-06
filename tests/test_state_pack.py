@@ -86,6 +86,20 @@ class CuratedMembers(unittest.TestCase):
             self.assertIn(name, state_pack.EXPLICIT)
         self.assertIn("civic/latest_consultations.json", state_pack.EXPLICIT)
 
+    def test_the_event_store_travels_so_ids_are_never_re_minted(self) -> None:
+        self.assertIn("events/store.json", state_pack.EXPLICIT)
+        self.assertIn("events/latest_events.json", state_pack.EXPLICIT)
+        events_dir = self.root / "data" / "events"
+        events_dir.mkdir()
+        (events_dir / "store.json").write_text("{}", encoding="utf-8")
+        (events_dir / "latest_events.json").write_text("{}", encoding="utf-8")
+        (events_dir / "store.json.123.abcd1234.tmp").write_text("{}", encoding="utf-8")
+        (self.root / "data" / "ops" / "events_shadow.json").write_text("{}", encoding="utf-8")
+        names = self.names()
+        for needle in ("data/events/store.json", "data/events/latest_events.json", "data/ops/events_shadow.json"):
+            self.assertIn(needle, names)
+        self.assertNotIn("data/events/store.json.123.abcd1234.tmp", names)
+
     def test_round_trip_restores_the_same_bytes(self) -> None:
         archive = self.root / "state.tar.gz"
         self.assertGreater(state_pack.pack(archive), 0)

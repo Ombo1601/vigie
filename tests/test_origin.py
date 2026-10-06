@@ -483,8 +483,10 @@ class DeterminismTests(unittest.TestCase):
             self.assertNotIn(banned, src, banned)
 
     def test_not_wired_into_the_pipeline_yet(self):
+        # The one reader is the shadow event builder (docs/MIGRATION.md step 5),
+        # which keeps only the class code and rule id and writes nothing public.
         for path in (ROOT / "scripts").glob("*.py"):
-            if path.name == "origin.py":
+            if path.name in ("origin.py", "events.py"):
                 continue
             text = path.read_text(encoding="utf-8")
             self.assertNotRegex(text, _SHADOW_IMPORT_RE, path.name)
