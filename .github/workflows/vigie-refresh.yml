@@ -60,9 +60,14 @@ jobs:
       # Fail closed (scripts/state_sync.py): only a definitive "no release" is a
       # fresh start. A token, rate-limit, 5xx or network failure, a digest
       # mismatch, or a chain older than the git anchor stops the job here,
-      # before an empty data/ could seal a genesis and deploy it.
+      # before an empty data/ could seal a genesis and deploy it. A rolling asset
+      # behind the anchor (a persist that failed after the deploy) is answered
+      # from the newest vouched dated copy holding the anchored seal.
+      # state_sync bounds itself to 8 minutes; the step timeout is the backstop
+      # that turns a hang into a failed step (alert), never a silent job cancel.
       - name: Restore cross-edition state
         id: restore
+        timeout-minutes: 10
         run: python3 -X utf8 scripts/state_sync.py restore --repo "$STATE_REPO" --tag state --dir "$RUNNER_TEMP/state"
 
       - name: Install Vercel CLI
@@ -115,9 +120,12 @@ jobs:
 
       # Also after a failed refresh (restored state + this run is a valid
       # superset), never after a failed restore. Refuses a chain that shrank or
-      # forked; uploads an immutable dated copy before replacing the rolling one.
+      # forked; uploads an immutable dated copy before replacing the rolling one,
+      # and the two-line digest before the archive. Runs AFTER the anchor on
+      # purpose: a failure here halts loudly and the dated copy recovers it.
       - name: Persist cross-edition state
         if: always() && (steps.restore.outputs.outcome == 'restored' || steps.restore.outputs.outcome == 'fresh')
+        timeout-minutes: 10
         env:
           VIGIE_STATE_ALLOW_SHRINK: ${{ vars.VIGIE_STATE_ALLOW_SHRINK }}
         run: python3 -X utf8 scripts/state_sync.py persist --repo "$STATE_REPO" --tag state --dir "$RUNNER_TEMP/state" --dated --keep 12

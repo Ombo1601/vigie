@@ -44,9 +44,12 @@ jobs:
         with:
           node-version: "20"
 
-      # Fail closed, exactly as the full refresh (scripts/state_sync.py).
+      # Fail closed, exactly as the full refresh (scripts/state_sync.py). Each
+      # state step bounds itself to 8 minutes, so restore + persist leave this
+      # 30-minute job room; the step timeout turns a hang into an alert.
       - name: Restore cross-edition state
         id: restore
+        timeout-minutes: 10
         run: python3 -X utf8 scripts/state_sync.py restore --repo "$STATE_REPO" --tag state --dir "$RUNNER_TEMP/state"
 
       - name: Install Vercel CLI
@@ -59,6 +62,7 @@ jobs:
       # copies are the six-hourly refresh's job).
       - name: Persist cross-edition state
         if: always() && (steps.restore.outputs.outcome == 'restored' || steps.restore.outputs.outcome == 'fresh')
+        timeout-minutes: 10
         env:
           VIGIE_STATE_ALLOW_SHRINK: ${{ vars.VIGIE_STATE_ALLOW_SHRINK }}
         run: python3 -X utf8 scripts/state_sync.py persist --repo "$STATE_REPO" --tag state --dir "$RUNNER_TEMP/state"

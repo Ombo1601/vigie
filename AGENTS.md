@@ -26,20 +26,33 @@ Restore calls it a first run only on a definitive answer — repository visible
 *and* release 404, or a release with no state asset at all — and never while
 `anchors/checkpoint.txt` names a seal; any other failure (401/403, 429, 5xx,
 network, timeout, garbage) is retried 3× and then fails the job before
-`refresh.py` runs. The download must match its size, the sha256 recorded at
-persist time (`state.tar.gz.sha256`; absent only for the one-time legacy
-archive, accepted with a warning) and the anchored seal. Outcome
-(`restored|fresh|failed`, seal count, digest, size) goes to `$GITHUB_OUTPUT`;
-persist runs only after `restored`/`fresh`. It refuses a chain that shrank or
-forked or lost `registre/registre.json`, and a member count or size below half
-of the restored state unless the repository variable
-`VIGIE_STATE_ALLOW_SHRINK=1` (logged). The full refresh uploads an immutable
-`state-YYYYMMDDTHHMMSSZ.tar.gz` first, confirms it, then replaces `state.tar.gz`
-and its digest (`--clobber` deletes before it uploads) and prunes to the newest
-12 dated copies; the roads lane replaces the rolling asset only, through the
-same checks. A release holding a digest or dated copies but no `state.tar.gz`
-is an interrupted persist: re-upload the newest dated copy as `state.tar.gz`
-with its digest by hand.
+`refresh.py` runs. `state.tar.gz` must match its listed size (and GitHub's own
+asset digest, when the API lists one), one of the sha256 lines of
+`state.tar.gz.sha256` (absent only for the one-time legacy archive or a persist
+killed while replacing that sidecar: accepted with a warning) and the anchored
+seal. When it is missing, unverified, or behind the anchor, restore tries the
+dated copies newest first and takes the first one that GitHub's digest or a
+sidecar line vouches for and whose chain holds the anchored seal
+(`::warning:: … restored from state-…`); that run's persist re-publishes it as
+`state.tar.gz`. Outcome (`restored|fresh|failed`, source, seal count, digest,
+size) goes to `$GITHUB_OUTPUT`; persist runs only after `restored`/`fresh`. It
+refuses a chain that shrank or forked or lost `registre/registre.json`, and a
+member count or size below half of the restored state — regenerated caches
+(`data/media/brief/`, `data/raw/_bodies/`) excluded — unless the repository
+variable `VIGIE_STATE_ALLOW_SHRINK=1` (logged). The full refresh uploads an
+immutable `state-YYYYMMDDTHHMMSSZ.tar.gz` first and confirms it; then the
+sidecar (new digest, then the restored one) goes up **before** `state.tar.gz`
+(`--clobber` deletes before it uploads), so a run killed at any point leaves a
+rolling asset that a sidecar line vouches for, or none, which the dated copies
+answer; then it prunes to the newest 12 dated copies. The roads lane replaces
+the rolling pair only, through the same checks. Each restore or persist runs
+inside an 8-minute budget (every gh call bounded, 150 s per transfer, step
+`timeout-minutes: 10`): a hung transfer fails the step and raises the alert
+instead of being cancelled silently by the job timeout. The order deploy →
+anchor commit → persist is deliberate: a persist that fails after the anchor
+is a loud halt, not a silent fork, and the dated copy it uploaded first is what
+the next restore recovers from. When the restore refuses, follow the runbook
+below ("When the state restore refuses").
 
 When `data/` is needed locally, seed it by unpacking the private state tarball;
 never commit it.
@@ -144,6 +157,37 @@ and Bing Webmaster Tools (owner action; needs their account).
   `gh secret set STATE_TOKEN --repo Ombo1601/vigie`. Put the expiry in a calendar.
 - The failure-alert steps use the workflow's own `GITHUB_TOKEN` (`issues: write`),
   never `STATE_TOKEN`.
+
+### When the state restore refuses
+
+The restore already answers the common faults on its own (dated-copy fallback,
+two-line sidecar, above). When it still refuses — "older than what was
+published", "refusing an unverified state", "an interrupted persist", "a forked
+chain" — the error lists every dated copy on the release and why each was
+passed over. From a clean checkout of this repo, with a token that can read and
+write `Ombo1601/vigie-state`:
+
+1. `gh release download state --repo Ombo1601/vigie-state --pattern 'state-*.tar.gz' --dir recovery`
+2. `python3 -X utf8 scripts/state_sync.py inspect recovery/<copy>`, newest
+   first: prints the sha256, members, seal count and head, and exits 0 only
+   when the copy holds the seal `anchors/checkpoint.txt` witnessed.
+3. `cp recovery/<copy> state.tar.gz && sha256sum state.tar.gz > state.tar.gz.sha256`
+4. `gh release upload state state.tar.gz.sha256 state.tar.gz --repo Ombo1601/vigie-state --clobber`
+   (the digest first, as persist does).
+5. Re-run the workflow (`gh workflow run vigie-refresh.yml`).
+
+Last resort — no copy holds the anchored seal (the run died before its dated
+copy existed): never start fresh and never move the anchor back; both fork a
+published chain. The missing seals are public in
+`https://vigieqc.com/registre/chain.json`, as the very objects
+`data/registre/registre.json` keeps. Unpack the newest copy
+(`state_pack.py unpack`), append the missing seal objects verbatim to its
+`seals`, check with `python -X utf8 scripts/registre.py --verify data/registre/registre.json`,
+`python -X utf8 scripts/state_pack.py pack state.tar.gz`,
+`sha256sum state.tar.gz > state.tar.gz.sha256`, then steps 4–5. The voice rows
+of those editions are not recoverable; record that loss in the repository
+history rather than hiding it. A fork ("a forked chain") is never repaired by
+these steps alone: find which copy matches the published `chain.json` first.
 
 ## Commands (from the repo root)
 

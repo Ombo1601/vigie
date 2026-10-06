@@ -8,6 +8,7 @@ members.
 from __future__ import annotations
 
 import io
+import shutil
 import tarfile
 import tempfile
 import unittest
@@ -90,7 +91,7 @@ class CuratedMembers(unittest.TestCase):
         self.assertGreater(state_pack.pack(archive), 0)
         original = (self.root / "data" / "issues" / "history.json").read_bytes()
         target = Path(tempfile.mkdtemp(prefix="vigie-state-"))
-        self.addCleanup(lambda: __import__("shutil").rmtree(target, ignore_errors=True))
+        self.addCleanup(shutil.rmtree, target, ignore_errors=True)
         with mock.patch.multiple(state_pack, ROOT=target, DATA=target / "data"):
             self.assertGreater(state_pack.unpack(archive), 0)
             restored = target / "data" / "issues" / "history.json"
@@ -107,14 +108,14 @@ class CuratedMembers(unittest.TestCase):
             info.size = len(payload)
             tar.addfile(info, io.BytesIO(payload))
         target = Path(tempfile.mkdtemp(prefix="vigie-state-"))
-        self.addCleanup(lambda: __import__("shutil").rmtree(target, ignore_errors=True))
+        self.addCleanup(shutil.rmtree, target, ignore_errors=True)
         with mock.patch.multiple(state_pack, ROOT=target, DATA=target / "data"):
             with self.assertRaises(ValueError):
                 state_pack.unpack(evil)
 
     def _fresh_target(self) -> Path:
         target = Path(tempfile.mkdtemp(prefix="vigie-state-"))
-        self.addCleanup(lambda: __import__("shutil").rmtree(target, ignore_errors=True))
+        self.addCleanup(shutil.rmtree, target, ignore_errors=True)
         return target
 
     @staticmethod

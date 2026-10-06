@@ -9,31 +9,48 @@ restore   asks GitHub whether the `state` release exists. "fresh" is chosen only
           release is a 404, or the release carries no state asset of any kind.
           Every other failure (401/403, 429, 5xx, network, timeout, garbage) is
           retried with a bounded backoff, then FAILS the job before the refresh
-          can collect into an empty data/ and seal a genesis. A release holding a
-          digest or dated copies but no state.tar.gz is an interrupted persist,
-          never a first run. The download must match the listed size and the
-          sha256 recorded at persist time (state.tar.gz.sha256; absent only for
-          the one-time legacy archive, which is allowed loudly), and its chain
-          must contain the seal the public git anchor (anchors/checkpoint.txt)
-          witnessed. A fresh start is refused while that anchor names a seal.
+          can collect into an empty data/ and seal a genesis. A fresh start is
+          refused while the public git anchor (anchors/checkpoint.txt) names a
+          seal. The rolling asset must match its listed size (and GitHub's own
+          digest of the asset, when the API reports one) and one of the sha256
+          lines recorded in state.tar.gz.sha256 (absent only for the one-time
+          legacy archive or a persist killed while replacing the sidecar: then
+          accepted loudly), and its chain must hold the seal the anchor witnessed.
+          When the rolling asset is missing, unverified, or behind the anchor (a
+          persist that failed after the deploy and the anchor commit), the dated
+          copies are tried newest first: the first one that GitHub's digest or a
+          recorded line vouches for and whose chain holds the anchored seal is
+          restored with a warning, and this run's persist re-publishes it as the
+          rolling asset. Otherwise the refusal lists every dated copy (and why it
+          was passed over) with the manual recovery steps (AGENTS.md).
 persist   never writes over a restore that did not succeed, and refuses an
           archive whose chain shrank or forked, that lost registre/registre.json,
-          or whose member count or size collapsed below half of the restored one
-          (VIGIE_STATE_ALLOW_SHRINK=1 overrides the size check only, and says
-          so). With --dated it uploads an immutable dated copy FIRST and checks
-          it on the release, and only then replaces the rolling asset and its
-          digest: `gh release upload --clobber` deletes before it uploads, so a
-          good copy must already exist. Dated copies beyond the newest --keep are
-          pruned; a prune failure is a warning, never a failed run.
+          or whose member count or size collapsed below half of the restored one,
+          regenerated caches excluded (VIGIE_STATE_ALLOW_SHRINK=1 overrides the
+          size check only, and says so). With --dated it uploads an immutable dated
+          copy FIRST and checks it on the release. Then the digest sidecar goes up
+          BEFORE the archive, listing the new digest AND the restored one:
+          `gh release upload --clobber` deletes before it uploads, and with this
+          order a run killed at any point leaves a rolling asset that a recorded
+          line vouches for (the old one, the new one), or none at all, which the
+          restore answers from the dated copies. Dated copies beyond the newest
+          --keep are pruned; a prune failure is a warning, never a failed run.
+inspect   prints what a local archive holds and whether it carries the seal the git
+          anchor witnessed: the check of the manual recovery runbook.
 
-The outcome goes to $GITHUB_OUTPUT (outcome=restored|fresh|failed, seal_count,
-head_root, sha256, members, bytes) and to <dir>/restore.json, the baseline the
-persist step reads. Every gh call goes through an injectable runner, so each
-failure mode is a unit test, never a production experiment.
+Each restore or persist runs inside one time budget (DEADLINE): every gh call
+gets at most what is left, so a hung transfer fails the step loudly instead of
+being cancelled silently by the job timeout.
+
+The outcome goes to $GITHUB_OUTPUT (outcome=restored|fresh|failed, source,
+seal_count, head_root, sha256, members, bytes) and to <dir>/restore.json, the
+baseline the persist step reads. Every gh call goes through an injectable
+runner, so each failure mode is a unit test, never a production experiment.
 
 Usage:
   python scripts/state_sync.py restore --repo OWNER/REPO --tag state --dir DIR
   python scripts/state_sync.py persist --repo OWNER/REPO --tag state --dir DIR [--dated] [--keep 12]
+  python scripts/state_sync.py inspect FILE [--anchor anchors/checkpoint.txt]
 """
 from __future__ import annotations
 
@@ -47,6 +64,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import zlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,21 +79,30 @@ ANCHOR = ROOT / "anchors" / "checkpoint.txt"
 ROLLING = "state.tar.gz"
 DIGEST = ROLLING + ".sha256"
 DATED = re.compile(r"^state-\d{8}T\d{6}Z\.tar\.gz$")
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
 REGISTRE_MEMBER = "data/registre/registre.json"
+# Regenerated caches (re-hosted brief media, conditional-GET bodies): the next
+# run downloads them again, so their size says nothing about the health of the
+# memory. The chain checks are the real protection; the collapse rule watches
+# the rest.
+CACHE_PREFIXES = ("data/media/brief/", "data/raw/_bodies/")
 BASELINE = "restore.json"
 RESTORED, FRESH, FAILED = "restored", "fresh", "failed"
-OUTPUT_KEYS = ("outcome", "seal_count", "head_root", "sha256", "members", "bytes")
+OUTPUT_KEYS = ("outcome", "source", "seal_count", "head_root", "sha256", "members", "bytes")
+BEHIND, FORK = "behind", "fork"
 
 ATTEMPTS = 3
 BACKOFF = (5, 20)        # seconds between attempts: bounded, the next schedule retries anyway
 API_TIMEOUT = 60
-TRANSFER_TIMEOUT = 600
+TRANSFER_TIMEOUT = 150   # a ~10 MB asset moves in seconds; 3 attempts + backoff fit in DEADLINE
+DEADLINE = 480           # per restore/persist: two of them leave the 30-minute roads job room
 KEEP_DATED = 12          # three days of six-hourly editions
 MIN_FRACTION = 0.5       # a packed state below half of the restored one is a collapse
 ALLOW_SHRINK = "VIGIE_STATE_ALLOW_SHRINK"
 RELEASE_TITLE = "Vigie state"
 RELEASE_NOTES = ("Rolling snapshot of the cross-edition state (private; publisher "
                  "content never enters the public repo).")
+UNREADABLE = (tarfile.TarError, OSError, EOFError, zlib.error)
 
 
 @dataclass(frozen=True)
@@ -105,9 +132,16 @@ def run_gh(args: list[str], timeout: float) -> Result:
 
 
 def _say(level: str, message: str) -> None:
-    """One log line; warnings and errors also become GitHub run annotations."""
-    prefix = f"::{level}::" if level in ("notice", "warning", "error") else ""
-    print(f"{prefix}state: {message}", flush=True)
+    """One log entry; warnings and errors also become GitHub run annotations.
+
+    A workflow command is one line: newlines are escaped (%0A) so a multi-line
+    runbook stays one annotation and renders as lines.
+    """
+    if level in ("notice", "warning", "error"):
+        data = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::{level}::state: {data}", flush=True)
+    else:
+        print(f"state: {message}", flush=True)
 
 
 def _tail(text: str) -> str:
@@ -117,6 +151,55 @@ def _tail(text: str) -> str:
 
 def _int(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _size(value: object) -> int | None:
+    """A byte count from an API document (int, integral float or digits), else None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float):
+        return int(value) if value.is_integer() and value >= 0 else None
+    if isinstance(value, str) and re.fullmatch(r"[0-9]{1,15}", value.strip()):
+        return int(value.strip())
+    return None
+
+
+class Deadline:
+    """One time budget for a whole restore or persist.
+
+    Every gh call gets at most what is left, and a backoff that would outlive
+    the budget is not slept: the step fails with an ::error:: (and the ops
+    alert) instead of being cancelled silently by the job's timeout-minutes.
+    """
+
+    def __init__(self, seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
+        self.seconds = seconds
+        self.clock = clock
+        self.end = clock() + seconds
+
+    def left(self) -> float:
+        return self.end - self.clock()
+
+    def spent(self, what: str) -> Refused:
+        return Refused(f"{what}: the {self.seconds:g} s budget of this state step is spent; "
+                       f"failing now rather than being cancelled silently by the job timeout")
+
+    def bound(self, gh: Runner) -> Runner:
+        def call(args: list, timeout: float) -> Result:
+            left = self.left()
+            if left < 1:
+                raise self.spent("gh " + " ".join(str(a) for a in args[:2]))
+            return gh(args, min(timeout, left))
+        return call
+
+    def pace(self, sleep: Callable[[float], None]) -> Callable[[float], None]:
+        def wait(seconds: float) -> None:
+            if seconds >= self.left():
+                raise self.spent(f"a {seconds:g} s backoff")
+            sleep(seconds)
+        return wait
 
 
 # --------------------------------------------------------------------------- #
@@ -171,7 +254,10 @@ def retrying(what: str, attempt: Callable[[], tuple[bool, object, str]],
             return value
         print(f"state: {what}: attempt {n}/{ATTEMPTS} failed: {reason}", flush=True)
         if n < ATTEMPTS:
-            sleep(BACKOFF[min(n - 1, len(BACKOFF) - 1)])
+            try:
+                sleep(BACKOFF[min(n - 1, len(BACKOFF) - 1)])
+            except Refused as exc:  # the step's budget is spent: say what was failing
+                raise Refused(f"{what}: {reason}; {exc}") from None
     raise Refused(f"{what}: {reason} (gave up after {ATTEMPTS} attempts)")
 
 
@@ -210,6 +296,21 @@ def _assets(release: dict | None) -> dict[str, dict]:
     }
 
 
+def _dated(assets) -> list[str]:
+    """Dated copies, newest first (the name is a UTC stamp, so text order is time order)."""
+    return sorted((n for n in assets if isinstance(n, str) and DATED.match(n)), reverse=True)
+
+
+def _server_digest(asset: dict) -> str:
+    """The sha256 GitHub computed for an uploaded asset, or "" when it lists none."""
+    value = asset.get("digest")
+    if isinstance(value, str) and value.lower().startswith("sha256:"):
+        hexpart = value[len("sha256:"):].strip().lower()
+        if HEX64.match(hexpart):
+            return hexpart
+    return ""
+
+
 # --------------------------------------------------------------------------- #
 # The archive and its chain
 # --------------------------------------------------------------------------- #
@@ -219,6 +320,16 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(1 << 20), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def recorded_digests(text: str) -> list[str]:
+    """The sha256 digests a sidecar vouches for, in its order (newest first), once each."""
+    found: list[str] = []
+    for line in (text or "").splitlines():
+        token = (line.split() or [""])[0].lower()
+        if HEX64.match(token) and token not in found:
+            found.append(token)
+    return found
 
 
 def chain(doc: object) -> list[tuple[int, str]]:
@@ -244,11 +355,14 @@ def inspect_archive(path: Path) -> dict:
                 doc = json.loads(handle.read().decode("utf-8")) if handle else None
             except ValueError:
                 doc = None
+    durable = [m for m in files if not m.name.startswith(CACHE_PREFIXES)]
     seals = chain(doc)
     head = seals[-1] if seals else (0, "")
     return {
         "members": len(files),
         "bytes": sum(m.size for m in files),
+        "durable_members": len(durable),
+        "durable_bytes": sum(m.size for m in durable),
         "registre": registre is not None,
         "seals": seals,
         "seal_count": len(seals),
@@ -272,29 +386,36 @@ def read_anchor(path: Path) -> tuple[int, str] | None:
     return (seq, root) if seq > 0 and root else None
 
 
-def witness_refusal(seals: list[tuple[int, str]], witnessed: tuple[int, str] | None) -> str:
-    """Why a restored chain contradicts the git anchor, or "" when it does not."""
+def witness(seals: list[tuple[int, str]], witnessed: tuple[int, str] | None,
+            label: str = "the restored chain") -> tuple[str, str]:
+    """(BEHIND|FORK|"", why) of a chain against the git anchor."""
     if not witnessed:
-        return ""
+        return "", ""
     seq, root = witnessed
     have = dict(seals)
     if seq not in have:
         last = seals[-1][0] if seals else 0
-        return (f"the restored chain stops at seal n° {last} but the git anchor witnessed "
-                f"n° {seq}: this state is older than what was published")
+        return BEHIND, (f"{label} stops at seal n° {last} but the git anchor witnessed "
+                        f"n° {seq}: this state is older than what was published")
     if have[seq] != root:
-        return (f"seal n° {seq} is {have[seq][:12]} in the restored chain but {root[:12]} "
-                f"in the git anchor: a forked chain")
-    return ""
+        return FORK, (f"seal n° {seq} is {have[seq][:12]} in {label} but {root[:12]} "
+                      f"in the git anchor: a forked chain")
+    return "", ""
 
 
 # --------------------------------------------------------------------------- #
 # Restore
 # --------------------------------------------------------------------------- #
-def _download(gh: Runner, repo: str, tag: str, name: str, workdir: Path, size: object, sleep) -> Path:
+def _download(gh: Runner, repo: str, tag: str, name: str, workdir: Path, asset: dict, sleep) -> Path:
+    """One listed asset: its listed size, and GitHub's digest of it when listed."""
     target = workdir / name
+    size = _size(asset.get("size"))
+    if size is None:
+        raise Refused(f"the release lists no usable size for {name} ({asset.get('size')!r})")
+    server = _server_digest(asset)
 
     def attempt():
+        target.unlink(missing_ok=True)
         res = gh(["release", "download", tag, "--repo", repo, "--pattern", name,
                   "--dir", str(workdir), "--clobber"], TRANSFER_TIMEOUT)
         if res.code != 0:
@@ -302,57 +423,175 @@ def _download(gh: Runner, repo: str, tag: str, name: str, workdir: Path, size: o
         got = target.stat().st_size if target.is_file() else -1
         if got != size:
             return False, None, f"got {got} bytes, the release lists {size}"
+        if server and sha256_file(target) != server:
+            return False, None, f"the bytes received are not GitHub's sha256:{server[:12]}"
         return True, target, ""
     return retrying(f"download {name}", attempt, sleep)
 
 
+def recovery(repo: str, tag: str, assets: dict[str, dict], notes: dict[str, str],
+             witnessed: tuple[int, str] | None) -> str:
+    """What the release holds and the manual recovery steps, for a content refusal."""
+    dated = _dated(assets)
+    rows = [f"  - {name} ({_size(assets[name].get('size'))} bytes)"
+            + (f": {notes[name]}" if name in notes else "") for name in dated]
+    others = ", ".join(sorted(n for n in assets if not DATED.match(n))) or "nothing else"
+    want = f"seal n° {witnessed[0]} ({witnessed[1][:12]})" if witnessed else "the longest chain"
+    return "\n".join([
+        "",
+        f"Dated copies on release {tag!r} of {repo}, newest first ({len(dated)}):",
+        *(rows or ["  (none)"]),
+        f"Also on the release: {others}.",
+        "Manual recovery (AGENTS.md, 'When the state restore refuses'):",
+        f"  1. gh release download {tag} --repo {repo} --pattern 'state-*.tar.gz' --dir recovery",
+        f"  2. python3 -X utf8 scripts/state_sync.py inspect recovery/<copy>  "
+        f"(newest first, until one holds {want})",
+        "  3. cp recovery/<copy> state.tar.gz && sha256sum state.tar.gz > state.tar.gz.sha256",
+        f"  4. gh release upload {tag} state.tar.gz.sha256 state.tar.gz --repo {repo} --clobber  "
+        f"(the digest first)",
+        "  5. re-run the workflow.",
+        f"  No copy holds {want}? Never start fresh and never move the anchor back: the seal "
+        f"is public in https://vigieqc.com/registre/chain.json (AGENTS.md, last resort).",
+    ])
+
+
+def _dated_fallback(gh: Runner, repo: str, tag: str, workdir: Path, assets: dict[str, dict],
+                    recorded: list[str], rejected: set[str], witnessed, sleep,
+                    notes: dict[str, str]):
+    """(name, path, sha256, facts) of the newest vouched dated copy holding the anchored seal.
+
+    A copy is vouched for by GitHub's digest of it when the API lists one (the
+    download is checked against it), otherwise by a line of the sidecar. Each
+    passed-over copy gets a note for the refusal; None when none qualifies.
+    """
+    for name in _dated(assets):
+        asset = assets[name]
+        server = _server_digest(asset)
+        if server and server in rejected:
+            notes[name] = "the same bytes as the refused rolling asset"
+            continue
+        if not server and not recorded:
+            notes[name] = f"no digest vouches for it (GitHub lists none, no {DIGEST} line)"
+            continue
+        try:
+            path = _download(gh, repo, tag, name, workdir, asset, sleep)
+        except Refused as exc:
+            notes[name] = f"not downloaded: {exc}"
+            continue
+        digest = sha256_file(path)
+        verdict = ""
+        if digest in rejected:
+            verdict = "the same bytes as the refused rolling asset"
+        elif not server and digest not in recorded:
+            verdict = f"sha256 {digest[:12]} is in neither GitHub's digest nor {DIGEST}"
+        else:
+            try:
+                facts = inspect_archive(path)
+            except UNREADABLE as exc:
+                verdict = f"unreadable archive ({exc})"
+            else:
+                kind, _ = witness(facts["seals"], witnessed)
+                if not facts["registre"]:
+                    verdict = f"no {REGISTRE_MEMBER}"
+                elif kind == BEHIND:
+                    verdict = f"its chain stops at seal n° {facts['head_seq']}"
+                elif kind == FORK:
+                    verdict = f"seal n° {witnessed[0]} differs from the git anchor (a fork)"
+                else:
+                    return name, path, digest, facts
+        notes[name] = verdict
+        path.unlink(missing_ok=True)
+    return None
+
+
+def _restored(archive: Path, source: str, digest: str, facts: dict, unpack) -> dict:
+    count = (state_pack.unpack if unpack is None else unpack)(archive)
+    print(f"state: restored {count} file(s) from {source} (sha256 {digest[:12]}, "
+          f"{facts['members']} members, {facts['bytes']} bytes); registre "
+          f"{facts['seal_count']} seal(s), head {facts['head_root'][:12] or '-'}", flush=True)
+    return {"outcome": RESTORED, "source": source, "release": True,
+            "seal_count": facts["seal_count"], "head_seq": facts["head_seq"],
+            "head_root": facts["head_root"], "sha256": digest,
+            "members": facts["members"], "bytes": facts["bytes"],
+            "durable_members": facts["durable_members"], "durable_bytes": facts["durable_bytes"]}
+
+
 def restore(repo: str, tag: str, workdir: Path, *, gh: Runner = run_gh, sleep=time.sleep,
-            unpack=None, anchor: Path | None = None) -> dict:
+            unpack=None, anchor: Path | None = None, deadline: float = DEADLINE,
+            clock: Callable[[], float] = time.monotonic) -> dict:
     """Restore the state into data/, or raise Refused. Returns the baseline."""
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
+    budget = Deadline(deadline, clock)
+    gh, sleep = budget.bound(gh), budget.pace(sleep)
     witnessed = read_anchor(ANCHOR if anchor is None else anchor)
     release = find_release(gh, repo, tag, sleep)
     assets = _assets(release)
-    if ROLLING not in assets:
-        traces = sorted(n for n in assets if n == DIGEST or DATED.match(n))
-        if traces:
-            raise Refused(f"release {tag!r} holds {', '.join(traces)} but no {ROLLING}: an "
-                          f"interrupted persist, not a first run. Re-upload the newest dated "
-                          f"copy as {ROLLING} (and its digest) by hand, then re-run")
+    notes: dict[str, str] = {}
+    if not (ROLLING in assets or DIGEST in assets or _dated(assets)):
         if witnessed:
             raise Refused(f"no state in {repo}, but the git anchor witnessed seal n° "
-                          f"{witnessed[0]}: a fresh start would fork the published chain")
+                          f"{witnessed[0]}: a fresh start would fork the published chain"
+                          + recovery(repo, tag, assets, notes, witnessed))
         missing = f"release {tag!r}" if release is None else f"{ROLLING} in release {tag!r}"
         _say("warning", f"FRESH START: {repo} has no {missing}; collecting into an empty "
                         f"memory, the registre begins at seal n° 1")
-        return {"outcome": FRESH, "release": release is not None, "seal_count": 0,
-                "head_seq": 0, "head_root": "", "sha256": "", "members": 0, "bytes": 0}
+        return {"outcome": FRESH, "source": "", "release": release is not None, "seal_count": 0,
+                "head_seq": 0, "head_root": "", "sha256": "", "members": 0, "bytes": 0,
+                "durable_members": 0, "durable_bytes": 0}
 
-    archive = _download(gh, repo, tag, ROLLING, workdir, assets[ROLLING].get("size"), sleep)
-    digest = sha256_file(archive)
+    recorded: list[str] | None = None
     if DIGEST in assets:
-        sidecar = _download(gh, repo, tag, DIGEST, workdir, assets[DIGEST].get("size"), sleep)
-        recorded = (sidecar.read_text(encoding="utf-8", errors="replace").split() or [""])[0].lower()
-        if recorded != digest:
-            raise Refused(f"{ROLLING} is sha256 {digest[:12]} but {DIGEST} recorded "
-                          f"{recorded[:12] or 'nothing'}: refusing an unverified state")
+        sidecar = _download(gh, repo, tag, DIGEST, workdir, assets[DIGEST], sleep)
+        recorded = recorded_digests(sidecar.read_text(encoding="utf-8", errors="replace"))
+    rejected: set[str] = set()
+    if ROLLING not in assets:
+        traces = sorted(n for n in assets if n == DIGEST or DATED.match(n))
+        problem = (f"release {tag!r} holds {', '.join(traces)} but no {ROLLING}: an "
+                   f"interrupted persist, not a first run")
+        cause = "rolling asset missing"
     else:
-        _say("warning", f"{ROLLING} has no recorded digest ({DIGEST}): the one-time legacy "
-                        f"archive, accepted unverified (sha256 {digest[:12]})")
-    facts = inspect_archive(archive)
-    if not facts["registre"]:
-        raise Refused(f"the restored state carries no {REGISTRE_MEMBER}")
-    contradiction = witness_refusal(facts["seals"], witnessed)
-    if contradiction:
-        raise Refused(contradiction)
-    count = (state_pack.unpack if unpack is None else unpack)(archive)
-    print(f"state: restored {count} file(s) from {ROLLING} (sha256 {digest[:12]}, "
-          f"{facts['members']} members, {facts['bytes']} bytes); registre "
-          f"{facts['seal_count']} seal(s), head {facts['head_root'][:12] or '-'}", flush=True)
-    return {"outcome": RESTORED, "release": True, "seal_count": facts["seal_count"],
-            "head_seq": facts["head_seq"], "head_root": facts["head_root"], "sha256": digest,
-            "members": facts["members"], "bytes": facts["bytes"]}
+        archive = _download(gh, repo, tag, ROLLING, workdir, assets[ROLLING], sleep)
+        digest = sha256_file(archive)
+        problem = cause = ""
+        if recorded is None:
+            _say("warning", f"{ROLLING} has no recorded digest ({DIGEST}): the one-time legacy "
+                            f"archive, or a persist killed while replacing the digest; accepted "
+                            f"unverified (sha256 {digest[:12]}) and still checked against the anchor")
+        elif digest in recorded:
+            line = recorded.index(digest)
+            print(f"state: {ROLLING} sha256 {digest[:12]} matches "
+                  + ("the digest recorded by the last persist" if line == 0 else
+                     f"line {line + 1} of {DIGEST}, the previous state: the last persist stopped "
+                     f"between its digest and its archive"), flush=True)
+        else:
+            rejected.add(digest)
+            problem = (f"{ROLLING} is sha256 {digest[:12]} but {DIGEST} recorded "
+                       f"{', '.join(d[:12] for d in recorded) or 'nothing'}: refusing an "
+                       f"unverified state")
+            cause = "rolling asset unverified"
+        if not problem:
+            facts = inspect_archive(archive)
+            if not facts["registre"]:
+                raise Refused(f"the restored state carries no {REGISTRE_MEMBER}"
+                              + recovery(repo, tag, assets, notes, witnessed))
+            kind, why = witness(facts["seals"], witnessed)
+            if kind == FORK:
+                raise Refused(why + recovery(repo, tag, assets, notes, witnessed))
+            if not kind:
+                return _restored(archive, ROLLING, digest, facts, unpack)
+            rejected.add(digest)
+            problem, cause = why, "rolling asset behind the anchor"
+
+    found = _dated_fallback(gh, repo, tag, workdir, assets, recorded or [], rejected,
+                            witnessed, sleep, notes)
+    if found is None:
+        raise Refused(problem + recovery(repo, tag, assets, notes, witnessed))
+    name, path, digest, facts = found
+    _say("warning", f"{cause}; restored from {name} (sha256 {digest[:12]}, registre "
+                    f"{facts['seal_count']} seal(s), head n° {facts['head_seq']}): {problem}. "
+                    f"This run's persist re-publishes it as {ROLLING}")
+    return _restored(path, name, digest, facts, unpack)
 
 
 def write_outputs(path: str | None, baseline: dict) -> None:
@@ -381,10 +620,10 @@ def persist_refusals(baseline: dict, facts: dict, *, allow_shrink: bool) -> tupl
     if head_seq and dict(facts["seals"]).get(head_seq) != head_root:
         refusals.append(f"the restored head seal n° {head_seq} ({head_root[:12]}) is not in the "
                         f"packed chain: refusing a fork")
-    for key, label in (("members", "member count"), ("bytes", "total size")):
+    for key, label in (("durable_members", "member count"), ("durable_bytes", "total size")):
         was, now = _int(baseline.get(key)), facts[key]
         if was and now < was * MIN_FRACTION:
-            message = (f"{label} fell from {was} to {now}, below "
+            message = (f"{label} (regenerated caches excluded) fell from {was} to {now}, below "
                        f"{round(MIN_FRACTION * 100)} percent of the restored state")
             if allow_shrink:
                 warnings.append(f"{message}; uploading anyway ({ALLOW_SHRINK}=1)")
@@ -405,20 +644,19 @@ def _confirm(gh: Runner, repo: str, tag: str, sleep, expected: dict[str, tuple[i
     assets = _assets(lookup_release(gh, repo, tag, sleep, absent_ok=False))
     for name, (size, digest) in expected.items():
         asset = assets.get(name) or {}
-        if asset.get("size") != size or asset.get("state", "uploaded") != "uploaded":
+        if _size(asset.get("size")) != size or asset.get("state", "uploaded") != "uploaded":
             raise Refused(f"upload of {name} not confirmed: the release lists "
                           f"{asset.get('size', 'nothing')} bytes, we sent {size}")
-        server = asset.get("digest")
-        if digest and isinstance(server, str) and server.startswith("sha256:") \
-                and server != f"sha256:{digest}":
-            raise Refused(f"upload of {name} not confirmed: GitHub computed {server[:19]}, "
+        server = _server_digest(asset)
+        if digest and server and server != digest:
+            raise Refused(f"upload of {name} not confirmed: GitHub computed sha256:{server[:12]}, "
                           f"we sent sha256:{digest[:12]}")
     return assets
 
 
 def prune_plan(names, keep: int, protect: set[str]) -> list[str]:
     """Dated copies beyond the newest `keep`; never the rolling asset or a protected name."""
-    dated = sorted((n for n in names if isinstance(n, str) and DATED.match(n)), reverse=True)
+    dated = _dated(names)
     return [n for n in dated[max(keep, 1):] if n not in protect and n != ROLLING]
 
 
@@ -443,6 +681,19 @@ def read_baseline(workdir: Path) -> dict:
     return doc if isinstance(doc, dict) else {}
 
 
+def sidecar_text(digest: str, previous: object) -> str:
+    """The digest sidecar: the new digest first, then the restored one (when there is one).
+
+    The second line keeps the rolling asset that is still on the release
+    verifiable if this run dies between the sidecar upload and the archive upload.
+    """
+    lines = [digest]
+    prev = str(previous or "").strip().lower()
+    if HEX64.match(prev) and prev != digest:
+        lines.append(prev)
+    return "".join(f"{d}  {ROLLING}\n" for d in lines)
+
+
 def _utcnow() -> datetime:
     # The dated asset name is an ops artefact, not a ledger: wall clock is fine.
     return datetime.now(timezone.utc)
@@ -450,7 +701,8 @@ def _utcnow() -> datetime:
 
 def persist(repo: str, tag: str, workdir: Path, *, dated: bool = False, keep: int = KEEP_DATED,
             gh: Runner = run_gh, sleep=time.sleep, now=_utcnow, pack=None,
-            environ=None) -> dict:
+            environ=None, deadline: float = DEADLINE,
+            clock: Callable[[], float] = time.monotonic) -> dict:
     """Pack data/ and upload it, or raise Refused with the store untouched."""
     workdir = Path(workdir)
     environ = os.environ if environ is None else environ
@@ -458,6 +710,8 @@ def persist(repo: str, tag: str, workdir: Path, *, dated: bool = False, keep: in
     if baseline.get("outcome") not in (RESTORED, FRESH):
         raise Refused(f"restore outcome was {baseline.get('outcome') or 'unknown'}: the store "
                       f"is only written over a state that was read")
+    budget = Deadline(deadline, clock)
+    gh, sleep = budget.bound(gh), budget.pace(sleep)
     archive = workdir / ROLLING
     (state_pack.pack if pack is None else pack)(archive)
     facts = inspect_archive(archive)
@@ -471,7 +725,7 @@ def persist(repo: str, tag: str, workdir: Path, *, dated: bool = False, keep: in
     digest = sha256_file(archive)
     size = archive.stat().st_size
     sidecar = workdir / DIGEST
-    sidecar.write_bytes(f"{digest}  {ROLLING}\n".encode("ascii"))
+    sidecar.write_bytes(sidecar_text(digest, baseline.get("sha256")).encode("ascii"))
     if not baseline.get("release"):
         res = gh(["release", "create", tag, "--repo", repo, "--title", RELEASE_TITLE,
                   "--notes", RELEASE_NOTES], API_TIMEOUT)
@@ -483,11 +737,15 @@ def persist(repo: str, tag: str, workdir: Path, *, dated: bool = False, keep: in
         shutil.copyfile(archive, workdir / copy)
         _upload(gh, repo, tag, workdir / copy, sleep)
         _confirm(gh, repo, tag, sleep, {copy: (size, digest)})
-    # Only now may the rolling asset be replaced: --clobber deletes it first.
-    _upload(gh, repo, tag, archive, sleep)
+    # Only now may the rolling pair be replaced (--clobber deletes, then uploads).
+    # The digest goes first and still names the restored archive: a run killed
+    # before the archive upload leaves the old archive vouched for by line 2,
+    # after it the new one by line 1, in between no archive (the restore then
+    # takes the dated copy, which line 1 or GitHub's digest vouches for).
     _upload(gh, repo, tag, sidecar, sleep)
-    assets = _confirm(gh, repo, tag, sleep,
-                      {ROLLING: (size, digest), DIGEST: (sidecar.stat().st_size, "")})
+    _upload(gh, repo, tag, archive, sleep)
+    assets = _confirm(gh, repo, tag, sleep, {ROLLING: (size, digest),
+                                             DIGEST: (sidecar.stat().st_size, sha256_file(sidecar))})
     pruned: list[str] = []
     if dated:
         try:
@@ -499,6 +757,37 @@ def persist(repo: str, tag: str, workdir: Path, *, dated: bool = False, keep: in
           + (f"; dated copy {copy}, pruned {len(pruned)}" if dated else ""), flush=True)
     return {"sha256": digest, "dated": copy, "pruned": pruned, "seal_count": facts["seal_count"],
             "members": facts["members"], "bytes": facts["bytes"]}
+
+
+# --------------------------------------------------------------------------- #
+# Inspect (the manual runbook's check)
+# --------------------------------------------------------------------------- #
+def inspect_local(path: Path, anchor: Path) -> int:
+    """Print what a local state archive holds; 0 only when it is usable under the anchor."""
+    path = Path(path)
+    try:
+        facts = inspect_archive(path)
+        digest = sha256_file(path)
+    except UNREADABLE as exc:
+        _say("error", f"{path.name}: unreadable state archive ({exc})")
+        return 1
+    print(f"state: {path.name}: sha256 {digest}, {facts['members']} members, {facts['bytes']} "
+          f"bytes; registre {facts['seal_count']} seal(s), head n° {facts['head_seq']} "
+          f"{facts['head_root'][:12] or '-'}", flush=True)
+    if not facts["registre"]:
+        _say("error", f"{path.name} carries no {REGISTRE_MEMBER}")
+        return 1
+    witnessed = read_anchor(anchor)
+    if not witnessed:
+        print("state: the git anchor witnesses no seal; nothing to compare", flush=True)
+        return 0
+    kind, why = witness(facts["seals"], witnessed, label=f"the chain in {path.name}")
+    if kind:
+        _say("error", why)
+        return 1
+    print(f"state: {path.name} holds seal n° {witnessed[0]} ({witnessed[1][:12]}), as the git "
+          f"anchor witnessed", flush=True)
+    return 0
 
 
 # --------------------------------------------------------------------------- #
@@ -518,7 +807,13 @@ def main(argv: list[str] | None = None, *, gh: Runner = run_gh, sleep=time.sleep
             cmd.add_argument("--dated", action="store_true",
                              help="upload an immutable dated copy first (full refresh only)")
             cmd.add_argument("--keep", type=int, default=KEEP_DATED)
+    check = sub.add_parser("inspect", help="what a local state archive holds, against the git anchor")
+    check.add_argument("file", type=Path)
+    check.add_argument("--anchor", type=Path, default=None)
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+
+    if args.command == "inspect":
+        return inspect_local(args.file, ANCHOR if args.anchor is None else args.anchor)
 
     if args.command == "persist":
         try:
