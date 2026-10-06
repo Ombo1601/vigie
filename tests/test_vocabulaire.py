@@ -305,6 +305,19 @@ class ClassifyType(unittest.TestCase):
         self.assertEqual(V.classify_type(["La caricature du jour"]), ("unclassified", 0))
         self.assertEqual(V.classify_type(["A quiet afternoon by the river"]), ("unclassified", 0))
 
+    def test_a_team_name_alone_is_not_a_sports_event(self) -> None:
+        # Team names are weak cues: a book, a mural or a street named after a team is not a match.
+        for title in ("Un album illustré raconte l'histoire du Canadien de Montréal",
+                      "Une murale rend hommage aux Nordiques",
+                      "Raptors fans in town",
+                      "Les Alouettes de Montréal, un livre pour enfants"):
+            self.assertEqual(V.classify_type([title])[0], "unclassified", title)
+        # With a second sports cue (in the headline or in another member title) the type is proposed.
+        self.assertEqual(V.classify_type(["Les Remparts de Québec gagnent leur match"])[0], "sports-event")
+        self.assertEqual(V.classify_type(["Raptors win the playoffs opener"])[0], "sports-event")
+        self.assertEqual(V.classify_type(["Les Alouettes en route", "Le joueur vedette est blessé"])[0],
+                         "sports-event")
+
     def test_one_weak_word_in_one_title_is_not_evidence(self) -> None:
         # "chaleur" alone, or a lone "accident" with no strong marker, stays unclassified.
         self.assertEqual(V.classify_type(["Un accident de parcours pour le candidat"])[0], "unclassified")
