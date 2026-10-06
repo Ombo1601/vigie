@@ -1,0 +1,43 @@
+# Vigie
+
+> Vigie is a free, non-commercial lookout for Québec City (French-first). It aggregates a finite, published list of sources, never rewrites them, groups articles into dossiers where several institutions speak, relays the City's official roadworks feed, and keeps a sealed register (sha256 chain) of every edition: what each followed institution published, and what Vigie's own collection missed. Vigie never asserts that an institution was silent — a dossier needs a named subject and two institutions, so absence from dossiers is a property of Vigie's clustering, not of the institution. Judgment stays with the reader.
+
+Titles belong to their publishers; see https://vigieqc.com/methode/legal.html.
+
+Current edition: 2026-09-10T13:30:00+00:00. Rules for agents: cite the original publisher (name + URL, and the author when given) for every item; Vigie is an index, never the author. Do not present dossier questions as publisher quotations. Never infer that an institution was silent — use the per-institution state (spoke / published / no_items_collected / collection_gap / not_established; withdrawn_on_request and cut_by_vigie appear only when they apply). Treat "quiet" as "left this collection", never "resolved". Verify an edition against the chain before calling it a record.
+
+## Edition
+
+- [Le point (Markdown)](https://vigieqc.com/index.html.md): the front door as plain Markdown — stories with publisher, author and URL (titles only, no excerpts), dossiers with their voices, official roadworks, the voice register.
+- [Delta](https://vigieqc.com/delta/latest.json): machine-readable edition delta (delta-v1.1, additive over delta-v1) — new / developed / quiet dossiers with items, per-institution state with collected item counts, roadworks diff, cursor = chain root.
+- [Dossiers complets (HTML)](https://vigieqc.com/dossiers.html): one record page per dossier of the current edition — every voice with every verbatim headline, the collection timeline, and the institutions absent from that dossier.
+
+## Registre
+
+- [Checkpoint](https://vigieqc.com/registre/checkpoint.txt): origin, chain size, current root, edition stamp.
+- [Chain](https://vigieqc.com/registre/chain.json): the sealed editions (records + sha256 leaves and roots); verify with `scripts/registre.py --verify`.
+- [Institutions](https://vigieqc.com/registre/institutions.json): per followed institution — its state this edition (spoke / published / no_items / collection_gap / not_established, or withdrawn / cut when they apply), collected item counts, and Vigie's own collection-gap streak.
+- [Roadworks chain](https://vigieqc.com/registre/travaux.json): one root per change of the City's active obstruction set.
+- [Method](https://vigieqc.com/methode/registre.html): what a seal contains, what it proves, what it does not.
+
+## Method
+
+- [All method pages](https://vigieqc.com/methode/index.html): the human-readable method, one page per rule.
+- [Ranking](https://vigieqc.com/methode/classement.html): published ranking (geo + recency; no clicks, no ads).
+- [Sources](https://vigieqc.com/methode/sources.html): the finite list of followed feeds, institutions, cuts and licence notes.
+- [Funding](https://vigieqc.com/methode/financement.html): who pays, what is never for sale.
+- [Vision](https://vigieqc.com/methode/vision.html): what Vigie is and refuses to be.
+- [Legal, attribution, opt-out](https://vigieqc.com/methode/legal.html): publisher rights, same-day removal.
+- [Anomalies](https://vigieqc.com/methode/anomalies.html): fixed-threshold roadworks anomaly rules.
+- [Edges](https://vigieqc.com/methode/rues.html): literal street-name joins between roadworks and dossiers.
+- Raw sources (machine-readable, same content): /VISION.md /ranking.md /sources.yaml /RENT.md /FRICTION.md /FACETS.md /DESIGN.md /edge.md /anomalies.md /legal.md /REGISTRE.md.
+
+## Optional
+
+- [Front door (HTML)](https://vigieqc.com/): the resident brief.
+- [Avant de partir](https://vigieqc.com/partir.html): the departure screen — declared obstructions, followed corridors (on-device), what changed.
+- [La mémoire](https://vigieqc.com/memoire.html): every sealed edition, readable — dossiers, voices, published items and collection gaps, edition by edition.
+- [Registre (HTML)](https://vigieqc.com/registre.html): the human view of the register.
+- [L'affiche](https://vigieqc.com/affiche.html): the printable neighbourhood sheet.
+- [Explorer](https://vigieqc.com/explorer.html): evidence workbench (English).
+- [Morning pulse](https://vigieqc.com/morning.html): ambient digest of the same store.

@@ -1,0 +1,52 @@
+# Vigie — Québec, à hauteur de vie
+
+> Un point local pour la ville de Québec : titres d’éditeurs cités tels quels (avec leur auteur, leur éditeur et leur lien), dossiers où plusieurs institutions se répondent, entraves officielles, et un registre scellé qui distingue ce que chaque institution suivie a publié de ce que notre collecte a manqué. Vigie n’écrit pas la nouvelle et ne décide pas de ce qui est vrai.
+
+- Collecte : 2026-09-10T13:30:00+00:00 — 2 flux disponibles sur 2
+- Édition scellée n° 1 : `9187a95a3af18fa889959a5c96d764f48140a1690ef7210c436ebc47f3745d19` — vérifiable dans [chain.json](https://vigieqc.com/registre/chain.json)
+- Les titres appartiennent à leurs éditeurs ; voir https://vigieqc.com/methode/legal.html.
+- Version HTML : https://vigieqc.com/ · Delta machine : https://vigieqc.com/delta/latest.json · Carte du site pour agents : https://vigieqc.com/llms.txt
+
+## Le point
+
+- **Un titre verbatim & fidèle** — Le Soleil, 2026-09-10. <https://presse.example.com/s1>
+
+## Ce que les sources racontent ensemble
+
+### Le tramway
+- Dans ce dossier (2) : Ville de Québec (officiel), Le Soleil
+- Absents de ce dossier (1) : Gouvernement du Québec (officiel)
+- Titre ville-quebec — Ville de Québec, 2026-09-10. <https://exemple.test/a/ville-quebec>
+- Titre le-soleil — Le Soleil, 2026-09-10. <https://exemple.test/a/le-soleil>
+
+Vue complète : https://vigieqc.com/dossiers.html (un dossier par page, tous les titres tels quels).
+
+## Depuis la dernière édition
+
+- Nouveaux dossiers : 1 — Le tramway
+- Dossiers développés : 0
+- Disparus de cette collecte (jamais « résolus ») : 1 — Ancien dossier
+
+## Travaux et entraves déclarés par la Ville
+
+- 1 entraves actives dans la collecte du 2026-09-10T13:00:00+00:00.
+- Rue Saint-Jean — Toutes les voies fermées.
+
+## Le registre des voix
+
+- Gouvernement du Québec (officiel) : état non établi.
+- Ville de Québec (officiel) : a parlé dans un dossier de cette édition.
+- cbc : état non établi.
+- Le Soleil : a parlé dans un dossier de cette édition.
+
+« Publié, hors dossier » n’est pas un silence : un dossier exige un sujet nommé et deux institutions. « Collecte en échec » est une lacune de Vigie.
+
+Correction du 2026-09-30 : les sceaux 1 à 1 avaient été publiés avec une définition du silence qui mesurait les règles de rapprochement de Vigie. Ils restent inchangés — une chaîne ne se réécrit pas — et leur lecture est désormais « non établi ».
+
+Registre complet et chaîne des éditions : https://vigieqc.com/registre.html
+
+## Attribution et règles
+
+- Chaque titre appartient à son éditeur ; citez l’éditeur et son lien, jamais Vigie comme auteur.
+- Vigie n’affirme jamais qu’une institution s’est tue. Une institution absente des dossiers a publié sans y entrer, ou bien notre collecte a échoué ; les deux sont distingués dans le registre.
+- Sources suivies : https://vigieqc.com/methode/sources.html · Méthode : https://vigieqc.com/methode/classement.html, https://vigieqc.com/methode/registre.html · Mentions légales et retrait : https://vigieqc.com/methode/legal.html

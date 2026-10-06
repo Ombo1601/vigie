@@ -469,3 +469,39 @@ Founder decisions: (a) Hydro-Québec in owner group `etat-quebec`;
 seals ever fold into the main record (schema 3); (e) until gate 1 passes on
 human labels, whether the brief may show "Regroupement certain" at all or
 only "probable"; (f) the 8 uncertain gold pairs.
+
+## 17. Machine layer: delta-v2
+
+`scripts/substrate.py` writes `public/delta/v2/latest.json` (method
+`delta-v2 edition-cursor`) next to the unchanged `delta/latest.json`
+(delta-v1.1). Same cursor: the main registre chain root. Inputs are stored
+files only (`data/events/latest_events.json`, `data/normalized/latest_enriched.json`,
+`sources.yaml`, `takedowns.yaml`), so the hourly roads-only lane produces the
+same file from the same inputs.
+
+Per event: `event_id`, codes (`type`, `family`, `places`), `{fr, en}` label,
+`activity`, `window_state`, `tier` (the weakest matcher link, `null` for a
+single-member event) with `grouping: "automatic"`, `counts` (`members`,
+`members_in_edition`, `institutions`, `origins`, `reporting_origins`,
+`declarations`, `languages`, `language_pairs`), `origin_classes`,
+`institutions`, `languages`, `anchors` (`type` + `ref` only), `lineage`,
+`seals`, page URLs in both languages, and `members`. A member always carries
+codes; only a member of the **current** edition whose source is enabled also
+carries `publisher`, `author` (when the feed gave one), `title` and `url`
+(never an excerpt, never a summary, never a fact value).
+
+R10 is re-applied at emit time: a withdrawn member is dropped, and every count,
+institution, language, origin group and item anchor is **recomputed** from the
+members that remain (the builder's own counts still include a withdrawn member
+until its next full run). An event left with no member disappears. Events are
+listed in `event_id` order (a deterministic order, not a ranking); `by_activity`
+buckets them.
+
+Absent or unbuilt events data: delta-v2 is omitted (a stale file is removed),
+the reason is printed, delta-v1 and the Markdown twin are byte-identical to a
+build without the event layer, and `llms.txt` lists no event pages.
+
+Deprecation: once delta-v2 is published, delta-v1 carries
+`deprecation: {status, since, sunset, successor, note}`. `since` is the first
+sealed edition clock at or after 2026-10-06 and `sunset` is 90 days later, so
+the date comes from the chain and does not slide with each render.

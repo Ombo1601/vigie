@@ -1,0 +1,232 @@
+{
+  "method": "delta-v1.1 edition-cursor",
+  "site": "https://vigieqc.com",
+  "attribution": "Titles belong to their publishers; see https://vigieqc.com/methode/legal.html.",
+  "edition": "2026-09-10T13:30:00+00:00",
+  "previous_edition": "",
+  "cursor": "9187a95a3af18fa889959a5c96d764f48140a1690ef7210c436ebc47f3745d19",
+  "previous_cursor": "",
+  "checkpoint": {
+    "seq": 1,
+    "root": "9187a95a3af18fa889959a5c96d764f48140a1690ef7210c436ebc47f3745d19",
+    "url": "https://vigieqc.com/registre/checkpoint.txt"
+  },
+  "collection": {
+    "at": "2026-09-10T13:30:00+00:00",
+    "feeds_ok": 2,
+    "feeds_total": 2,
+    "partial": false
+  },
+  "dossiers": {
+    "has_previous": true,
+    "new": [
+      {
+        "issue_id": "a",
+        "question": "Le tramway",
+        "label_kind": "",
+        "geo_focus": [],
+        "item_count": 3,
+        "official_voice_count": 1,
+        "media_remix": false,
+        "spoke": [
+          {
+            "institution_id": "ville-quebec",
+            "institution_name": "Ville de Québec",
+            "source_kind": "official",
+            "item_count": 1
+          },
+          {
+            "institution_id": "le-soleil",
+            "institution_name": "Le Soleil",
+            "source_kind": "media",
+            "item_count": 1
+          }
+        ],
+        "silent": [
+          {
+            "institution_id": "gouv-quebec",
+            "institution_name": "Gouvernement du Québec",
+            "source_kind": "official"
+          }
+        ],
+        "silent_scope": "dossier",
+        "silent_meaning": "absent from this dossier only; not a claim about the edition or the institution",
+        "items": [
+          {
+            "title": "Titre ville-quebec",
+            "author": "",
+            "url": "https://exemple.test/a/ville-quebec",
+            "source_name": "Ville de Québec",
+            "institution_id": "ville-quebec",
+            "published_at": "2026-09-10T12:00:00+00:00"
+          },
+          {
+            "title": "Titre le-soleil",
+            "author": "",
+            "url": "https://exemple.test/a/le-soleil",
+            "source_name": "Le Soleil",
+            "institution_id": "le-soleil",
+            "published_at": "2026-09-10T12:00:00+00:00"
+          }
+        ]
+      }
+    ],
+    "developed": [],
+    "quiet": [
+      {
+        "issue_id": "gone",
+        "question": "Ancien dossier",
+        "label_kind": "",
+        "geo_focus": [
+          "quebec-city"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "issue_id": "a",
+        "question": "Le tramway",
+        "label_kind": "",
+        "geo_focus": [],
+        "item_count": 3,
+        "official_voice_count": 1,
+        "media_remix": false,
+        "spoke": [
+          {
+            "institution_id": "ville-quebec",
+            "institution_name": "Ville de Québec",
+            "source_kind": "official",
+            "item_count": 1
+          },
+          {
+            "institution_id": "le-soleil",
+            "institution_name": "Le Soleil",
+            "source_kind": "media",
+            "item_count": 1
+          }
+        ],
+        "silent": [
+          {
+            "institution_id": "gouv-quebec",
+            "institution_name": "Gouvernement du Québec",
+            "source_kind": "official"
+          }
+        ],
+        "silent_scope": "dossier",
+        "silent_meaning": "absent from this dossier only; not a claim about the edition or the institution",
+        "items": [
+          {
+            "title": "Titre ville-quebec",
+            "author": "",
+            "url": "https://exemple.test/a/ville-quebec",
+            "source_name": "Ville de Québec",
+            "institution_id": "ville-quebec",
+            "published_at": "2026-09-10T12:00:00+00:00"
+          },
+          {
+            "title": "Titre le-soleil",
+            "author": "",
+            "url": "https://exemple.test/a/le-soleil",
+            "source_name": "Le Soleil",
+            "institution_id": "le-soleil",
+            "published_at": "2026-09-10T12:00:00+00:00"
+          }
+        ]
+      }
+    ]
+  },
+  "institutions": {
+    "note": "State per followed institution for this edition. 'published' means its feeds returned items that no dossier picked up — the institution was NOT silent. 'collection_gap' means Vigie failed to collect it. No state is ever derived from Vigie's clustering alone. 'withdrawn_on_request' (a publisher's removal request) and 'cut_by_vigie' (Vigie's own decision to stop following, sources.yaml) appear only when they apply; neither is a silence.",
+    "spoke": [
+      {
+        "institution_id": "ville-quebec",
+        "institution_name": "Ville de Québec",
+        "source_kind": "official",
+        "current": "spoke"
+      },
+      {
+        "institution_id": "le-soleil",
+        "institution_name": "Le Soleil",
+        "source_kind": "media",
+        "current": "spoke"
+      }
+    ],
+    "published": [],
+    "no_items_collected": [],
+    "collection_gap": [],
+    "not_established": [
+      {
+        "institution_id": "gouv-quebec",
+        "institution_name": "Gouvernement du Québec",
+        "source_kind": "official",
+        "current": "not_established"
+      },
+      {
+        "institution_id": "cbc",
+        "institution_name": "cbc",
+        "source_kind": "media",
+        "current": "not_established"
+      }
+    ]
+  },
+  "correction": {
+    "method": "registre-correction-v1",
+    "corrected_at": "2026-09-30",
+    "affects_seal_min": 1,
+    "affects_seal_max": 1,
+    "affects_count": 1,
+    "first_seal_with_facts": null,
+    "wrong": "Jusqu’à cette date, le registre définissait « n’a pas parlé » par « absent de tout dossier de l’édition ». Un dossier exige un sujet nommé et deux institutions : la plupart des articles collectés n’entrent donc dans aucun dossier. Le registre mesurait les règles de rapprochement de Vigie, pas la parole des institutions — et il présentait comme un silence institutionnel des éditions où les flux avaient pourtant été collectés avec succès.",
+    "now": "Depuis cette date, chaque édition scelle le nombre d’articles réellement collectés par institution. Une institution dont les flux ont rendu des articles est « a publié, hors dossier » ; une collecte en échec est signalée comme une lacune de Vigie. Aucun compteur ne s’accumule contre une institution du fait de nos règles de rapprochement.",
+    "chain": "Les sceaux déjà publiés restent octet pour octet identiques : une chaîne ne se réécrit pas. Seule leur lecture a changé — elle est désormais « non établi » plutôt qu’une accusation."
+  },
+  "roadworks": {
+    "fetched_at": "2026-09-10T13:00:00+00:00",
+    "active_count": 1,
+    "source": "",
+    "dataset_url": null,
+    "license_note": null,
+    "diff": {
+      "has_previous": false,
+      "new_count": 0,
+      "removed_count": 0,
+      "changed_count": 0
+    },
+    "most_restrictive": [
+      {
+        "event_id": "e1",
+        "road_names": [
+          "Rue Saint-Jean"
+        ],
+        "vehicle_impact": "all-lanes-closed",
+        "impact_label": "Toutes les voies fermées",
+        "start_date": null,
+        "end_date": null,
+        "end_date_accuracy": null
+      }
+    ],
+    "note": "Déclarations officielles de la Ville de Québec, relayées telles quelles. Retiré du flux ≠ terminé."
+  },
+  "links": {
+    "brief": "https://vigieqc.com/",
+    "brief_markdown": "https://vigieqc.com/index.html.md",
+    "dossiers": "https://vigieqc.com/dossiers.html",
+    "depart": "https://vigieqc.com/partir.html",
+    "memoire": "https://vigieqc.com/memoire.html",
+    "registre": "https://vigieqc.com/registre.html",
+    "chain": "https://vigieqc.com/registre/chain.json",
+    "institutions": "https://vigieqc.com/registre/institutions.json",
+    "sources": "https://vigieqc.com/methode/sources.html",
+    "method": "https://vigieqc.com/methode/registre.html",
+    "legal": "https://vigieqc.com/methode/legal.html"
+  },
+  "rules_for_agents": [
+    "Cite the original publisher (source_name + url) and the author when `author` is present, for every item; Vigie is an index, never the author.",
+    "Titles belong to their publishers; see https://vigieqc.com/methode/legal.html.",
+    "Titles are verbatim publisher titles (truncated only). Do not present Vigie text as a quotation of the publisher.",
+    "Never infer that an institution was silent. 'published' means it produced items this edition that no dossier picked up; 'collection_gap' means Vigie failed to collect it. Only 'spoke' means it entered a dossier.",
+    "A dossier needs a named subject and two institutions, so most collected items never enter one. Absence from dossiers is a property of Vigie's clustering, not of the institution.",
+    "'quiet' dossiers left this collection; nothing is 'resolved' or 'ended'.",
+    "Verify this edition against registre/chain.json before treating it as a record."
+  ]
+}
