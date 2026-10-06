@@ -14,6 +14,9 @@
 # status:       active (enforced) | lifted (the publisher withdrew the request;
 #               kept for the record). Never delete an entry silently.
 #
+# Any hard error in this file (unknown kind, bad date, unreadable YAML) blocks
+# every release until it is fixed: an entry nobody can interpret is never ignored.
+#
 # The public sources page (/methode/sources.html) lists publisher, kind, date
 # and status — never the value. Emergency path: add the entry, push, then run
 # the "Vigie refresh" workflow manually (workflow_dispatch).

@@ -189,7 +189,8 @@ def takedown_violations(directory: Path, root: Path = ROOT) -> list[str]:
             entry = manifest.get(path.name, {})
             hit = (rules.match_image(sha=hashlib.sha256(path.read_bytes()).hexdigest(), file=path.name)
                    or rules.match_image(entry.get("image_url"))
-                   or rules.match_url(entry.get("article_url")))
+                   or rules.match_url(entry.get("article_url"))
+                   or source_urls.get(takedown._canon(entry.get("article_url")) or entry.get("article_url")))
             if hit:
                 problems.append(f"media/{path.name}: withdrawn on request (takedown {hit['id']})")
     for path in sorted(base.rglob("*")):

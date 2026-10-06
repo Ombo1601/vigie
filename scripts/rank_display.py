@@ -2534,7 +2534,11 @@ def main() -> None:
     candidates, withdrawn_n = takedown.filter_items(candidates, rules)
     if rules:
         try:
-            purged = takedown.purge_media(rules)
+            # A source takedown reaches stored previews through the articles
+            # of that source (the roads-only lane skips takedown.py).
+            hint = (takedown.source_article_urls(set(rules.sources), takedown.ARTICLE_STORES)
+                    if rules.sources else None)
+            purged = takedown.purge_media(rules, article_urls=hint)
         except OSError as exc:
             purged = {"files": 0, "entries": 0}
             print(f"takedowns: media purge FAILED ({type(exc).__name__}: {exc}); staging will refuse matches")

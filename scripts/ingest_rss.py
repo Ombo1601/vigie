@@ -97,8 +97,8 @@ def load_enabled_by_type(path: Path, source_type: str) -> list[dict]:
         rules = takedown.load_rules()
         if rules:
             out = [rec for rec in out if rules.match_source(rec) is None]
-    except Exception:  # noqa: BLE001 - the release gate (stage_public) diagnoses a bad file
-        pass
+    except Exception as exc:  # noqa: BLE001 - the release gate (stage_public) diagnoses a bad file
+        print(f"takedowns: could not load ({type(exc).__name__}: {exc}); staging will refuse the release")
     return out
 
 

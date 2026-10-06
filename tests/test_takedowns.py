@@ -451,6 +451,23 @@ class StageRefusal(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, r"index\.html: still references a withdrawn source"):
             self.stage_with(entry("s1", "source", "gone"))
 
+    def test_a_withdrawn_sources_stored_preview_is_purged_and_refused_at_the_gate(self) -> None:
+        article = "https://news.example/gone-story"
+        store = self.root / "data" / "normalized" / "latest_ranked.json"
+        store.parent.mkdir(parents=True)
+        store.write_text(json.dumps({"candidates": [{"source_id": "gone", "url": article}]}), encoding="utf-8")
+        manifest = self.root / "data" / "media" / "brief_manifest.json"
+        manifest.write_text(json.dumps({"media": {"u": {
+            "file": self.file_name, "image_url": "https://cdn.other/x.jpg", "article_url": article}}}),
+            encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, r"R10.*\n.*media/" + self.file_name):
+            self.stage_with(entry("s1", "source", "gone"))
+        rules = takedown.Rules(takedown.load(self.root / "takedowns.yaml")[0])
+        hint = takedown.source_article_urls(set(rules.sources), (store,))
+        report = takedown.purge_media(rules, media_dir=self.media, manifest_path=manifest, article_urls=hint)
+        self.assertEqual(report, {"files": 1, "entries": 1})
+        self.assertFalse((self.media / self.file_name).exists())
+
     def test_domain_takedown_spares_the_method_pages_only(self) -> None:
         self.stage_with(entry("h1", "host", "blocked.example"))  # homepage on a method page: allowed
         (self.public / "index.html").write_text('<a href="https://blocked.example/x">x</a>', encoding="utf-8")
@@ -524,7 +541,7 @@ class PublicRendering(TempRoot):
         self.assertEqual(action, "appended")
         return state
 
-    def test_registre_reports_withdrawn_without_moving_a_seal(self) -> None:
+    def test_registre_view_reports_withdrawn_and_leaves_sealed_state_untouched(self) -> None:
         state = self._sealed_state()
         before = copy.deepcopy(state)
         self.assertEqual(

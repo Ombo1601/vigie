@@ -95,7 +95,7 @@ contiendrait encore un élément retiré est refusée. Les instantanés bruts d'
 source retirée sont supprimés au même moment.
 
 La liste des retraits — éditeur, portée et date, jamais le contenu retiré —
-est publiée sur la [page des sources](/sources.yaml#retraits), où une source retirée
+est publiée sur la [page des sources](/methode/sources.html#retraits), où une source retirée
 reste nommée, avec la mention de son retrait à la demande de l'éditeur : jamais
 silencieusement.
 Les sceaux déjà publiés du registre ne contiennent aucun texte d'éditeur

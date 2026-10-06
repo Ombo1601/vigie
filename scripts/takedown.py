@@ -266,7 +266,7 @@ class Rules:
         if not isinstance(src, dict):
             return None
         hit = self.sources.get(str(src.get("id") or ""))
-        return hit or self.match_host(src.get("url"))
+        return hit or self.match_host(src.get("url")) or self.match_host(src.get("homepage"))
 
     def match_item(self, item: dict) -> dict | None:
         """A collected article withdrawn by its source, domain or URL."""
