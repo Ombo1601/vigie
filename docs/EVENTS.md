@@ -469,3 +469,257 @@ Founder decisions: (a) Hydro-Québec in owner group `etat-quebec`;
 seals ever fold into the main record (schema 3); (e) until gate 1 passes on
 human labels, whether the brief may show "Regroupement certain" at all or
 only "probable"; (f) the 8 uncertain gold pairs.
+
+## 17. Deviations from this spec (tranche C, 2026-10-06)
+
+Each rule below replaces what an earlier section says, under docs/AUTONOMY.md:
+computed from evidence, explained by the view, recomputed every edition. The
+measurements are counts on scratch copies of the private data (the live
+edition of 2026-10-06T00:03Z, 325 candidates, 194 events; and a replay of the
+52 stamped snapshots of the local history), never publisher text.
+
+### 17.1 Places (sections 3 and 5)
+
+- **No evidence, no place.** enrich's geo `linked` means "no explicit local
+  evidence" (its own reason text): an absence. It supports no place at all.
+  The fallback is the new scope `unplaced` ("Lieu non établi"), never the
+  city: before this change 98 of the 194 live events (50.5 %) carried
+  `quebec-city` with no evidence. `elsewhere` ("Hors Québec") is said only on
+  positive evidence: a headline naming a place outside Quebec (lexicon), or
+  enrich's world-fog branch (a foreign token and no Quebec token). Mapping
+  every `linked` item to `elsewhere` was rejected on the evidence: in the live
+  edition 108 of the 114 member rows of the fallback events carry no
+  positive evidence of any place, and 48 of the 114 come from the three
+  Québec City newsrooms (many are local stories the lexicon cannot place).
+- **Geo evidence**: `quebec-city` → `quebec-city`, `quebec` → `province`,
+  world-fog `linked` → `elsewhere`, federal evidence → `ottawa`; any other
+  `linked` → none. Per item the code is stored as `geo_place`.
+- **Plurality, not "first city member wins".** Each member casts one vote, its
+  best evidence: a specific place its headline names; else a strict city geo
+  token; else a scope its headline names; else its other geo evidence. The
+  AREA (capital, province, federal, elsewhere) is the plurality (ties: more
+  named votes, then that order); `places[0]` is, inside that area, the named
+  specific place when one exists, else its scope (ties: votes, named votes,
+  specificity, table order). The rest of `places` stays most specific first.
+  `place_basis` (`named`, `geo`, `fallback`) and `place_votes` (`{code:
+  {votes, named}}`) keep the evidence visible. `geo` (for ranking) is the
+  plurality of the member geos, ties to the more local.
+- **Ottawa only when the evidence is federal.** Bare "Ottawa" is the usual
+  metonym of the federal government ("Ottawa annonce", "qu'Ottawa"). "à
+  Ottawa" and "d'Ottawa" usually locate a story in the city (Ontario,
+  `elsewhere`: "police d'Ottawa", "un suspect arrêté à Ottawa"), EXCEPT where
+  the phrase addresses or quotes the federal government, which stays
+  `ottawa`: a request or reproach made to it ("demande à Ottawa", "réclame
+  ... à Ottawa", "exige d'Ottawa", with up to 4 words between the verb and
+  Ottawa), what it pays or decides ("aide", "argent", "transferts", "refus",
+  "financement", "décision ... d'Ottawa", "auprès d'Ottawa") and Parliament
+  ("parlementaire à Ottawa", English "Parliament Hill"; Québec City's
+  own "colline Parlementaire" stays its site). The lexicon lists these
+  phrases once per rule: the `ottawa` rule `keep`s them through its mask, the
+  `elsewhere` rule masks them. A place rule may carry its own `mask` (phrases
+  removed before its keywords are tested, longest first) and `keep` (phrases
+  its mask never removes); `~` between two words stands for up to 4 words.
+  "paris" as bets ("paris sportifs", "paris en ligne", "les paris", "paris
+  et casinos", ...) is masked from `elsewhere`. The province lexicon gains
+  Quebec towns and regions outside the capital (Montréal, Gatineau,
+  Trois-Rivières, ...).
+- Measured. Live edition, `places[0]`: `quebec-city` 117 → 17 (with no
+  evidence 98 → 0), `province` 57 → 69, `ottawa` 13 → 3, `elsewhere` 0 → 23,
+  `unplaced` 0 → 75; events with place evidence 49.5 % → 61.3 %. Replay of the
+  history (surviving events): `quebec-city` 887 → 90 (791 with no evidence →
+  0), evidence share 46.3 % → 56.9 %. The federal-addressee and bet phrases
+  change 7 of the 2,139 history headlines (4 from `elsewhere` to `ottawa`, one
+  of them keeping `elsewhere` for an Ontario city it also names; 2 bet
+  headlines from `elsewhere` to no place; 1 English "Parliament Hill" from
+  the city's site to `ottawa`) and none of the 325 live candidates (the 10
+  city-of-Ottawa headlines of the live edition stay `elsewhere`).
+
+#### Table B additions
+
+| Code | Kind | FR | EN |
+|------|------|----|----|
+| elsewhere | scope | Hors Québec | Outside Quebec |
+| unplaced | scope | Lieu non établi | Place not established |
+
+`unplaced` is the place twin of `unclassified`: no keyword can name it, and a
+label whose basis is `fallback` names no place.
+
+### 17.2 Window (sections 4.8 and 6)
+
+A member whose `published_at` is suspect (more than 6 h after its first
+collection) keeps its date as given but is dated by its `first_seen`: for the
+window (`in_window`, facts live or reduced) and for the matcher (the event's
+span), so a future date never holds an event open.
+
+### 17.3 Independence (sections 7 and 8; AUTONOMY decision table)
+
+- Official members are **declarations**: keyed `declaration:<owner group>`
+  (never `owner:`), so they merge only with declarations of the same owner and
+  with a media text that copies them. The view exposes
+  `reporting_origin_count` (origins with no official member: media reporting
+  only) apart from `declared_by` (the declaring institutions).
+- Merge rules, each with its reason code on every merged origin
+  (`independence.origins[].reasons`): `same-owner` (sourced owner group),
+  `same-institution` (no sourced owner), `same-wire-credit` (`basis` prior
+  for the closed list cp, afp, reuters, ap; `measured` for any other credit
+  seen in two or more owner groups within the 7-day window, recomputed every
+  edition), `same-release` (relays of a communiqué, issuer unknown to the
+  rules: one origin), `near-duplicate` (word 3-shingles, Jaccard at least
+  3/5, at least 6 shingles each side, whoever owns the outlets). The bounds
+  are printed in every view (`rules`). `independence.keys` keeps the member
+  keys so a page can say why two members are one origin.
+- **The relations are a union** (AUTONOMY's first row: same owner OR same
+  wire credit OR same communiqué OR near-duplicate). A rule key is ADDED to
+  the member's owner key (`owner:<group>`, else `institution:<id>`), never
+  put in its place: a closed-list wire copy carries `owner:<group>` and
+  `wire:<agency>`, a relay carries `owner:<group>` and `release:...`, a copy
+  carrying a measured credit carries `owner:<group>` and `wire:<credit>`.
+  Keying a credited copy by its credit alone (the rule of tranche B, and of
+  this branch before review) split two outlets of one sourced owner into two
+  origins as soon as their shared credit was measured as a wire: a
+  measurement raised the count. With the union, adding a credit to the
+  measured wires can only join origins (a test holds it monotone). One
+  origin is the closure of every relation (union-find), so a wire copy also
+  bridges its outlet's owner to the other outlets carrying the same credit:
+  outlet A's own story, A's CP copy, B's CP copy and B's own story are one
+  origin. That is the rule as AUTONOMY writes it, conservative (it never
+  inflates independence); whether a wire copy should instead count apart
+  from its outlet's own reporting is open to the founder (it would amend
+  AUTONOMY's first row).
+- Agence QMI is no longer a founder flag: events.py reads credits (codes
+  only, stored per item as `credits`) and applies the measured rule;
+  origin.py's `AGENCE_QMI_IS_WIRE` is not consulted by the event builder.
+  Measured: 0 bylines credit Agence QMI in the 2,139 history items (the
+  459 Journal de Québec items carry no author field), so the rule decides
+  nothing today; the closed-list credits seen are cp (cn2i, le-devoir), afp
+  and ap (le-devoir).
+- Hydro-Québec in `etat-quebec` is the sourced fact (its annual report: the
+  State is its sole shareholder), no longer a founder decision (section 16
+  (a)); both it and the Government are declarations, so the grouping can
+  neither inflate nor deflate a media origin count.
+- Measured on the live edition: multi-institution events 17, their
+  `reporting_origin_count` {1: 2, 2: 13, 3: 2}, the same as before (no QMI
+  credit, no official/media copy pair in that edition); 7 events carry a
+  declaration. Replay: multi-institution view events 1,794 before and after.
+  The union changes no origin today: recomputed both ways, 0 of the 194 live
+  events and 0 of the 10,379 replayed view events change their origin groups
+  (the wire copies and relays seen, 6 and 1 live, 40 and 2 over the replay,
+  never share an event with a member of the same owner or the same credit;
+  merge reasons summed over the replayed views: `same-owner` 1,707,
+  `near-duplicate` 77, no `same-wire-credit`, no `same-release`).
+
+### 17.4 R10 in stored views (sections 6, 13)
+
+The store keeps the ids of a withdrawn member (sticky membership, sticky
+pairs); every derived field is computed over the members still present. The
+view never lets a renderer credit or count a withdrawn voice: the member is
+absent from `members`, listed under `withdrawn` (with `withdrawn_count`), and
+absent from institutions, languages, independence, copies, language pairs,
+fact attributions and item anchors; `member_count` counts the members
+present. The silence roster gains the state `withdrawn` ("retiré à la
+demande de l'éditeur"), scope `institution` (takedowns.yaml withdrew the whole
+voice; listed in every event) or `article` (its items here only), and says
+`not_established` only when the edition carries no collection fact for the
+institution.
+
+**Every derived field describes the members present**, in the builder and at
+render time alike: type, places, `place_basis`, `place_votes`, label,
+family and geo (`event_codes`), tier (`event_tier`: the weakest recorded
+link among the members present), the window (`window_state_at`: a withdrawn
+member's date never holds an event in window), independence, and facts with
+their reduced counts (`event_facts`). Reduced counts keep, per dropped value,
+the ids that stated it (`facts_reduced[].stated_by`, ids only, never the
+value), so a takedown after the reduction takes its statements out of the
+counts; a value kept because an official member stated it joins the counts
+when that member is withdrawn; a kept row's `divergent` describes the values
+it shows. The agency-credit measurement (`credits`, the window's wires)
+never counts a withdrawn member either.
+
+**Render time.** The view carries what those functions read: per member
+present, its stored codes (`member_codes`: type scores, places, geo,
+geo_place, credits, article domain, the join action and link, and its fact
+atoms that can reach an event, while in window), and at the top level the
+window's credit observations (`credit_observations`: per credit, item id,
+source id, article domain and owner group of each member counted) with the
+measurement (`credits`). `events.apply_takedowns(view, rules)` takes the
+withdrawn members out of the observations, re-measures the wires, and puts
+every event through `strip_withdrawn`, which recomputes every field above
+with the builder's own functions; an event nothing touched comes out as it
+went in (a test and the live edition hold an active rule that withdraws
+nothing to an identical view). The registre seals the result.
+
+Measured (scratch copies). Live edition, six single-source takedowns (six
+large newsrooms): 4 to 8 events touched each, after `apply_takedowns`
+0 events whose codes differ from `event_codes` over the members present
+and 0 whose `place_votes` count more votes than members, idempotent (before
+this fix, per source: up to 4 stale `place_votes`, 3 stale types, 2 stale
+first places, 3 events counting more votes than members).
+History, three points of the replay times the same six sources, the edition
+without the withdrawn source's articles (collection drops them once the
+takedown is listed): `apply_takedowns` of the view built before the takedown
+equals the rebuild under it, byte for byte, in 18 of 18 runs (190 withdrawn
+members kept by sticky membership). Cost: `apply_takedowns` 0.07 s on the
+live view; the view grows from 714,638 to 810,903 bytes (member codes 63 kB).
+
+What a rebuild cannot share with a stored view, and stays as built: when the
+withdrawn articles are in the very edition the view was built from, the
+matcher compared them with the others, so the link an article joining in
+that edition was attached with, the neighbours, an event minted by a
+withdrawn article (its id), `activity`/`last_edition` (an event "developed"
+by a withdrawn article) and the members other articles chose may differ from
+a rebuild that never read them. The stored view also lists those articles
+by id under `withdrawn` and says `withdrawn` (scope `article`) for a voice
+whose only article there was one of them, where the rebuild states that
+voice's measured collection state. The next full edition rebuilds all of
+it. Measured on the same 18 history runs with the withdrawn articles left
+in the edition: every difference is one of these (counted per event and
+run: 35 events in only one of the two views; among events with the same
+members, join links differ in 110, neighbours in 3,078, activity in 1, the
+`withdrawn` list in 13, the silence roster in 2; 7 events whose members the
+matcher chose differently). Anchors other than item anchors are official
+records matched by rule and stay as found (sticky, section 10). Once an
+event's facts are reduced its atoms are gone, so the hedge codes
+(`qualifiers`) of a value kept for an official member are not re-derived
+when a member that co-stated the value is withdrawn (its id leaves the
+value; its hedge code may stay).
+
+### 17.5 Facts (section 9)
+
+facts.py keeps a road token only when it has the shape of a name (a route
+number of 1 to 3 digits, or a word of at least 3 letters that is not a
+function word, a generic place noun or an adjective of "école"/"hôpital").
+An event carries place facts as vocabulary codes only: a road name with no
+corridor code, or any atom stored before the guard, never reaches a view.
+Measured on the history: 178 road atoms → 105, with every function word gone
+("a", "au", "après", "entre", "est", ...).
+
+### 17.6 Event chain (section 12)
+
+- `member_count` is the rows present (withdrawn excluded) and the `origin`
+  counts are counted over the same rows, so they add up to it; a lean view
+  without rows counts its members as `unknown`; `independent_count` above
+  `member_count` is sealed as 0 (not established). `independent_count` keeps
+  this section's meaning (every origin, declarations included); the
+  media-only `reporting_origin_count` is a view field, not sealed, so the
+  record's shape is unchanged.
+- The registre re-applies an active takedown to the stored view before it
+  seals (`events.apply_takedowns`, every derived field recomputed over the
+  members present: section 17.4), so a seal minted from a view older than
+  the request never credits the withdrawn voice nor carries a type or a
+  place it decided; a seal already recorded is never rewritten.
+- State growth is bounded: the newest 12 seals stay FULL (header, `dropped`
+  diagnosis and record); every older seal is compacted to `{leaf, root}`. The
+  chain stays verifiable from genesis by hash linkage alone (prev = the root
+  before it, seq = its position, root = sha256(prev || leaf)); the record
+  behind an old leaf is no longer in the private state. Past the newest
+  twelve, an edition adds one pair of hashes (about 170 stored bytes).
+  Compaction changes nothing the restore and persist witnesses judge (they
+  read the edition and travaux chains only).
+
+### 17.7 Shadow fields
+
+Store and view: `place_votes`, `reporting_origin_count`, `declared_by`,
+`independence.keys`, `independence.origins`, `facts_reduced[].stated_by`;
+item codes: `geo_place`, `credits`. View only: `withdrawn_count`,
+`member_codes`, silence rows `scope`, top-level `rules`, `credits` and
+`credit_observations`. Method string: `events-v1 rules r2`.

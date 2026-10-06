@@ -1,7 +1,7 @@
 {
  "version": 1,
  "status": "proposed",
- "note": "Rule lexicon for scripts/vocabulaire.py. Keywords are written readable; matching folds accents, case and punctuation (every non-alphanumeric run is one space) and is word-bounded. A trailing * means word-prefix; # means 1-3 digits. Per type: fr/en = weak keywords (1 point per distinct keyword, at most 2 per title); fr_strong/en_strong = strong keywords (strong_weight points, default 3; institution-context types use 2 so that an action word such as a resignation outranks the institution it happens in; legal-stage types use 4 so a trial outranks the offence it is about). A type is proposed only at 2 points or more; unless = a title containing any of these never scores the type. A title scores a type once (strong beats weak); scores are summed over member titles; ties go to table order (docs/I18N.md table A); zero hits is unclassified. Places: fr/en keyword lists per place code, needs_context = counts only when the same text also names Quebec. All of it is a proposal, never a verdict: an honest unclassified beats a wrong type.",
+ "note": "Rule lexicon for scripts/vocabulaire.py. Keywords are written readable; matching folds accents, case and punctuation (every non-alphanumeric run is one space) and is word-bounded. A trailing * means word-prefix; # means 1-3 digits. Per type: fr/en = weak keywords (1 point per distinct keyword, at most 2 per title); fr_strong/en_strong = strong keywords (strong_weight points, default 3; institution-context types use 2 so that an action word such as a resignation outranks the institution it happens in; legal-stage types use 4 so a trial outranks the offence it is about). A type is proposed only at 2 points or more; unless = a title containing any of these never scores the type. A title scores a type once (strong beats weak); scores are summed over member titles; ties go to table order (docs/I18N.md table A); zero hits is unclassified. Places: fr/en keyword lists per place code, needs_context = counts only when the same text also names Quebec; mask = phrases removed (longest first) before that place's keywords are tested; keep = phrases its mask never removes; ~ between two words stands for up to 4 words. All of it is a proposal, never a verdict: an honest unclassified beats a wrong type.",
  "types": {
   "fire-building": {
    "fr": ["pompiers", "flammes", "brasier", "incendiaire", "feu de cuisine", "feu majeur", "sinistre"],
@@ -838,18 +838,81 @@
     "gouvernement du quebec", "caq", "caquiste", "pequiste", "plq", "quebec solidaire",
     "provincial", "provinciale", "provinciaux", "legault", "en quebec", "partout au quebec",
     "parti quebecois", "premier ministre du quebec", "gouvernement quebecois", "regions du quebec",
-    "dans la province"],
+    "dans la province", "montreal", "gatineau", "outaouais", "sherbrooke", "estrie", "trois rivieres",
+    "mauricie", "saguenay", "lac saint jean", "chicoutimi", "rimouski", "bas saint laurent", "gaspesie",
+    "cote nord", "sept iles", "baie comeau", "abitibi", "rouyn noranda", "laurentides", "lanaudiere",
+    "monteregie", "drummondville", "granby", "saint hyacinthe", "joliette", "saint jean sur richelieu",
+    "longueuil", "terrebonne", "victoriaville", "iles de la madeleine", "nunavik"],
    "en": ["in quebec", "quebec government", "quebec's", "quebecers", "quebecer", "national assembly",
     "provincial", "parti quebecois", "quebec premier", "quebec election", "quebec legislature",
     "province of quebec", "across quebec", "caq", "quebec liberals", "quebec liberal",
-    "quebec solidaire", "quebec ministry"]
+    "quebec solidaire", "quebec ministry", "montreal", "gatineau", "outaouais", "sherbrooke",
+    "trois rivieres", "saguenay", "rimouski", "gaspe peninsula", "eastern townships", "laurentians"]
   },
   "ottawa": {
    "fr": ["ottawa", "federal", "federale", "federaux", "federales", "gouvernement du canada",
     "chambre des communes", "senat", "canada", "gouvernement federal", "banque du canada",
-    "ministre federal", "fonction publique federale"],
+    "ministre federal", "fonction publique federale", "parliament hill"],
    "en": ["ottawa", "federal", "federal government", "house of commons", "senate", "canada", "canada's",
-    "bank of canada", "feds", "liberal government", "prime minister"]
+    "bank of canada", "feds", "liberal government", "prime minister", "parliament hill"],
+   "mask": ["a ottawa", "d ottawa", "de ottawa", "ville d ottawa", "in ottawa", "ottawa police",
+    "ottawa city", "ottawa mayor", "ottawa senators", "ottawa redblacks", "ottawa gatineau"],
+   "keep": ["demande ~ a ottawa", "demandent ~ a ottawa", "reclame ~ a ottawa", "reclament ~ a ottawa",
+    "reproche ~ a ottawa", "reprochent ~ a ottawa", "ordonne ~ a ottawa", "ordonnent ~ a ottawa",
+    "repond ~ a ottawa", "repondent ~ a ottawa", "appel ~ a ottawa", "lettre ~ a ottawa",
+    "facture ~ a ottawa", "refile ~ a ottawa", "exige ~ d ottawa", "exigent ~ d ottawa",
+    "reclame ~ d ottawa", "reclament ~ d ottawa", "attend ~ d ottawa", "attendent ~ d ottawa",
+    "obtient ~ d ottawa", "obtiennent ~ d ottawa", "recoit ~ d ottawa", "recoivent ~ d ottawa",
+    "aupres d ottawa", "aide d ottawa", "aide financiere d ottawa", "argent d ottawa", "transfert d ottawa",
+    "transferts d ottawa", "refus d ottawa", "financement d ottawa", "fonds d ottawa", "appui d ottawa",
+    "soutien d ottawa", "reponse d ottawa", "decision d ottawa", "feu vert d ottawa", "subvention d ottawa",
+    "subventions d ottawa", "promesse d ottawa", "promesses d ottawa", "offre d ottawa",
+    "gouvernement d ottawa", "parlement d ottawa", "parlement a ottawa", "parlementaire a ottawa",
+    "parlementaires a ottawa"]
+  },
+  "elsewhere": {
+   "fr": ["etats unis", "aux etats unis", "maison blanche", "washington", "new york", "floride", "californie",
+    "texas", "ontario", "est ontarien", "toronto", "vancouver", "colombie britannique", "alberta",
+    "calgary", "edmonton", "manitoba", "winnipeg", "saskatchewan", "nouveau brunswick", "moncton",
+    "nouvelle ecosse", "halifax", "terre neuve", "ile du prince edouard", "yukon", "nunavut",
+    "territoires du nord ouest", "a ottawa", "d ottawa", "ville d ottawa", "mexique", "cuba", "haiti",
+    "bresil", "argentine", "venezuela", "europe", "union europeenne", "france", "paris", "royaume uni",
+    "angleterre", "londres", "irlande", "allemagne", "berlin", "italie", "rome", "espagne", "madrid",
+    "portugal", "belgique", "bruxelles", "suisse", "pays bas", "pologne", "grece", "turquie", "ukraine",
+    "kiev", "kyiv", "russie", "moscou", "israel", "gaza", "cisjordanie", "liban", "syrie", "iran", "irak",
+    "afghanistan", "chine", "pekin", "japon", "tokyo", "coree du sud", "coree du nord", "inde",
+    "pakistan", "australie", "afrique du sud", "nigeria", "egypte", "maroc", "algerie", "tunisie",
+    "senegal", "soudan"],
+   "en": ["united states", "white house", "washington", "new york", "florida", "california", "texas",
+    "ontario", "eastern ontario", "toronto", "vancouver", "british columbia", "alberta", "calgary",
+    "edmonton", "manitoba", "winnipeg", "saskatchewan", "new brunswick", "moncton", "nova scotia",
+    "halifax", "newfoundland", "prince edward island", "yukon", "nunavut", "northwest territories",
+    "in ottawa", "ottawa police", "ottawa city", "ottawa mayor", "mexico", "cuba", "haiti", "brazil",
+    "argentina", "venezuela", "europe", "european union", "france", "paris", "united kingdom",
+    "england", "london", "ireland", "germany", "berlin", "italy", "rome", "spain", "madrid", "portugal",
+    "belgium", "brussels", "switzerland", "netherlands", "poland", "greece", "ukraine", "kyiv",
+    "kiev", "russia", "moscow", "israel", "gaza", "west bank", "lebanon", "syria", "iran", "iraq",
+    "afghanistan", "china", "beijing", "japan", "tokyo", "south korea", "north korea", "india",
+    "pakistan", "australia", "south africa", "nigeria", "egypt", "morocco", "algeria", "tunisia",
+    "senegal", "sudan"],
+   "mask": ["nouvelle france", "air france", "radio france", "new york times", "maple leafs de toronto",
+    "toronto maple leafs", "blue jays de toronto", "toronto blue jays", "raptors de toronto",
+    "toronto raptors", "oilers d edmonton", "edmonton oilers", "flames de calgary", "calgary flames",
+    "canucks de vancouver", "vancouver canucks", "jets de winnipeg", "winnipeg jets",
+    "senateurs d ottawa", "ottawa senators", "rouge et noir d ottawa", "ottawa redblacks",
+    "atletico d ottawa", "paris sportifs", "paris sportif", "paris en ligne", "les paris", "des paris",
+    "aux paris", "paris et casinos", "site de paris", "sites de paris", "demande ~ a ottawa", "demandent ~ a ottawa", "reclame ~ a ottawa", "reclament ~ a ottawa",
+    "reproche ~ a ottawa", "reprochent ~ a ottawa", "ordonne ~ a ottawa", "ordonnent ~ a ottawa",
+    "repond ~ a ottawa", "repondent ~ a ottawa", "appel ~ a ottawa", "lettre ~ a ottawa",
+    "facture ~ a ottawa", "refile ~ a ottawa", "exige ~ d ottawa", "exigent ~ d ottawa",
+    "reclame ~ d ottawa", "reclament ~ d ottawa", "attend ~ d ottawa", "attendent ~ d ottawa",
+    "obtient ~ d ottawa", "obtiennent ~ d ottawa", "recoit ~ d ottawa", "recoivent ~ d ottawa",
+    "aupres d ottawa", "aide d ottawa", "aide financiere d ottawa", "argent d ottawa", "transfert d ottawa",
+    "transferts d ottawa", "refus d ottawa", "financement d ottawa", "fonds d ottawa", "appui d ottawa",
+    "soutien d ottawa", "reponse d ottawa", "decision d ottawa", "feu vert d ottawa", "subvention d ottawa",
+    "subventions d ottawa", "promesse d ottawa", "promesses d ottawa", "offre d ottawa",
+    "gouvernement d ottawa", "parlement d ottawa", "parlement a ottawa", "parlementaire a ottawa",
+    "parlementaires a ottawa"]
   },
   "la-cite-limoilou": {
    "fr": ["la cite limoilou", "arrondissement de la cite limoilou"],
@@ -962,8 +1025,8 @@
    "en": ["lac saint charles"]
   },
   "parliament-hill": {
-   "fr": ["colline parlementaire", "parliament hill"],
-   "en": ["parliament hill", "colline parlementaire"]
+   "fr": ["colline parlementaire"],
+   "en": ["colline parlementaire"]
   },
   "vieux-port": {
    "fr": ["vieux port"],
@@ -1053,5 +1116,7 @@
   "air canada", "postes canada", "vieux port de montreal", "old port of montreal",
   "tire canadien", "canadien de montreal", "le canadien", "du canadien", "au canadien",
   "bureau du quebec", "cinema du quebec", "banque nationale du canada",
-  "agence du revenu du canada", "pont de quebec levis"]
+  "agence du revenu du canada", "pont de quebec levis", "canadiens de montreal", "le canadien de montreal",
+  "du canadien de montreal", "au canadien de montreal", "alouettes de montreal",
+  "cf montreal", "banque de montreal", "bank of montreal"]
 }

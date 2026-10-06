@@ -79,12 +79,16 @@ EVENTS = ROOT / "data" / "events" / "latest_events.json"
 EVENTS_MAX_BYTES = 32 * 1024 * 1024   # a larger event view is not read at all
 EVENTS_MAX = 5000                     # a view listing more events is not sealed
 EVENT_ANCHORS_MAX = 64                # anchors one event can carry into the record
-# Every event seal keeps its header (seq, edition, prev, leaf, root,
-# event_count) forever, so the hash chain stays whole from genesis. Only the
-# newest EVENTS_RECORD_CAP seals keep their record (the leaf preimage) in the
-# private state: a record lists every event of an edition and every render
-# reads this state file several times. Older seals verify by hash linkage only
-# (a founder decision before the chain is published: EVENTS.md sections 12-13).
+# The newest EVENTS_RECORD_CAP seals are kept FULL in the private state (seq,
+# edition, prev, leaf, root, event_count, the dropped diagnosis and the record,
+# i.e. the leaf preimage): a record lists every event of an edition and every
+# render reads this state file several times. Every older seal is COMPACTED to
+# {leaf, root} and kept forever, so the chain stays whole from genesis and is
+# verified by hash linkage alone: prev is the root before it, seq its position
+# (the state always holds the chain from seal 1), and root = sha256(prev ||
+# leaf) proves the linkage; the record behind an old leaf is no longer in the
+# state (EVENTS.md section 12, deviations). The growth is then about 140
+# stored bytes per edition beyond the newest twelve.
 #
 # Sizes are counted in STORED bytes: what the record adds to registre.json as
 # store_io writes it (indent=2, nested in the state), i.e. what the persist
@@ -514,9 +518,19 @@ def load_state(path: Path = STATE) -> dict:
     return state
 
 
+COMPACT_SEAL_KEYS = ("leaf", "root")
+
+
+def _compact_seal(seal: object) -> bool:
+    """An older event seal reduced to its hashes: exactly {leaf, root}."""
+    return (isinstance(seal, dict) and set(seal) == set(COMPACT_SEAL_KEYS)
+            and all(isinstance(seal.get(k), str) for k in COMPACT_SEAL_KEYS))
+
+
 def _event_seal_ok(seal: object) -> bool:
-    """An event seal every reader can use: identity fields present and typed."""
-    return (
+    """An event seal every reader can use: a full seal with its identity
+    fields present and typed, or a compacted one ({leaf, root})."""
+    return _compact_seal(seal) or (
         isinstance(seal, dict)
         and isinstance(seal.get("seq"), int) and not isinstance(seal.get("seq"), bool)
         and all(isinstance(seal.get(k), str) for k in ("edition", "prev", "leaf", "root"))
@@ -869,14 +883,27 @@ def event_entry(event: dict, closed: dict | None = None, dropped: dict | None = 
         closed, why = closed_codes()
         if closed is None:
             raise ValueError(why)
-    members = _event_members(event.get("members"))
-    # A lean view may state the count without the rows; rows win when present.
-    member_count = len(members) if isinstance(event.get("members"), list) else (_count(event.get("member_count")) or 0)
-    origin: dict[str, int] = {}
-    for row in members.values():
-        cls = row.get("origin_class")
-        cls = cls if isinstance(cls, str) and cls in ORIGIN_CLASSES else "unknown"
-        origin[cls] = origin.get(cls, 0) + 1
+    # R10: a member withdrawn on the publisher's request is never counted.
+    # events.py leaves it out of `members` and lists it under `withdrawn`; a
+    # row still marked withdrawn, or listed there, is left out here too.
+    withdrawn = {x for x in event.get("withdrawn") or [] if isinstance(x, str)} \
+        if isinstance(event.get("withdrawn"), list) else set()
+    members = {iid: row for iid, row in _event_members(event.get("members")).items()
+               if iid not in withdrawn and row.get("withdrawn") is not True}
+    # member_count is the rows actually present, and the origin counts are
+    # counted over those same rows, so they always add up to it. A lean view
+    # may state the count without the rows (rows win when present); its
+    # members then carry the spec's default class, `unknown`.
+    if isinstance(event.get("members"), list):
+        member_count = len(members)
+        origin: dict[str, int] = {}
+        for row in members.values():
+            cls = row.get("origin_class")
+            cls = cls if isinstance(cls, str) and cls in ORIGIN_CLASSES else "unknown"
+            origin[cls] = origin.get(cls, 0) + 1
+    else:
+        member_count = _count(event.get("member_count")) or 0
+        origin = {"unknown": member_count} if member_count else {}
     if isinstance(event.get("institutions"), list):
         institutions = _codes(event["institutions"], closed["institutions"], dropped, "institutions")
     else:
@@ -892,8 +919,8 @@ def event_entry(event: dict, closed: dict | None = None, dropped: dict | None = 
     if independent is None:
         groups = independence.get("groups")
         independent = len(groups) if isinstance(groups, list) else 0
-    if member_count and independent > member_count:
-        independent = 0          # more independent groups than members: not established
+    if independent > member_count:
+        independent = 0          # more independent groups than members present: not established
     lineage = event.get("lineage") if isinstance(event.get("lineage"), dict) else {}
     merged = lineage.get("merged_into")
     merged_into = (merged if isinstance(merged, str) and _EVENT_ID.fullmatch(merged)
@@ -1043,9 +1070,14 @@ def seal_events(state: dict, record: dict, dropped: dict | None = None) -> tuple
                   f"({str(last.get('leaf'))[:12]} -> {recomputed[:12]}); keeping the recorded "
                   f"event seal — a chain is append-only")
             return state, "diverged-kept"
-        if not _after(edition, last.get("edition")):
+        # The newest seal is always full (it keeps its record); a compacted
+        # one carries no edition, so the newest edition known is the last word.
+        known = next((s.get("edition") for s in reversed(seals) if isinstance(s.get("edition"), str)), None)
+        if known is not None and not _after(edition, known):
             return state, "ignored"
-        prev, seq = str(last.get("root") or ""), _int(last.get("seq")) + 1
+        prev = str(last.get("root") or "")
+        # The state holds the chain from seal 1: a compacted seal's seq is its position.
+        seq = _int(last.get("seq")) + 1 if "seq" in last else len(seals) + 1
     else:
         prev, seq = "", 1
     size, cap = record_stored_bytes(record), min(EVENTS_RECORD_MAX, EVENTS_RECORD_BYTES)
@@ -1070,16 +1102,17 @@ def seal_events(state: dict, record: dict, dropped: dict | None = None) -> tuple
 
 
 def _retain_records(seals: list[dict]) -> list[dict]:
-    """Release the records of older seals; every header stays, byte for byte.
+    """Keep the newest seals full and compact every older one to {leaf, root}.
 
-    The newest seals keep their record while they fit EVENTS_RECORD_CAP and
-    EVENTS_RECORD_BYTES (stored bytes), so the records present are always one
+    The newest seals stay full while they fit EVENTS_RECORD_CAP and
+    EVENTS_RECORD_BYTES (stored bytes), so the full seals are always one
     contiguous newest run. No record is kept "whatever its size": the mint
     refuses a record over min(EVENTS_RECORD_MAX, EVENTS_RECORD_BYTES), so the
     newest fits, and when it pushes older records out it replaces them, which
-    bounds the shrink of one edition to less than one record. The seal itself
-    (seq, edition, prev, leaf, root) never changes: only its preimage leaves
-    the private state.
+    bounds the shrink of one edition to less than one record. A seal's leaf
+    and root never change: compaction drops its preimage and the header
+    fields hash linkage re-derives (prev = the root before it, seq = its
+    position), so the chain still verifies from genesis.
     """
     kept = spent = 0
     for seal in reversed(seals):
@@ -1091,8 +1124,20 @@ def _retain_records(seals: list[dict]) -> list[dict]:
         kept += 1
         spent += size
     cut = len(seals) - kept
-    return [{k: v for k, v in s.items() if k != "record"} if n < cut and "record" in s else s
-            for n, s in enumerate(seals)]
+    return [{k: s[k] for k in COMPACT_SEAL_KEYS} if n < cut else s for n, s in enumerate(seals)]
+
+
+def _takedowns_applied(doc: object) -> object:
+    """The event view with the active takedowns re-applied (events.apply_takedowns),
+    or the view as it is when no takedown is active."""
+    import takedown  # noqa: PLC0415 - lazy: the edition chain never needs it
+
+    rules = takedown.load_rules()
+    if not rules:
+        return doc
+    import events  # noqa: PLC0415
+
+    return events.apply_takedowns(doc, rules, sources_path=SOURCES_PATH)
 
 
 def seal_events_soft(state: dict, edition: str, doc: object = None,
@@ -1110,6 +1155,10 @@ def seal_events_soft(state: dict, edition: str, doc: object = None,
             doc, why = read_json_capped(path)
             if doc is None:
                 return state, why
+        # R10 at render time: the hourly roads lane re-renders from the stored
+        # view, which may predate a takedown. Only an active takedown touches
+        # the view (events.apply_takedowns strips exactly as the builder does).
+        doc = _takedowns_applied(doc)
         dropped: dict[str, int] = {}
         record, why = events_record(doc, edition, edition_root_for(state, edition), dropped=dropped)
         if record is None:
@@ -1126,32 +1175,42 @@ def verify_event_chain(seals: object, anchor_root: str = "") -> tuple[bool, str]
     """Recompute the event chain. anchor_root = root before the first seal given.
 
     A seal that still carries its record is checked in full (leaf recomputed
-    from the record, the record's method and edition). A seal whose record was
-    released from the private state (EVENTS_RECORD_CAP) is checked by hash
-    linkage: root = sha256(prev || leaf), prev = the previous root. Seq numbers
-    must be consecutive and editions strictly increasing.
+    from the record, the record's method and edition). A compacted seal
+    ({leaf, root}, EVENTS_RECORD_CAP) is checked by hash linkage: root =
+    sha256(prev || leaf), prev = the previous root, its seq is its position
+    (the previous seq + 1; 1 for the first seal of a chain given from genesis).
+    Seq numbers must be consecutive and the editions present strictly
+    increasing.
     """
     if not isinstance(seals, list):
         return False, "no seals list"
     prev = anchor_root if isinstance(anchor_root, str) else ""
-    expected: int | None = None
+    expected: int | None = None if prev else 1
     last_edition: object = None
     full = 0
     for n, seal in enumerate(seals):
         if not isinstance(seal, dict):
             return False, f"event seal {n}: malformed"
-        seq = seal.get("seq")
-        if not isinstance(seq, int) or isinstance(seq, bool) or (expected is not None and seq != expected):
-            return False, f"event seal {n}: seq {seq!r} out of order"
-        expected = seq + 1
-        if seal.get("prev", "") != prev:
-            return False, f"event seal {seq}: prev mismatch"
-        edition = seal.get("edition")
-        if not isinstance(edition, str) or _ts(edition) is None:
-            return False, f"event seal {seq}: no edition"
-        if last_edition is not None and not _after(edition, last_edition):
-            return False, f"event seal {seq}: edition not after the previous seal's"
-        last_edition = edition
+        compact = _compact_seal(seal)
+        if compact:
+            seq = expected
+            name = seq if seq is not None else f"#{n}"
+        else:
+            seq = seal.get("seq")
+            if not isinstance(seq, int) or isinstance(seq, bool) or (expected is not None and seq != expected):
+                return False, f"event seal {n}: seq {seq!r} out of order"
+            name = seq
+        expected = seq + 1 if seq is not None else None
+        if not compact and seal.get("prev", "") != prev:
+            return False, f"event seal {name}: prev mismatch"
+        if not compact:
+            edition = seal.get("edition")
+            if not isinstance(edition, str) or _ts(edition) is None:
+                return False, f"event seal {name}: no edition"
+            if last_edition is not None and not _after(edition, last_edition):
+                return False, f"event seal {name}: edition not after the previous seal's"
+            last_edition = edition
+        seq = name
         leaf = seal.get("leaf")
         if not isinstance(leaf, str) or not _HEX64.fullmatch(leaf):
             return False, f"event seal {seq}: malformed leaf"
@@ -1191,7 +1250,8 @@ def evenements_export(state: dict) -> dict:
         "anchor_root": "",
         "verify": (
             "leaf = sha256(json.dumps(record, sort_keys=True, ensure_ascii=False, separators=(',', ':'))); "
-            "root = sha256(prev + leaf); a seal without its record is checked by root = sha256(prev + leaf). "
+            "root = sha256(prev + leaf); a compacted seal {leaf, root} (older than the newest 12) is checked "
+            "by hash linkage alone: prev = the root before it, root = sha256(prev + leaf). "
             "Script: scripts/registre.py --verify-events FILE"
         ),
         "seals": seals,

@@ -40,12 +40,21 @@ def spec_codes() -> tuple[list[str], list[str]]:
     return [t for t in types if t != "Code"], [p for p in places if p != "Code"]
 
 
+def spec_place_additions() -> list[tuple[str, str, str, str]]:
+    """Table B rows added since docs/I18N.md, recorded as spec deviations in
+    docs/EVENTS.md ("Table B additions"): (code, kind, fr, en)."""
+    text = (ROOT / "docs" / "EVENTS.md").read_text(encoding="utf-8")
+    block = text.split("#### Table B additions")[1].split("\n#")[0]
+    rows = re.findall(r"^\| ([a-z0-9-]+) \| ([a-z]+) \| ([^|]+) \| ([^|]+) \|$", block, re.M)
+    return [(c, k, fr.strip(), en.strip()) for c, k, fr, en in rows if c != "Code"]
+
+
 class VocabularyShape(unittest.TestCase):
     def test_counts(self) -> None:
         self.assertGreaterEqual(len(V.type_codes()), 60)
         self.assertGreaterEqual(len(V.place_codes()), 30)
         self.assertEqual(len(V.type_codes()), 74)
-        self.assertEqual(len(V.place_codes()), 50)
+        self.assertEqual(len(V.place_codes()), 52)
 
     def test_codes_unique_and_ascii(self) -> None:
         for codes in (V.type_codes(), V.place_codes(), V.family_codes()):
@@ -62,10 +71,30 @@ class VocabularyShape(unittest.TestCase):
     def test_codes_match_the_spec_tables_exactly(self) -> None:
         try:
             types, places = spec_codes()
+            added = spec_place_additions()
         except OSError:
-            self.skipTest("docs/I18N.md not present")
+            self.skipTest("docs/I18N.md or docs/EVENTS.md not present")
         self.assertEqual(V.type_codes(), types)
-        self.assertEqual(V.place_codes(), places)
+        # Table B as written in I18N.md, in order, plus exactly the additions
+        # docs/EVENTS.md records as deviations (with their kind and labels).
+        self.assertEqual([c for c in V.place_codes() if c in places], places)
+        self.assertEqual(sorted(set(V.place_codes()) - set(places)), sorted(c for c, *_ in added))
+        for code, kind, fr, en in added:
+            self.assertEqual((V.place_kind(code), V.place_label(code, "fr"), V.place_label(code, "en")),
+                             (kind, fr, en), code)
+
+    def test_the_two_new_scopes(self) -> None:
+        self.assertEqual(V.place_label("elsewhere", "fr"), "Hors Québec")
+        self.assertEqual(V.place_label("elsewhere", "en"), "Outside Quebec")
+        self.assertEqual(V.place_kind("elsewhere"), "scope")
+        self.assertEqual(V.ELSEWHERE, "elsewhere")
+        self.assertEqual(V.place_label("unplaced", "fr"), "Lieu non établi")
+        self.assertEqual(V.place_label("unplaced", "en"), "Place not established")
+        self.assertEqual(V.FALLBACK_PLACE, "unplaced")
+        self.assertTrue(V.is_scope("unplaced"))
+        # Scope order (the table order breaks specificity ties): the city first, the absence last.
+        scopes = [c for c in V.place_codes() if V.is_scope(c)]
+        self.assertEqual(scopes, ["quebec-city", "greater-quebec", "province", "ottawa", "elsewhere", "unplaced"])
 
     def test_spec_labels_are_kept_as_written(self) -> None:
         self.assertEqual(V.type_label("fire-building", "fr"), "Incendie de bâtiment")
@@ -135,6 +164,9 @@ class PlaceHintMapping(unittest.TestCase):
         self.assertEqual(V.place_from_geo("quebec-city"), "quebec-city")
         self.assertEqual(V.place_from_geo("quebec"), "province")
         self.assertEqual(V.place_from_geo("ottawa"), "ottawa")
+        self.assertEqual(V.place_from_geo("federal"), "ottawa")
+        self.assertEqual(V.place_from_geo("world"), "elsewhere")
+        # enrich's "linked" is an absence of local evidence, never a place.
         self.assertIsNone(V.place_from_geo("linked"))
         self.assertIsNone(V.place_from_geo("unknown"))
 
@@ -212,7 +244,11 @@ class LexiconShape(unittest.TestCase):
                 self.assertIn(rule["strong_weight"], (2, 3, 4), code)
 
     def test_every_place_has_a_keyword_and_context_flag_is_boolean(self) -> None:
+        # The fallback is the one place no text can name: it has no rule at all.
+        self.assertNotIn(V.FALLBACK_PLACE, self.doc["places"])
         for code in V.place_codes():
+            if code == V.FALLBACK_PLACE:
+                continue
             rule = self.doc["places"].get(code)
             self.assertIsNotNone(rule, f"no place lexicon for {code}")
             self.assertTrue(rule.get("fr") or rule.get("en"), code)
@@ -453,6 +489,88 @@ class ClassifyPlaces(unittest.TestCase):
         self.assertIn("province", V.classify_places(["Le gouvernement du Québec annonce"]))
         self.assertIn("ottawa", V.classify_places(["Ottawa annonce un programme"]))
         self.assertIn("greater-quebec", V.classify_places(["Sondage dans la région de Québec"]))
+
+    def test_elsewhere_is_named_by_a_place_outside_quebec(self) -> None:
+        for title in ("Ouragan en Floride : le Zorblax ferme ses portes",
+                      "Paris : un nouveau pont Zorblax inauguré", "Le Zorblax ouvre une usine en Alberta",
+                      "Ukraine : le Zorblax livre des génératrices", "Flooding in Nova Scotia: Zorblax Road closed"):
+            self.assertIn("elsewhere", V.classify_places([title]), title)
+        for title in ("Les Fêtes de la Nouvelle-France à Québec", "Air France ajoute un vol vers Québec",
+                      "Les Maple Leafs de Toronto battent le Zorblax"):
+            self.assertNotIn("elsewhere", V.classify_places([title]), title)
+
+    def test_the_city_of_ottawa_is_not_the_federal_scope(self) -> None:
+        # "Ottawa" alone is the usual metonym of the federal government ...
+        self.assertEqual(V.classify_places(["Ottawa annonce un programme Zorblax"]), ["ottawa"])
+        self.assertIn("ottawa", V.classify_places(["Québec et Ottawa s'entendent sur le Zorblax"]))
+        # ... "à Ottawa", "d'Ottawa", "la police d'Ottawa" place the event in the city (Ontario).
+        for title in ("Un suspect interpellé à Ottawa près du parc Zorblax",
+                      "Un résident d'Ottawa condamné pour le Zorblax",
+                      "Les pompiers d’Ottawa examinent le Zorblax", "Course municipale : le Zorblax à Ottawa"):
+            self.assertEqual(V.classify_places([title]), ["elsewhere"], title)
+        # Federal evidence still names the federal scope when the city is also named.
+        self.assertIn("ottawa", V.classify_places(["Le gouvernement fédéral annonce à Ottawa un plan Zorblax"]))
+
+    def test_ottawa_addressed_or_paying_is_the_federal_government(self) -> None:
+        # Quebec French addresses the federal government as "Ottawa": asked,
+        # paying, answering, sitting. Those phrases stay federal; the city's
+        # "à Ottawa" / "d'Ottawa" stay the city.
+        for title in ("Le syndicat Zorblax demande à Ottawa un moratoire",
+                      "Les maires du Zorblax réclament des fonds à Ottawa",
+                      "Québec exige d’Ottawa une compensation pour le Zorblax",
+                      "Zorblax : l'aide d'Ottawa se fait attendre", "Le refus d'Ottawa irrite les Zorblax",
+                      "Session parlementaire à Ottawa : le Zorblax en tête",
+                      "Zorblax caucus returns to Parliament Hill"):
+            places = V.classify_places([title])
+            self.assertIn("ottawa", places, title)
+            self.assertNotIn("elsewhere", places, title)
+        for title in ("Un suspect interpellé à Ottawa près du parc Zorblax", "Zorblax : la Ville d'Ottawa ouvre une patinoire"):
+            self.assertEqual(V.classify_places([title]), ["elsewhere"], title)
+        # More than four words between the verb and "à Ottawa": no longer read as addressed.
+        self.assertEqual(V.classify_places(["Le Zorblax demande une pause pour ses quatre filiales à Ottawa"]),
+                         ["elsewhere"])
+        # Every federal phrase the ottawa rule keeps is a phrase the elsewhere rule masks.
+        doc = json.loads(V.LEXIQUE_PATH.read_text(encoding="utf-8"))
+        self.assertTrue(set(doc["places"]["ottawa"]["keep"]) <= set(doc["places"]["elsewhere"]["mask"]))
+        # Québec City's own colline Parlementaire stays a site of the capital.
+        self.assertEqual(V.classify_places(["Colline Parlementaire : le Zorblax plante un arbre"]), ["parliament-hill"])
+
+    def test_bets_are_not_paris(self) -> None:
+        for title in ("Paris en ligne : le Zorblax veut sa part", "Les paris sportifs du Zorblax inquiètent",
+                      "Paris et casinos : le Zorblax serre la vis"):
+            self.assertNotIn("elsewhere", V.classify_places([title]), title)
+        self.assertIn("elsewhere", V.classify_places(["À Paris, le Zorblax fait salle comble"]))
+
+    def test_a_gap_reads_up_to_four_words(self) -> None:
+        rx = re.compile(V._keyword_regex("demande ~ a ottawa"))
+        self.assertTrue(rx.search("le zorblax demande a ottawa"))
+        self.assertTrue(rx.search("le zorblax demande des fonds neufs a ottawa"))
+        self.assertFalse(rx.search("le zorblax demande un, deux, trois, quatre, cinq a ottawa".replace(",", "")))
+        self.assertFalse(rx.search("le zorblax redemande a ottawa"), "word-bounded")
+        self.assertEqual(V._keyword_regex("a ~ ottawa"), V._keyword_regex("a ~ ottawa ~"))
+
+    def test_quebec_towns_outside_the_capital_region_are_the_province(self) -> None:
+        for title in ("Grave accident à Trois-Rivières", "Un homme de Montréal arrêté au Zorblax",
+                      "Inondations en Gaspésie", "Le Zorblax arrive à Gatineau"):
+            self.assertEqual(V.classify_places([title]), ["province"], title)
+        for title in ("Le Canadien de Montréal gagne le Zorblax", "Les Canadiens de Montréal en séries",
+                      "La Banque de Montréal ferme une succursale Zorblax"):
+            self.assertNotIn("province", V.classify_places([title]), title)
+
+    def test_masks_remove_the_longest_phrase_first(self) -> None:
+        mask = V._mask(["le canadien", "le canadien de montreal"])
+        self.assertEqual(mask.sub(" ", V.fold("Le Canadien de Montréal")).strip(), "")
+        self.assertIsNone(V._mask([]))
+        self.assertIsNone(V._mask([], ["demande ~ a ottawa"]))
+
+    def test_a_kept_phrase_survives_the_mask(self) -> None:
+        mask = V._mask(["a ottawa"], ["demande ~ a ottawa"])
+        self.assertEqual(mask.sub(" ", "on demande des sous a ottawa puis on danse a ottawa").split(),
+                         ["on", "demande", "des", "sous", "a", "ottawa", "puis", "on", "danse"])
+
+    def test_the_fallback_place_is_never_named_by_a_text(self) -> None:
+        for title in ("Lieu non établi", "Place not established", "unplaced", "Un fait divers Zorblax"):
+            self.assertNotIn(V.FALLBACK_PLACE, V.classify_places([title]))
 
     def test_multiple_texts_accumulate(self) -> None:
         places = V.classify_places(["Un feu à Beauport", "Collision à Charlesbourg"])

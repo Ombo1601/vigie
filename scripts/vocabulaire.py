@@ -30,7 +30,14 @@ LEXIQUE_PATH = HERE / "vocabulaire_lexique.json"
 
 STATUS = "proposed"
 UNCLASSIFIED = "unclassified"
-FALLBACK_PLACE = "quebec-city"
+# The place of an event no evidence locates (no place named, no geo token):
+# "Lieu non établi", the place twin of "unclassified". It has no keyword (no
+# text can name an absence) and a label names no place when it is the basis.
+# Before 2026-10-06 the fallback was "quebec-city": half the live events
+# carried the city with no evidence (docs/EVENTS.md, deviations).
+FALLBACK_PLACE = "unplaced"
+# A scope with positive evidence that the event is outside Quebec.
+ELSEWHERE = "elsewhere"
 LABEL_SEP = " · "
 LANGS = ("fr", "en")
 
@@ -63,26 +70,40 @@ def fold(text: object) -> str:
     return " ".join(re.sub(r"[^a-z0-9]+", " ", raw).split())
 
 
+# `~` in a keyword: up to this many words of any kind ("demande ~ a ottawa"
+# reads "demande à Ottawa" and "demande des comptes à Ottawa").
+GAP_WORDS = 4
+
+
 def _keyword_regex(keyword: str) -> str | None:
     """One lexicon keyword -> regex source over folded text.
 
     A trailing `*` means word-prefix (no right boundary); `#` stands for a
-    number of one to three digits. Everything else is word-bounded on both
-    sides, with any run of spaces between words.
+    number of one to three digits; `~` between two words stands for up to
+    GAP_WORDS words. Everything else is word-bounded on both sides, with any
+    run of spaces between words.
     """
     prefix = keyword.rstrip().endswith("*")
     body = keyword.rstrip().rstrip("*")
-    words = []
+    pattern = ""
+    gap = False
     for token in body.replace("#", " # ").split():
+        if token == "~":
+            gap = bool(pattern)
+            continue
         if token == "#":
-            words.append(r"\d{1,3}")
+            word = r"\d{1,3}"
         else:
             folded = fold(token)
-            if folded:
-                words.append(r"\s+".join(re.escape(w) for w in folded.split()))
-    if not words:
+            if not folded:
+                continue
+            word = r"\s+".join(re.escape(w) for w in folded.split())
+        if pattern:
+            pattern += r"\s+" + (r"(?:[a-z0-9]+\s+){0,%d}?" % GAP_WORDS if gap else "")
+        pattern += word
+        gap = False
+    if not pattern:
         return None
-    pattern = r"\s+".join(words)
     tail = "" if prefix else r"(?![a-z0-9])"
     return r"(?<![a-z0-9])" + pattern + tail
 
@@ -92,6 +113,39 @@ def _alternation(keywords: list[str]) -> re.Pattern | None:
     if not parts:
         return None
     return re.compile("|".join(parts))
+
+
+def _longest_first(phrases: list[str]) -> re.Pattern | None:
+    folded = {fold(p.replace("*", "")): p for p in phrases if fold(p.replace("*", ""))}
+    return _alternation([folded[k] for k in sorted(folded, key=lambda k: (-len(k), k))])
+
+
+class _KeepMask:
+    """A mask with phrases it must leave: a span a `keep` phrase matches is
+    never masked, so "demande à Ottawa" (the federal government addressed)
+    survives a mask that removes the city's "à Ottawa"."""
+
+    def __init__(self, mask: re.Pattern, keep: re.Pattern):
+        self.mask, self.keep = mask, keep
+
+    def sub(self, repl: str, text: str) -> str:
+        out, pos = [], 0
+        for m in self.keep.finditer(text):
+            out.append(self.mask.sub(repl, text[pos:m.start()]))
+            out.append(m.group(0))
+            pos = m.end()
+        out.append(self.mask.sub(repl, text[pos:]))
+        return "".join(out)
+
+
+def _mask(phrases: list[str], keep: list[str] | None = None) -> "re.Pattern | _KeepMask | None":
+    """A removal pattern: longest phrase first, so "le canadien de montreal"
+    is removed whole rather than "le canadien" leaving "de montreal" behind
+    (ties by the phrase itself: no list-order dependence). `keep` phrases
+    are left in place wherever they match (`_KeepMask`)."""
+    mask = _longest_first(phrases)
+    kept = _longest_first(keep or [])
+    return _KeepMask(mask, kept) if mask is not None and kept is not None else mask
 
 
 # --------------------------------------------------------------------------
@@ -212,10 +266,18 @@ _ROAD_TOKENS = {
     "laurier": "boulevard-laurier",
 }
 
-# enrich.propose_geo -> place code (item-level fallback when no place is named).
+# Item geo evidence -> place code (the item-level scope when no place is
+# named). enrich.propose_geo says "quebec-city" only on a strict city token
+# and "quebec" on a Quebec token or an official province document. Its
+# "linked" means NO local evidence ("source geography is not article
+# geography"): an absence, which maps to no place at all, never to a guessed
+# one. "world" is enrich's world-fog branch (a foreign token and no Quebec
+# token): positive evidence of elsewhere. "federal" is federal evidence.
 _GEO_TO_PLACE = {
     "quebec-city": "quebec-city",
     "quebec": "province",
+    "world": ELSEWHERE,
+    "federal": "ottawa",
     "ottawa": "ottawa",
 }
 
@@ -241,7 +303,8 @@ def place_for_road(token: str) -> str | None:
 
 
 def place_from_geo(geo: str) -> str | None:
-    """Fallback place from enrich's item geo (quebec-city, quebec, ottawa)."""
+    """The scope an item's geo evidence supports (quebec-city, province,
+    elsewhere, ottawa), or None: "linked" and "unknown" are absences."""
     code = _GEO_TO_PLACE.get(str(geo or "").strip().lower())
     return code if code in vocabulary()["place_by_code"] else None
 
@@ -282,10 +345,16 @@ def _lexicon() -> dict:
             "fr": _alternation(_words(rule, "fr")),
             "en": _alternation(_words(rule, "en")),
             "needs_context": bool(rule.get("needs_context")),
+            # Phrases removed before THIS place's keywords are tested ("à
+            # Ottawa" is the city of Ottawa, not the federal scope; "Nouvelle-
+            # France" is no evidence of France), except where a `keep` phrase
+            # matches ("demande à Ottawa" addresses the federal government).
+            # Other places still see them.
+            "mask": _mask(_words(rule, "mask"), _words(rule, "keep")),
         })
     place_rules.sort(key=lambda r: specificity_key(r["code"]))
     context = _alternation(_words(doc, "place_context"))
-    mask = _alternation(_words(doc, "place_mask"))
+    mask = _mask(_words(doc, "place_mask"))
     return {"types": type_rules, "places": place_rules, "context": context, "mask": mask}
 
 
@@ -372,6 +441,7 @@ def classify_places(texts: list, langs: list[str] | None = None) -> list[str]:
         for rule in lex["places"]:
             if rule["code"] in found or (rule["needs_context"] and not has_context):
                 continue
-            if any(rule[w] is not None and rule[w].search(folded) for w in which):
+            text = rule["mask"].sub(" ", folded) if rule["mask"] is not None else folded
+            if any(rule[w] is not None and rule[w].search(text) for w in which):
                 found.add(rule["code"])
     return sorted(found, key=specificity_key)

@@ -15,6 +15,16 @@ complete and sourced is read as `unverified`, never guessed: its owner_group is
 not used, and the institution counts as its own group. Vigie counts groups; it
 never judges an owner.
 
+How events use it (docs/AUTONOMY.md, no one decides): members of one sourced
+controlling owner are one origin. A grouping is the sourced fact, not an
+opinion: Hydro-Québec shares `etat-quebec` with the Government of Quebec
+because its own annual report (its `ownership_ref`) states that the State is
+its sole shareholder. And it matters less than it seems: official voices are
+DECLARATIONS, counted apart from media reporting (events.py keys them
+`declaration:<group>`, never `owner:<group>`), so an owner group shared by an
+official source can neither inflate nor deflate a media origin count.
+`declares(source_id)` says which side of that line a source stands on.
+
 Fail-soft: a missing or malformed registry prints one diagnosis and yields
 empty facts (every source `unverified`), never an exception. No network.
 
@@ -167,6 +177,14 @@ def independence_key(source_id, sources=None) -> str:
     return f"source:{sid}"
 
 
+def declares(source_id, sources=None) -> bool:
+    """True when the source is official (`source_kind: official`, sources.yaml):
+    its items are declarations, shown as anchors ("déclaré par"), never counted
+    as independent corroboration of media reporting. Unknown source: False."""
+    rec = _index(sources).get(str(source_id))
+    return isinstance(rec, dict) and str(rec.get("source_kind") or "").strip().lower() == "official"
+
+
 def declaration(source_id, sources=None) -> dict:
     """The ownership facts of one source as stored-ready values (sorted keys)."""
     sid = str(source_id)
@@ -227,6 +245,7 @@ def table(sources=None) -> list[dict]:
         row = declaration(sid, idx)
         row["institution"] = inst
         row["independence_key"] = independence_key(sid, idx)
+        row["declares"] = declares(sid, idx)
         rows[inst] = row
     return [rows[k] for k in sorted(rows)]
 
@@ -239,7 +258,8 @@ def main(argv: list[str] | None = None) -> int:
     idx = load(args.sources)
     for row in table(idx):
         print(f"{row['institution']:<20} {row['ownership_class']:<19} {row['independence_key']:<28} "
-              f"{row['ownership_asof'] or '-'} {row['ownership_ref'] or '-'}")
+              f"{'declares' if row['declares'] else 'reports':<9} {row['ownership_asof'] or '-'} "
+              f"{row['ownership_ref'] or '-'}")
     errors = validate(idx) if idx else ["no sources could be read"]
     for err in errors:
         print(f"ownership: {err}")

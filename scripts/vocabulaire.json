@@ -535,6 +535,18 @@
    "en": "Ottawa (federal)"
   },
   {
+   "code": "elsewhere",
+   "kind": "scope",
+   "fr": "Hors Québec",
+   "en": "Outside Quebec"
+  },
+  {
+   "code": "unplaced",
+   "kind": "scope",
+   "fr": "Lieu non établi",
+   "en": "Place not established"
+  },
+  {
    "code": "la-cite-limoilou",
    "kind": "arrondissement",
    "fr": "La Cité-Limoilou",

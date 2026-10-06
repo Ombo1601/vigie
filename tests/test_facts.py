@@ -204,6 +204,32 @@ class PlaceAndEntityFacts(unittest.TestCase):
         got = [a for a in atoms("Chantier au quartier Saint-Roch") if a[0] == "place"]
         self.assertEqual(got, [("place", "area", None, "saint-roch")])
 
+    def test_function_words_after_a_road_noun_are_not_road_names(self) -> None:
+        # The junk the live edition carried: "en route à", "le pont entre",
+        # "la route est", "route après", "pont au" (invented headlines).
+        for title in ("Le convoi Gamma en route à la frontière", "Un pont entre Gamma et Delta rouvre",
+                      "La route est fermée près de Gamma", "Retour sur la route après la tempête Gamma",
+                      "Un pont au-dessus du ruisseau Gamma", "Une école primaire de Gamma rouvre",
+                      "L'hôpital général de Gamma déborde", "Sur la route et dans les rues de Gamma",
+                      "Rue de l'Église Gamma : travaux", "Le boulevard Samuel-De Gamma fermé"):
+            got = [a[3] for a in atoms(title) if a[0] == "place" and a[1] == "road"]
+            for junk in ("a", "au", "apres", "entre", "est", "et", "l", "primaire", "general", "samuel-de"):
+                self.assertNotIn(junk, got, title)
+
+    def test_real_road_names_and_route_numbers_are_kept(self) -> None:
+        got = [a[3] for a in atoms("Accrochage Gamma : l'autoroute 40 et la route 138 près du boulevard Gamma-Delta")
+               if a[0] == "place" and a[1] == "road"]
+        for want in ("40", "138", "gamma-delta"):
+            self.assertIn(want, got)
+        self.assertNotIn("4000", [a[3] for a in atoms("La route 4000 de Gamma") if a[0] == "place"])
+
+    def test_road_token_shape_guard(self) -> None:
+        for ok in ("laurentienne", "pierre-laporte", "40", "138", "rene-levesque", "saint-jean-baptiste"):
+            self.assertTrue(facts.road_token_ok(ok), ok)
+        for bad in ("a", "au", "apres", "entre", "est", "l", "et", "en", "un", "x9", "0", "007", "4000", "",
+                    "samuel-de", "marie-de-l", "quebec", "ville", "pont", "primaire", "-gamma", "gamma-", None, 12):
+            self.assertFalse(facts.road_token_ok(bad), bad)
+
     def test_entities_from_the_closed_list(self) -> None:
         got = {(a[1], a[3]) for a in atoms(
             "Rencontre : maire de Québec, ministre et SPVQ",
