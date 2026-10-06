@@ -82,6 +82,22 @@ class CataloguePair(unittest.TestCase):
                     continue
                 self.assertIn(key, cat, f"{lang}.json lacks {key}")
 
+    def test_every_key_the_event_ranking_and_chip_name_exists(self):
+        import ranking_events
+
+        source = (harness.SCRIPTS / "ranking_events.py").read_text(encoding="utf-8")
+        literal = set(re.findall(r"""["']((?:rank|chip)\.[a-z0-9_.-]+|tier\.possible|why\.single)["']""", source))
+        dynamic = {f"rank.geo.{g}" for g in (*ranking_events.GEO_RANK, "unknown")}
+        dynamic |= {f"rank.decided.{d}" for d in ("first", "now", "geo", "origins", "fresh", "id", "none")}
+        dynamic |= {"rank.geo.quebec-city.anchor", "chip.auto.model", "chip.auto.unrecorded",
+                    "chip.auto.unmeasured", "chip.probable", "chip.certain"}
+        for lang in i18n.LANGS:
+            cat = i18n.catalogue(lang)
+            for key in sorted(literal | dynamic):
+                if key.endswith("."):
+                    continue
+                self.assertIn(key, cat, f"{lang}.json lacks {key}")
+
     def test_script_strings_are_all_in_the_island(self):
         js = (harness.ROOT / "public" / "assets" / "evenements.js").read_text(encoding="utf-8")
         used = set(re.findall(r"""\b(?:text|count)\(\s*'([a-z_]+)'""", js))
