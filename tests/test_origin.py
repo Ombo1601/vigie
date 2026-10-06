@@ -145,18 +145,40 @@ class WireAuthorTests(unittest.TestCase):
         it2 = item(None, photo_credit="Reuters")
         self.assertEqual(cls(it2), (UNKNOWN, "unknown.no_signal"))
 
-    def test_qmi_default_is_not_wire_and_not_a_person(self):
-        self.assertEqual(origin.AGENCE_QMI_IS_WIRE, False)
+    def test_qmi_without_a_measurement_is_not_wire_and_not_a_person(self):
         self.assertEqual(cls(item("Agence QMI")), (UNKNOWN, "unknown.newsroom_credit"))
         self.assertEqual(cls(item("Alice Tremblay-Roy, Agence QMI")), (UNKNOWN, "unknown.byline_mixed_credit"))
 
-    def test_qmi_switch(self):
-        origin.AGENCE_QMI_IS_WIRE = True
-        try:
-            self.assertEqual(cls(item("Agence QMI")), (WIRE, "wire.author.qmi"))
-            self.assertEqual(cls(item("Alice Tremblay-Roy, Agence QMI")), (WIRE, "wire.author.qmi"))
-        finally:
-            origin.AGENCE_QMI_IS_WIRE = False
+    def test_no_human_flag_decides_an_agency_credit(self):
+        # docs/AUTONOMY.md: a credit is a wire by measurement, never by a flag.
+        self.assertFalse(hasattr(origin, "AGENCE_QMI_IS_WIRE"))
+        src = (ROOT / "scripts" / "origin.py").read_text(encoding="utf-8")
+        self.assertNotIn("AGENCE_QMI_IS_WIRE =", src)
+
+    def test_qmi_follows_the_measured_wire_rule_of_the_events_layer(self):
+        import events
+
+        def row(iid, group):
+            return {"item_id": iid, "source_id": f"src-{group}", "institution": f"inst-{group}", "owner_group": group}
+
+        one_group = events.measured_wires(events.wire_credits([(row("a1", "zorbacor"), ["qmi"]),
+                                                               (row("a2", "zorbacor"), ["qmi"])]))
+        two_groups = events.measured_wires(events.wire_credits([(row("b1", "zorbacor"), ["qmi"]),
+                                                                (row("b2", "plimco"), ["qmi"])]))
+        self.assertNotIn("qmi", one_group, "inside one owner group the credit is that group's own byline")
+        self.assertIn("qmi", two_groups, "seen in two owner groups within the window: a wire")
+        for byline in ("Agence QMI", "Alice Tremblay-Roy, Agence QMI"):
+            self.assertEqual(origin_of(item(byline), MEDIA, one_group)[0], UNKNOWN, byline)
+            self.assertEqual(origin_of(item(byline), MEDIA, two_groups), (WIRE, "wire.author.qmi"), byline)
+        batch = classify_batch([item("Agence QMI", id="q1")], {"journal-x": MEDIA}, wires=two_groups)
+        self.assertEqual(batch["q1"], (WIRE, "wire.author.qmi"))
+
+    def test_the_measurement_never_touches_the_closed_list_or_unknown_codes(self):
+        for wires in (frozenset(), {"qmi"}, {"zz-not-a-credit"}, ["qmi", 3, None], "qmi", None):
+            with self.subTest(wires=wires):
+                self.assertEqual(origin_of(item("Alice Tremblay-Roy, AFP"), MEDIA, wires), (WIRE, "wire.author.afp"))
+                self.assertEqual(origin_of(item("Alice Tremblay-Roy"), MEDIA, wires),
+                                 (OWN_REPORTING, "own_reporting.named_byline"))
 
 
 class WireTextTests(unittest.TestCase):

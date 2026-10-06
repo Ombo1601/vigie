@@ -52,12 +52,14 @@ OWN_REPORTING = "own_reporting"
 UNKNOWN = "unknown"
 CLASSES = (OFFICIAL, WIRE, PRESS_RELEASE, OWN_REPORTING, UNKNOWN)
 
-# Founder decision (b): Agence QMI is Quebecor's in-house wire. The spec's
-# closed list does not name it, so the default is False: an "Agence QMI"
-# credit is recognised as an organisation (never a person, so never
-# own_reporting) and the item stays `unknown`. Flip to True to classify it as
-# `wire.author.qmi`.
-AGENCE_QMI_IS_WIRE = False
+# Agency credits outside the closed list (today: Agence QMI) are not decided by
+# a flag any more (docs/AUTONOMY.md, "Agence QMI and other agency credits"): a
+# credit is a wire when copy carrying it is observed in two or more distinct
+# owner groups within the window, a measurement the events layer makes every
+# edition (events.wire_credits / events.measured_wires). origin_of follows that
+# measurement when the caller passes it as `wires`; without one, such a credit
+# is an organisation (never a person, so never own_reporting) and the item
+# stays `unknown`. The closed list below stays a prior, never measured.
 
 # --------------------------------------------------------------------------
 # Closed lists
@@ -178,6 +180,9 @@ def _alias_table(aliases: dict[str, tuple[str, ...]]) -> list[tuple[tuple[str, .
 
 _WIRE_TABLE = _alias_table(WIRE_AGENCIES)
 _QMI_TABLE = _alias_table({"qmi": WIRE_QMI_ALIASES})
+# Credits a measurement may make wires (code -> alias table); events.py reads
+# the same tables to record the credits it measures.
+MEASURED_CREDIT_TABLES = {"qmi": _QMI_TABLE}
 _RELAY_TABLE = _alias_table({"relay": RELAY_AGENCY_ALIASES})
 _LEADERS = ("par", "by", "de", "from", "avec", "with", "source")
 
@@ -272,10 +277,26 @@ def _self_names(item: dict, source: dict) -> set[str]:
     return names
 
 
-def _wire_codes_in_author(author: str) -> set[str]:
-    """Agency codes named by author segments (closed list)."""
+def _wire_table(wires: frozenset[str]) -> list[tuple[tuple[str, ...], str]]:
+    """The closed list, plus every measured credit the caller says is a wire."""
+    table = list(_WIRE_TABLE)
+    for code in sorted(wires):
+        table += MEASURED_CREDIT_TABLES.get(code, [])
+    table.sort(key=lambda r: (-len(r[0]), r[1], r[0]))
+    return table
+
+
+def _wires(value: object) -> frozenset[str]:
+    if isinstance(value, (set, frozenset, list, tuple)):
+        return frozenset(v for v in value if isinstance(v, str))
+    return frozenset()
+
+
+def _wire_codes_in_author(author: str, wires: frozenset[str] = frozenset()) -> set[str]:
+    """Agency codes named by author segments (closed list, plus the measured
+    wires the caller passes)."""
     codes: set[str] = set()
-    table = _WIRE_TABLE + (_QMI_TABLE if AGENCE_QMI_IS_WIRE else [])
+    table = _wire_table(wires) if wires else _WIRE_TABLE
     # whole-field first ("Agence France-Presse (AFP)" would split oddly)
     whole = _segment_agencies(author, table)
     if whole:
@@ -379,15 +400,20 @@ def _source_kind(item: dict, source: dict) -> str:
     return ""
 
 
-def origin_of(item: dict, source: dict | None = None) -> tuple[str, str]:
-    """Classify one item. Pure, total, deterministic. See module docstring."""
+def origin_of(item: dict, source: dict | None = None, wires: frozenset[str] | set[str] = frozenset()) -> tuple[str, str]:
+    """Classify one item. Pure, total, deterministic. See module docstring.
+
+    `wires`: the agency-credit codes the events layer measured as wires this
+    edition (events.measured_wires). A credit outside the closed list is a wire
+    only when it is in that measurement; without one it is an organisation
+    credit and the item stays `unknown` (never own reporting)."""
     try:
-        return _origin_of(item, source)
+        return _origin_of(item, source, _wires(wires))
     except Exception:  # fail-soft: a classifier fault is unknown, never a crash
         return UNKNOWN, "unknown.bad_input"
 
 
-def _origin_of(item: object, source: object) -> tuple[str, str]:
+def _origin_of(item: object, source: object, wires: frozenset[str] = frozenset()) -> tuple[str, str]:
     if not isinstance(item, dict):
         return UNKNOWN, "unknown.bad_input"
     if not isinstance(source, dict):
@@ -403,7 +429,7 @@ def _origin_of(item: object, source: object) -> tuple[str, str]:
     summary = _clean(item.get("summary"))
 
     # 2. wire credit in the author field (closed list; byline + credit counts)
-    codes = _wire_codes_in_author(author) if author else set()
+    codes = _wire_codes_in_author(author, wires) if author else set()
     if codes:
         return WIRE, f"wire.author.{_agency_suffix(codes)}"
 
@@ -472,10 +498,12 @@ def _outlet_key(item: dict, source: dict) -> str:
     return sid if isinstance(sid, str) else ""
 
 
-def classify_batch(items: list, sources: dict | list | None = None) -> dict[str, tuple[str, str]]:
+def classify_batch(items: list, sources: dict | list | None = None,
+                   wires: frozenset[str] | set[str] = frozenset()) -> dict[str, tuple[str, str]]:
     """Classify many items. `sources` is a dict keyed by source id or a list of
-    source dicts (as loaded from sources.yaml). Returns {item id: (class, rule)}
-    with ids in sorted order (deterministic).
+    source dicts (as loaded from sources.yaml); `wires` the measured wire
+    credits (see origin_of). Returns {item id: (class, rule)} with ids in
+    sorted order (deterministic).
 
     Two cross-item rules, both strictly conservative: they can only DOWNGRADE
     an `own_reporting` verdict to `unknown`, never promote anything.
@@ -498,6 +526,7 @@ def classify_batch(items: list, sources: dict | list | None = None) -> dict[str,
     else:
         by_id = {}
     clean_items = [it for it in (items if isinstance(items, list) else []) if isinstance(it, dict)]
+    measured = _wires(wires)
 
     wire_names: set[str] = set()
     outlets_of: dict[str, set[str]] = {}
@@ -506,7 +535,7 @@ def classify_batch(items: list, sources: dict | list | None = None) -> dict[str,
         sid = it.get("source_id")
         src = by_id.get(sid) if isinstance(sid, str) else None
         src = src or {}
-        result = origin_of(it, src)
+        result = origin_of(it, src, measured)
         first.append(result)
         if result[0] == WIRE and result[1].startswith("wire.author."):
             wire_names |= _person_names(it)
