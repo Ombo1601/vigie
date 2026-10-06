@@ -1,0 +1,175 @@
+{
+  "description": "Invented fixture. Frozen output of registre.edition_record and seal_edition: any change to the main chain's bytes fails scripts/events_eval.py gate 4.",
+  "editions": [
+    {
+      "collection": null,
+      "edition": "2026-03-01T06:00:00+00:00",
+      "payload": {
+        "chancellery_institutions": [
+          "ville-quebec",
+          "radio-canada",
+          "le-soleil"
+        ],
+        "change_ledger": {
+          "developed": [],
+          "has_previous": false,
+          "new": [
+            "iss-a1",
+            "iss-b2"
+          ],
+          "quiet": []
+        },
+        "issues": [
+          {
+            "issue_id": "iss-a1",
+            "item_count": 4,
+            "label_kind": "subject_label",
+            "official_voice_count": 1,
+            "question": "Que décide le conseil sur la rue Zorblax ?",
+            "silence": {
+              "silent": [
+                {
+                  "institution_id": "le-soleil"
+                }
+              ]
+            },
+            "sources": [
+              "ville-quebec",
+              "radio-canada"
+            ]
+          },
+          {
+            "issue_id": "iss-b2",
+            "item_count": 2,
+            "label_kind": "attributed_headline",
+            "official_voice_count": 0,
+            "question": "Titre inventé qui ne doit jamais être scellé",
+            "silence": {
+              "silent": []
+            },
+            "sources": [
+              "radio-canada",
+              "le-soleil"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "collection": null,
+      "edition": "2026-03-01T12:00:00+00:00",
+      "payload": {
+        "chancellery_institutions": [
+          "ville-quebec",
+          "radio-canada",
+          "le-soleil"
+        ],
+        "change_ledger": {
+          "developed": [
+            "iss-a1"
+          ],
+          "has_previous": true,
+          "new": [],
+          "quiet": [
+            "iss-b2"
+          ]
+        },
+        "issues": [
+          {
+            "issue_id": "iss-a1",
+            "item_count": 6,
+            "label_kind": "subject_label",
+            "official_voice_count": 1,
+            "question": "Que décide le conseil sur la rue Zorblax ?",
+            "silence": {
+              "silent": []
+            },
+            "sources": [
+              "ville-quebec",
+              "radio-canada",
+              "le-soleil"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "collection": {
+        "le-soleil": {
+          "feeds_ok": 1,
+          "feeds_total": 1,
+          "items": 0
+        },
+        "radio-canada": {
+          "feeds_ok": 1,
+          "feeds_total": 2,
+          "items": 9
+        },
+        "ville-quebec": {
+          "feeds_ok": 2,
+          "feeds_total": 2,
+          "items": 5
+        }
+      },
+      "edition": "2026-03-01T18:00:00+00:00",
+      "payload": {
+        "chancellery_institutions": [
+          "ville-quebec",
+          "radio-canada",
+          "le-soleil"
+        ],
+        "change_ledger": {
+          "developed": [],
+          "has_previous": true,
+          "new": [
+            "iss-c3"
+          ],
+          "quiet": [
+            "iss-a1"
+          ]
+        },
+        "issues": [
+          {
+            "issue_id": "iss-c3",
+            "item_count": 3,
+            "label_kind": "subject_label",
+            "official_voice_count": 2,
+            "question": "Quel avenir pour le pont Quuxland ?",
+            "silence": {
+              "silent": [
+                {
+                  "institution_id": "radio-canada"
+                }
+              ]
+            },
+            "sources": [
+              "ville-quebec",
+              "le-soleil"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "expected": [
+    {
+      "leaf": "0f2db2fe5e22f1d8664f55dd836073b5973174f2d9cb10f2dc5cb117a00ef754",
+      "record_bytes": 581,
+      "root": "76cc6b0908570345a391deeb4c43f56969a2538e4dc969dee4fc3685bf0d0df7",
+      "seq": 1
+    },
+    {
+      "leaf": "80fbe26d9d93cf45a9ce43f26826ff30344ab3bb025812d258728d0491233eca",
+      "record_bytes": 421,
+      "root": "6cba152b30546da946eb7bb624b6bc802e680f00d2fe8deb8df98fe7f3e9dfe2",
+      "seq": 2
+    },
+    {
+      "leaf": "7987b019513af18789981db3502fa824b9bc38f2444acf720deade56a70d7b61",
+      "record_bytes": 610,
+      "root": "4450c4b314f8053f8ac301b139475e1deb25e12df4ce5e0daecddfdca9932329",
+      "seq": 3
+    }
+  ],
+  "method": "registre-v1 sha256-chain"
+}
