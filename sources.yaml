@@ -14,6 +14,12 @@ niche:
 # source_kind: media | official — official = primary document / government / crown corp.
 # institution: voice identity for silence map + fight gate (≥2 institutions).
 # max_items: optional hard cap after fetch (RENT.md thin wallet).
+# ownership_class: public_broadcaster | quebecor | cooperative | independent | government | unverified
+#   (who owns the institution; sister feeds repeat the same declaration).
+# owner_group: one id per owner; members sharing it count as one independence group
+#   (docs/EVENTS.md sections 7-8). ownership_ref: a public https page stating it;
+#   ownership_asof: the date Vigie last read that page. A claim no public page
+#   supports is `unverified`, never guessed.
 
 sources:
   # --- Quebec City / Capitale-Nationale primary ---
@@ -21,6 +27,10 @@ sources:
     name: Radio-Canada — Québec
     institution: radio-canada
     institution_name: Radio-Canada
+    ownership_class: public_broadcaster
+    owner_group: cbc-radio-canada
+    ownership_ref: https://laws-lois.justice.gc.ca/fra/lois/b-9.01/TexteComplet.html
+    ownership_asof: 2026-10-06
     language: fr
     geo: quebec-city
     nest_role: primary
@@ -36,6 +46,10 @@ sources:
     name: Le Journal de Québec
     institution: journal-de-quebec
     institution_name: Le Journal de Québec
+    ownership_class: quebecor
+    owner_group: quebecor
+    ownership_ref: https://www.cem.ulaval.ca/economie/propriete/presse-quotidienne/
+    ownership_asof: 2026-10-06
     language: fr
     geo: quebec-city
     nest_role: primary
@@ -51,6 +65,10 @@ sources:
     name: Le Soleil
     institution: le-soleil
     institution_name: Le Soleil
+    ownership_class: cooperative
+    owner_group: cn2i
+    ownership_ref: https://www.cem.ulaval.ca/economie/propriete/presse-quotidienne/
+    ownership_asof: 2026-10-06
     language: fr
     geo: quebec-city
     nest_role: primary
@@ -68,6 +86,10 @@ sources:
     name: Ville de Québec — Communiqués
     institution: ville-quebec
     institution_name: Ville de Québec
+    ownership_class: government
+    owner_group: ville-quebec
+    ownership_ref: https://www.ville.quebec.qc.ca/apropos/gouvernance/index.aspx
+    ownership_asof: 2026-10-06
     language: fr
     geo: quebec-city
     nest_role: primary
@@ -85,6 +107,10 @@ sources:
     name: Ville de Québec — Entraves à la circulation (WZDX)
     institution: ville-quebec
     institution_name: Ville de Québec
+    ownership_class: government
+    owner_group: ville-quebec
+    ownership_ref: https://www.ville.quebec.qc.ca/apropos/gouvernance/index.aspx
+    ownership_asof: 2026-10-06
     language: fr
     geo: quebec-city
     nest_role: primary
@@ -101,6 +127,10 @@ sources:
     name: Ville de Québec — Participation citoyenne
     institution: ville-quebec
     institution_name: Ville de Québec
+    ownership_class: government
+    owner_group: ville-quebec
+    ownership_ref: https://www.ville.quebec.qc.ca/apropos/gouvernance/index.aspx
+    ownership_asof: 2026-10-06
     language: fr
     geo: quebec-city
     nest_role: primary
@@ -118,6 +148,10 @@ sources:
     name: Le Devoir
     institution: le-devoir
     institution_name: Le Devoir
+    ownership_class: independent
+    owner_group: le-devoir
+    ownership_ref: https://www.cem.ulaval.ca/economie/propriete/presse-quotidienne/
+    ownership_asof: 2026-10-06
     language: fr
     geo: quebec
     nest_role: province
@@ -133,6 +167,10 @@ sources:
     name: La Presse
     institution: la-presse
     institution_name: La Presse
+    ownership_class: independent
+    owner_group: la-presse
+    ownership_ref: https://info.lapresse.ca/a-propos/qui-nous-sommes
+    ownership_asof: 2026-10-06
     language: fr
     geo: quebec
     nest_role: province
@@ -148,6 +186,10 @@ sources:
     name: Radio-Canada — Grands titres
     institution: radio-canada
     institution_name: Radio-Canada
+    ownership_class: public_broadcaster
+    owner_group: cbc-radio-canada
+    ownership_ref: https://laws-lois.justice.gc.ca/fra/lois/b-9.01/TexteComplet.html
+    ownership_asof: 2026-10-06
     language: fr
     geo: quebec
     nest_role: province
@@ -163,6 +205,10 @@ sources:
     name: Gouvernement du Québec — Fil de presse
     institution: gouv-quebec
     institution_name: Gouvernement du Québec
+    ownership_class: government
+    owner_group: etat-quebec
+    ownership_ref: https://www.quebec.ca/nouvelles
+    ownership_asof: 2026-10-06
     language: fr
     geo: quebec
     nest_role: province
@@ -180,6 +226,10 @@ sources:
     name: Hydro-Québec — Salle de nouvelles
     institution: hydro-quebec
     institution_name: Hydro-Québec
+    ownership_class: government
+    owner_group: etat-quebec
+    ownership_ref: https://www.hydroquebec.com/data/documents-donnees/pdf/M1029_22024G415_HQ_Rapport_annuel_2024_FR_F_V8_2-ACCESSIBLE.pdf
+    ownership_asof: 2026-10-06
     language: fr
     geo: quebec
     nest_role: province
@@ -198,6 +248,10 @@ sources:
     name: CBC News — Montreal
     institution: cbc
     institution_name: CBC
+    ownership_class: public_broadcaster
+    owner_group: cbc-radio-canada
+    ownership_ref: https://laws-lois.justice.gc.ca/eng/acts/b-9.01/FullText.html
+    ownership_asof: 2026-10-06
     language: en
     geo: linked
     nest_role: linked
@@ -215,6 +269,10 @@ sources:
     name: CBC News — Politics
     institution: cbc
     institution_name: CBC
+    ownership_class: public_broadcaster
+    owner_group: cbc-radio-canada
+    ownership_ref: https://laws-lois.justice.gc.ca/eng/acts/b-9.01/FullText.html
+    ownership_asof: 2026-10-06
     language: en
     geo: linked
     nest_role: linked
@@ -232,6 +290,10 @@ sources:
     name: Radio-Canada — Ottawa-Gatineau
     institution: radio-canada
     institution_name: Radio-Canada
+    ownership_class: public_broadcaster
+    owner_group: cbc-radio-canada
+    ownership_ref: https://laws-lois.justice.gc.ca/fra/lois/b-9.01/TexteComplet.html
+    ownership_asof: 2026-10-06
     language: fr
     geo: linked
     nest_role: linked
