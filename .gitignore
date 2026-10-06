@@ -43,5 +43,8 @@ Thumbs.db
 /.ui-server.pid
 /.vigie-serve.pid
 
+# Isolated agent worktrees (Claude Code) live inside the checkout
+/.claude/
+
 .vercel
 .env*
