@@ -13,9 +13,10 @@ import re
 import socket
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.request
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -38,6 +39,18 @@ MAX_FEED_BYTES = 8 * 1024 * 1024
 RETENTION_DAYS = 30  # raw snapshot retention (LEGAL_RISK.md R6)
 ROBOTS_TIMEOUT = 14
 MAX_ROBOTS_BYTES = 500 * 1024  # RFC 9309 s. 2.5: parse at least 500 KiB
+
+# Optional per-source pagination (`pages: N` in sources.yaml, WordPress
+# `?paged=N` style). Absent = 1 = exactly the single request Vigie has always
+# made. Extra pages are a courtesy to the publisher, never a crawl: bounded
+# count, spaced requests, robots.txt consulted, one shared time budget per run,
+# a refusal (any 4xx) ends the walk for that feed.
+PAGES_MAX = 5
+PAGE_SPACING_SECONDS = 2.0
+PAGINATION_BUDGET_SECONDS = 180.0  # whole run, all feeds: extra pages only
+_monotonic = time.monotonic  # injection points: tests swap in hermetic fakes
+_sleep = time.sleep
+_RUN_DEADLINE: float | None = None  # monotonic deadline set by main()
 
 # Alternate addresses the publisher itself serves for the same feed (CBC scar).
 # Tried ONLY after a transport failure - the origin gave no HTTP answer at all
@@ -609,13 +622,99 @@ def _item_credit(item: ET.Element) -> str | None:
     return None
 
 
+def _atom_link(entry: ET.Element) -> str | None:
+    """The article URL of an Atom entry: rel=alternate (or no rel), the HTML
+    one when several are offered, else the first. self/enclosure/replies links
+    are never the article."""
+    first = None
+    for child in entry:
+        if _local(child.tag).lower() != "link":
+            continue
+        href = (child.attrib.get("href") or "").strip()
+        rel = (child.attrib.get("rel") or "alternate").strip().lower()
+        if not href or rel != "alternate":
+            continue
+        kind = (child.attrib.get("type") or "").strip().lower()
+        if kind in ("", "text/html", "application/xhtml+xml"):
+            return href
+        first = first or href
+    return first
+
+
+_XML_PREDEFINED_ENTITIES = frozenset({b"amp", b"lt", b"gt", b"quot", b"apos"})
+_CDATA_SPLIT_RE = re.compile(br"(<!\[CDATA\[.*?\]\]>)", re.S)
+# Every '&' and the reference (if any) that follows it. Digit runs are bounded so
+# a hostile numeric reference never reaches int() at length.
+_AMPERSAND_RE = re.compile(
+    br"&(#[xX][0-9A-Fa-f]{1,8};|#[0-9]{1,10};|[A-Za-z_][A-Za-z0-9_.\-]*;)?")
+
+
+def _legal_xml_char(code: int) -> bool:
+    return (code in (0x9, 0xA, 0xD) or 0x20 <= code <= 0xD7FF
+            or 0xE000 <= code <= 0xFFFD or 0x10000 <= code <= 0x10FFFF)
+
+
+def sanitize_entities(raw: bytes) -> tuple[bytes, int] | None:
+    """Repair stray entities so a feed with one defect can still be read.
+
+    Quebecor-style defect: a bare '&' in a title, an HTML entity (&nbsp;,
+    &eacute;) that XML does not define, or a numeric reference to a character
+    XML forbids. Each such '&' becomes '&amp;', so the publisher's own
+    characters survive as the literal text they wrote (R8: every other byte is
+    untouched, nothing is translated or dropped). CDATA sections are copied
+    verbatim - an '&' there is already literal. Returns (repaired bytes, number
+    of '&' repaired), or None when the bytes are not ASCII-compatible (UTF-16/32
+    or NUL-laced), where a byte-level repair would corrupt text: the strict
+    failure then stands, diagnosed."""
+    if b"\x00" in raw or raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return None
+    repaired = 0
+
+    def fix(match: "re.Match[bytes]") -> bytes:
+        nonlocal repaired
+        ref = match.group(1)
+        if ref is not None:
+            body = ref[:-1]
+            if body[:1] == b"#":
+                code = int(body[2:], 16) if body[1:2] in (b"x", b"X") else int(body[1:])
+                legal = _legal_xml_char(code)
+            else:
+                legal = body in _XML_PREDEFINED_ENTITIES
+            if legal:
+                return match.group(0)
+        repaired += 1
+        return b"&amp;" + (ref or b"")
+
+    parts = _CDATA_SPLIT_RE.split(raw)
+    for index in range(0, len(parts), 2):  # odd entries are CDATA sections
+        parts[index] = _AMPERSAND_RE.sub(fix, parts[index])
+    return b"".join(parts), repaired
+
+
 def parse_feed(xml_bytes: bytes, base_url: str | None = None,
                stats: dict | None = None) -> list[dict]:
     if len(xml_bytes) > MAX_FEED_BYTES:
         raise ValueError("Feed exceeds size limit")
     if re.search(br"<!\s*(?:DOCTYPE|ENTITY)\b", xml_bytes.replace(b"\x00", b""), re.I):
         raise ValueError("Feed document type and entity declarations are not allowed")
-    root = ET.fromstring(xml_bytes)
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError as strict_error:
+        # The sanitising pass runs only after the strict parse failed, so a
+        # well-formed feed is never touched; it repairs entities and nothing
+        # else, and the mode is a recorded fact (stats -> run row).
+        repaired = sanitize_entities(xml_bytes)
+        if repaired is None or repaired[1] == 0 or len(repaired[0]) > 2 * MAX_FEED_BYTES:
+            raise
+        try:
+            root = ET.fromstring(repaired[0])
+        except ET.ParseError as tolerant_error:
+            raise ET.ParseError(
+                f"{strict_error} (tolerant entity repair of {repaired[1]} '&' "
+                f"also failed: {tolerant_error})") from None
+        if stats is not None:
+            stats["parse_mode"] = "tolerant"
+            stats["entities_repaired"] = repaired[1]
     tag = _local(root.tag).lower()
     items: list[dict] = []
     if tag == "rss" or tag == "rdf":
@@ -654,14 +753,7 @@ def parse_feed(xml_bytes: bytes, base_url: str | None = None,
                     if _local(child.tag).lower() == "title":
                         title = _text(child)
                         break
-            link = None
-            for child in entry:
-                if _local(child.tag).lower() == "link":
-                    href = child.attrib.get("href")
-                    rel = child.attrib.get("rel", "alternate")
-                    if href and rel in ("alternate", ""):
-                        link = href
-                        break
+            link = _atom_link(entry)
             summary = None
             for child in entry:
                 loc = _local(child.tag).lower()
@@ -712,6 +804,116 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def page_count(src: dict) -> tuple[int, str | None]:
+    """(pages to read, diagnosis). `pages` absent = 1, the historical single
+    request. A value that is not an integer in 1..PAGES_MAX is read as 1 (or
+    the ceiling) and said so in the run row, never silently."""
+    raw = src.get("pages")
+    if raw is None:
+        return 1, None
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        return 1, f"pages_invalid: {raw!r} is not an integer from 1 to {PAGES_MAX}; read as 1"
+    if raw > PAGES_MAX:
+        return PAGES_MAX, f"pages_clamped: {raw} requested, ceiling is {PAGES_MAX}"
+    return raw, None
+
+
+def paged_url(url: str, number: int, param: str = "paged") -> str:
+    """`url` with its page parameter set to `number` (WordPress `?paged=N`).
+    Other query parameters keep their exact spelling and order."""
+    parts = urlsplit(url)
+    kept = [pair for pair in parts.query.split("&") if pair and pair.split("=", 1)[0] != param]
+    kept.append(f"{param}={number}")
+    return urlunsplit(parts._replace(query="&".join(kept)))
+
+
+def _item_key(item: dict) -> str | None:
+    return item.get("url") or item.get("guid") or item.get("title")
+
+
+def _pagination_budget_left() -> bool:
+    return _RUN_DEADLINE is None or _monotonic() + PAGE_SPACING_SECONDS < _RUN_DEADLINE
+
+
+def _fetch_more_pages(src: dict, pages: int, first_items: list[dict], stalled_hosts: dict[str, str] | None,
+                      dest_dir: Path, stamp: str) -> tuple[list[dict], list[dict], int]:
+    """Pages 2..N of one feed. Returns (merged items, one diagnostic row per
+    page after the first, dropped_no_url_title across them).
+
+    Politeness is part of the contract: robots.txt is consulted for each page
+    URL (a disallow or an unreadable robots.txt ends the walk), requests are
+    spaced, the shared run budget is honoured, and a refusal (any 4xx - an
+    out-of-range page is a 404 on WordPress) is final for this feed in this
+    run. A failed extra page never fails the feed: page 1 stands and the
+    failure is a row. Items repeated across pages are counted, not duplicated."""
+    param = src.get("page_param")
+    param = param if isinstance(param, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", param) else "paged"
+    seen = {key for key in (_item_key(it) for it in first_items) if key}
+    merged = list(first_items)
+    rows: list[dict] = []
+    dropped = 0
+    stopped = False
+    for number in range(2, pages + 1):
+        page_url = paged_url(src["url"], number, param)
+        row: dict = {"page": number, "url": page_url}
+        rows.append(row)
+        if stopped:
+            row["status"] = "skipped_after_stop"
+            continue
+        if not _pagination_budget_left():
+            row["status"] = "skipped_budget"
+            stopped = True
+            continue
+        allowed, reason, detail = robots_verdict(page_url)
+        if not allowed:
+            row.update(status=reason, error=detail)
+            stopped = True
+            continue
+        _sleep(PAGE_SPACING_SECONDS)
+        try:
+            raw, _ctype = fetch_bytes(page_url, stalled_hosts=stalled_hosts)
+        except Exception as exc:  # noqa: BLE001 - every fetch failure is a recorded row
+            row.update(status="fetch_failed", error=f"{type(exc).__name__}: {exc}")
+            if isinstance(exc, urllib.error.HTTPError) and 400 <= exc.code < 500:
+                row["refused"] = exc.code
+            stopped = True
+            continue
+        digest = sha256_hex(raw)
+        row.update(bytes=len(raw), sha256=digest)
+        stats: dict = {}
+        try:
+            page_items = parse_feed(raw, page_url, stats)
+        except Exception as exc:  # noqa: BLE001
+            row.update(status="parse_failed", error=f"{type(exc).__name__}: {exc}")
+            stopped = True
+            continue
+        try:
+            previous = sorted(dest_dir.glob(f"*.p{number}.page"))
+            repeated = bool(previous) and previous[-1].name.endswith(f"_{digest[:12]}.p{number}.page")
+            store_io.write_bytes_dedup(dest_dir / f"{stamp}_{digest[:12]}.p{number}.page", raw,
+                                       previous[-1] if repeated else None)
+        except OSError as exc:  # the audit copy is best-effort, the items are not lost
+            row["snapshot_error"] = f"{type(exc).__name__}: {exc}"
+        dropped += stats.get("dropped_no_url_title", 0)
+        fresh = 0
+        for item in page_items:
+            key = _item_key(item)
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            merged.append(item)
+            fresh += 1
+        row.update(status="ok" if page_items else "empty", item_count=len(page_items),
+                   new_item_count=fresh)
+        if stats.get("parse_mode"):
+            row["parse_mode"] = stats["parse_mode"]
+            row["entities_repaired"] = stats["entities_repaired"]
+        if not page_items:
+            stopped = True  # the archive ended: nothing further to ask for
+    return merged, rows, dropped
+
+
 def ingest_one(src: dict, fetched_at: datetime,
                stalled_hosts: dict[str, str] | None = None) -> dict:
     source_id = src["id"]
@@ -755,6 +957,17 @@ def ingest_one(src: dict, fetched_at: datetime,
     except Exception as e:
         parse_error = f"{type(e).__name__}: {e}"
 
+    # Optional pagination (default 1: nothing below runs and no key is added).
+    pages, pages_note = page_count(src)
+    page_rows: list[dict] = []
+    dropped_total = parse_stats.get("dropped_no_url_title", 0)
+    if pages > 1 and parse_error is None:
+        first_row = {"page": 1, "url": url, "status": "ok", "bytes": len(raw), "sha256": digest,
+                     "item_count": len(items)}
+        items, page_rows, extra_dropped = _fetch_more_pages(src, pages, items, stalled_hosts, dest_dir, stamp)
+        dropped_total += extra_dropped
+        page_rows.insert(0, first_row)
+
     raw_item_count = len(items)
     max_items = src.get("max_items")
     capped = False
@@ -771,6 +984,25 @@ def ingest_one(src: dict, fetched_at: datetime,
             return str(p.relative_to(ROOT)).replace("\\", "/")
         except ValueError:
             return str(p).replace("\\", "/")
+
+    # Optional facts, present only when they apply: a feed that needs none of
+    # them keeps the exact payload it has always had (golden-tested).
+    extras: dict = {}
+    if parse_stats.get("parse_mode"):
+        extras["parse_mode"] = parse_stats["parse_mode"]  # absent = strict
+        extras["entities_repaired"] = parse_stats["entities_repaired"]
+    for key in ("owner_group", "ownership_class"):  # declared in sources.yaml, passed through
+        value = src.get(key)
+        if isinstance(value, str) and value.strip():
+            extras[key] = value.strip()
+    if pages > 1:
+        extras["pages_requested"] = pages
+        if page_rows:
+            extras["pages"] = page_rows
+        else:  # page 1 itself failed: nothing was walked, and that is said
+            pages_note = "; ".join(filter(None, [pages_note, "pages_not_walked: the first page did not parse"]))
+    if pages_note:
+        extras["pages_note"] = pages_note
 
     payload = {
         "ok": parse_error is None,
@@ -789,13 +1021,14 @@ def ingest_one(src: dict, fetched_at: datetime,
         "sha256": digest,
         "xml_file": rel_or_abs(xml_path),
         "raw_item_count": raw_item_count,
-        "dropped_no_url_title": parse_stats.get("dropped_no_url_title", 0),
+        "dropped_no_url_title": dropped_total,
         "not_modified": not_modified,
         "max_items": max_items if isinstance(max_items, int) else None,
         "capped": capped,
         "item_count": len(items),
         "parse_error": parse_error,
         "error": parse_error,
+        **extras,
         "items": [
             {
                 "source_id": source_id,
@@ -880,6 +1113,8 @@ def main() -> int:
     }
     print(f"Vigie ingest {fetched_at.isoformat()} — {len(sources)} enabled RSS")
     stalled_hosts: dict[str, str] = {}  # one run: a host that never answered is asked once
+    global _RUN_DEADLINE
+    _RUN_DEADLINE = _monotonic() + PAGINATION_BUDGET_SECONDS  # shared by every feed's extra pages
     for src in sources:
         print(f"  fetch {src['id']} ...", flush=True)
         try:
@@ -903,6 +1138,14 @@ def main() -> int:
             "xml_file": result.get("xml_file"),
             "meta_file": result.get("meta_file"),
         }
+        if result.get("parse_mode"):
+            slim["parse_mode"] = result["parse_mode"]
+            slim["entities_repaired"] = result.get("entities_repaired")
+        if result.get("pages") is not None:
+            slim["pages_requested"] = result.get("pages_requested")
+            slim["pages_ok"] = sum(1 for row in result["pages"] if row.get("status") == "ok")
+        if result.get("pages_note"):
+            slim["pages_note"] = result["pages_note"]
         run["results"].append(slim)
         if result["ok"]:
             print(f"    ok  items={slim['item_count']}  {slim.get('meta_file')}")
@@ -917,6 +1160,7 @@ def main() -> int:
     print(f"run log: {run_path.relative_to(ROOT)}")
     tail = f", pruned {run['pruned_snapshots']} old snapshots" if run["pruned_snapshots"] else ""
     print(f"done: {ok_n}/{len(sources)} feeds ok, {items_n} items{tail}")
+    _RUN_DEADLINE = None
     return 0 if ok_n > 0 else 1
 
 

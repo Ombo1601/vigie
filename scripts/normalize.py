@@ -227,7 +227,7 @@ def normalize_item(raw_item: dict, source_meta: dict) -> dict | None:
         published = None
         date_status = "future"
     updated = parse_timestamp(raw_item.get("updated_at"))
-    return {
+    candidate = {
         "id": stable_id(url, source_id or "unknown", title, raw_item.get("guid")),
         "title": title,
         "summary": summary,
@@ -250,6 +250,13 @@ def normalize_item(raw_item: dict, source_meta: dict) -> dict | None:
         "fetched_at": fetched.isoformat() if fetched else fetched_raw,
         "enrich_status": "pending",  # proposals come later; never truth
     }
+    # Declared ownership (sources.yaml) rides along only when the registry
+    # states it: a source without it yields the candidate it always did.
+    for key in ("owner_group", "ownership_class"):
+        value = source_meta.get(key)
+        if isinstance(value, str) and value.strip():
+            candidate[key] = value.strip()
+    return candidate
 
 
 def main() -> int:
@@ -294,7 +301,8 @@ def main() -> int:
         # The current registry is authoritative, including institution and geography.
         source = source_by_id[source_id]
         payload.update({"source_id": source_id, "source_name": source.get("name"),
-                        **{key: source.get(key) for key in ("institution", "institution_name", "geo", "nest_role", "source_kind", "language")}})
+                        **{key: source.get(key) for key in ("institution", "institution_name", "geo", "nest_role", "source_kind", "language",
+                                                           "owner_group", "ownership_class")}})
         n = 0
         dropped = {"not_an_item": 0, "no_title_or_url": 0, "duplicate_id": 0, "withdrawn_on_request": 0}
         item_nodes = len(payload.get("items") or [])
