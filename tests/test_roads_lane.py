@@ -109,6 +109,8 @@ class RoadsOnlyLane(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(
             calls, ["wzdx", "anomalies", "edges", "render", "verify", "link", "deploy"])
+        # The lane never mints an edition: regression refused, advance not required.
+        refresh.chain_guard.assert_called_once_with(full_run=False, fetcher=None)
         written.assert_called_once_with("new")
 
     def test_no_normalize_enrich_or_cluster_is_ever_run(self) -> None:

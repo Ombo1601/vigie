@@ -301,7 +301,7 @@ def parse_checkpoint(text: object) -> tuple[int, str] | None:
     """(seq, root) from registre.checkpoint_text output; None when it is not one."""
     if not isinstance(text, str):
         return None
-    lines = text.splitlines()
+    lines = text.lstrip("﻿").splitlines()  # tolerate a leading UTF-8 BOM
     if len(lines) < 3 or lines[0].strip() != registre.ORIGIN:
         return None
     seq_raw, root = lines[1].strip(), lines[2].strip()
@@ -444,6 +444,10 @@ def chain_guard(*, full_run: bool, fetcher=None, env=None,
         for line in refusals:
             log(f"WARN !!! {SKIP_GUARD_ENV}=1 overrides a chain refusal: {line}")
         log("WARN !!! publishing a registre the chain guard refused (break-glass)")
+        # What ships is the staged checkpoint, not the state tip: the post-deploy
+        # check must compare production against what was actually uploaded.
+        if staged.status == "ok":
+            return (staged.seq, staged.root)
         return tip
     raise GuardRefusal("chain guard refused the deploy: " + "; ".join(refusals)
                        + f" (break-glass: {SKIP_GUARD_ENV}=1)")

@@ -113,6 +113,11 @@ class CheckpointParsing(unittest.TestCase):
         self.assertEqual(reading.status, "ok")
         self.assertGreater(reading.seq, 0)
 
+    def test_a_leading_bom_is_tolerated(self) -> None:
+        seals = chain(3)
+        self.assertEqual(refresh.parse_checkpoint("﻿" + checkpoint(seals)),
+                         (3, seals[-1]["root"]))
+
     def test_garbage_is_not_a_checkpoint(self) -> None:
         for text in (None, "", "<html>404</html>", "vigieqc.com/registre\nx\nroot\n",
                      "vigieqc.com/registre\n3\nnot-hex\n", "elsewhere\n3\n" + "a" * 64 + "\n"):
@@ -264,6 +269,13 @@ class ChainGuardIO(_Logged):
                                   env={"VIGIE_SKIP_CHAIN_GUARD": "1"}, **paths)
         self.assertEqual(tip[0], 1)
         self.assertIn("WARN !!! VIGIE_SKIP_CHAIN_GUARD=1 overrides", self.logged())
+
+    def test_break_glass_expects_the_staged_checkpoint_not_the_state_tip(self) -> None:
+        local, staged = chain(1, salt="empty"), chain(5, salt="shipped")
+        paths = self.write(local, chain(57), staged=staged)
+        tip = refresh.chain_guard(full_run=True, fetcher=lambda u, t: None,
+                                  env={"VIGIE_SKIP_CHAIN_GUARD": "1"}, **paths)
+        self.assertEqual(tip, (5, staged[-1]["root"]))
 
     def test_a_refused_run_never_reaches_link_or_deploy(self) -> None:
         paths = self.write(chain(1, salt="empty"), chain(57))
