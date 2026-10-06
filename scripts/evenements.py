@@ -749,6 +749,19 @@ class Render:
 # --------------------------------------------------------------------------- #
 # Views
 # --------------------------------------------------------------------------- #
+
+def _scrub_ids(obj, gone: set):
+    """Return `obj` without any withdrawn item id: dict keys, list entries and
+    string values equal to one are dropped (recursively). A defence in depth for
+    the ranking input; the public pages never print these fields."""
+    if not gone:
+        return obj
+    if isinstance(obj, dict):
+        return {k: _scrub_ids(v, gone) for k, v in obj.items() if k not in gone and not (isinstance(v, str) and v in gone)}
+    if isinstance(obj, list):
+        return [_scrub_ids(v, gone) for v in obj if not (isinstance(v, str) and v in gone)]
+    return obj
+
 def _live_rows(r: Render, rows: list[dict]) -> list[dict]:
     return [m for m in rows if _str(m.get("item_id")) and _str(m.get("item_id")) not in r.gone
             and not r.law.withdrawn(m, r.hosts.get(_str(m.get("item_id")), ""))]
@@ -1372,6 +1385,11 @@ def build_site(r: Render) -> tuple[dict[str, str], dict]:
         x["independence"] = _independence(ids, by_id, e.get("copies"))
         x["anchors"] = [a for a in _dicts(e.get("anchors")) if anchor_live(r, a)]
         x["in_edition"] = [i for i in _strs(e.get("in_edition")) if i in by_id]
+        # R10, whatever new private field the builder adds: no withdrawn item id survives anywhere
+        # in what the ranking reads (dict keys, list entries, or values equal to a withdrawn id)
+        gone_ids = {_str(m.get("item_id")) for m in _dicts(e.get("members"))} - set(by_id)
+        gone_ids |= set(r.law.withdrawn_item_ids)
+        x = _scrub_ids(x, gone_ids)
         rank_input.append(x)
     rw_view, rw_clock = roadworks_view(r)
     later = max((c for c in (r.clock, rw_clock) if _instant(c) is not None), key=lambda c: _epoch(c) or 0.0, default=None)
