@@ -169,6 +169,7 @@
  "roads.shown.one": "La plus restrictive est affichée.",
  "roads.shown.other": "Les {n} plus restrictives sont affichées.",
  "roads.since": "depuis le {a}",
+ "roads.skew": "Horodatage incohérent : la collecte indiquée est postérieure à l’horloge de cette page, son âge ne peut donc pas être établi. Vérifiez la carte officielle avant de partir.",
  "roads.stale": "Collecte à actualiser : ces déclarations ont plus de six heures. Vérifiez la carte officielle avant de partir.",
  "roads.sub": "Entraves déclarées, telles que publiées : les plus restrictives d’abord. Source : {inst}.",
  "roads.time_unknown": "Heure de collecte non établie",

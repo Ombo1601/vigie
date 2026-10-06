@@ -129,9 +129,12 @@ def parse_instant(value: object) -> datetime | None:
             dt = datetime.fromisoformat(raw.replace("Z", "+00:00").replace("z", "+00:00"))
         except (ValueError, OverflowError):
             return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    try:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (OverflowError, ValueError, OSError):
+        return None  # year 1 / year 9999 plus an offset: not representable, not a crash
 
 
 def _nth_sunday(year: int, month: int, nth: int) -> date:
@@ -152,7 +155,10 @@ def local_dt(value: object) -> datetime | None:
     utc = parse_instant(value)
     if utc is None:
         return None
-    return (utc + timedelta(hours=toronto_offset_hours(utc))).replace(tzinfo=None)
+    try:
+        return (utc + timedelta(hours=toronto_offset_hours(utc))).replace(tzinfo=None)
+    except OverflowError:
+        return None
 
 
 MONTHS_LONG = {

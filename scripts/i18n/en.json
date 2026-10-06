@@ -169,6 +169,7 @@
  "roads.shown.one": "The most restrictive one is shown.",
  "roads.shown.other": "The {n} most restrictive are shown.",
  "roads.since": "since {a}",
+ "roads.skew": "Inconsistent timestamp: the collection time shown is later than this page’s clock, so its age cannot be established. Check the official map before you leave.",
  "roads.stale": "Collection due for a refresh: these declarations are more than six hours old. Check the official map before you leave.",
  "roads.sub": "Obstructions as declared and published, most restrictive first. Source: {inst}.",
  "roads.time_unknown": "Collection time not established",

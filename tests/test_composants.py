@@ -443,6 +443,65 @@ class TimelinesAreSvgWithoutStyle(unittest.TestCase):
         self.assertNotRegex(en, r"tl-tick[^>]*>\d{1,2}:00 [ap]\.m\.")
 
 
+class DateSuspectMembersCannotStretchTheAxis(unittest.TestCase):
+    """A parseable but wrong published_at is kept and flagged (docs/EVENTS.md),
+    never corrected: it must not blow up the page or crash the render."""
+
+    @staticmethod
+    def with_date(value, index=0):
+        ev = copy.deepcopy(BYLAW)
+        ev["members"][index]["published_at"] = value
+        return ev
+
+    def test_wrong_years_give_a_thin_bounded_page(self):
+        for value in ("1970-01-01T00:00:00Z", "1969-12-31T12:00:00Z", "1900-05-05T00:00:00Z", "2027-10-01T00:00:00Z",
+                      "2126-10-01T00:00:00Z", "9999-12-31T23:59:59Z", "0001-01-01T00:00:00Z", "2026-10-06T12:00:00-23:59"):
+            for index in (0, 1, 2):
+                ev = self.with_date(value, index)
+                for lang in ("fr", "en"):
+                    for perm in (False, True):
+                        page = ck.event_page(dict(ev, permanent=perm), lang)
+                        self.assertLess(len(page.encode("utf-8")), 60_000, (value, index, lang, perm))
+                        self.assertLessEqual(page.count('class="tl-tick"'), 12, (value, index))
+                        self.assertEqual(parse(page).count("h1"), 1)
+                        ck.event_card(ev, lang)
+
+    def test_ticks_stay_bounded_on_a_normal_event_too(self):
+        for ev in VIEWS["events"]:
+            self.assertLessEqual(ck.full_timeline(ev, "fr").count('class="tl-tick"'), 12)
+
+    def test_outliers_are_pinned_inside_the_axis_with_their_full_date(self):
+        ev = self.with_date("1970-01-01T00:00:00Z", 0)
+        html = ck.full_timeline(ev, "fr")
+        self.assertEqual(html.count("tl-a "), 3)  # every voice still has its dot
+        for x in re.findall(r'cx="([\d.]+)%"', html) + re.findall(r'class="tl-t" x="([\d.]+)%"', html):
+            self.assertTrue(0.0 <= float(x) <= 100.0, x)
+        self.assertIn("1969", html)  # 31 Dec 1969 evening in Quebec City: the full date is on the label
+        # the two honest voices keep their plain time-of-day labels
+        self.assertRegex(html, r'class="tl-t"[^>]*>\d{1,2} h(?: \d\d)?<')
+        en = ck.full_timeline(self.with_date("2027-10-06T12:00:00Z", 2), "en")
+        self.assertIn("2027", en)
+
+    def test_the_densest_window_wins_not_the_first_dot(self):
+        # the earliest dot is the wrong one; the two others are an hour apart
+        ev = self.with_date("2020-01-01T00:00:00Z", 0)
+        html = ck.full_timeline(ev, "fr")
+        self.assertLessEqual(html.count('class="tl-tick"'), 12)
+        self.assertNotIn("2020", ck.mini_timeline(ev, "fr") + "")  # strip labels are times of day only
+        # the two honest voices are not both piled on one edge
+        xs = sorted({float(x) for x in re.findall(r'<circle class="tl-hit" cx="([\d.]+)%"', html)})
+        self.assertGreaterEqual(len(xs), 2)
+
+    def test_tick_label_epoch_and_formatters_never_raise(self):
+        for e in (-1e12, -62135596800.0, 1e18, 9e15):
+            self.assertIsInstance(ck._tick_label(e, "fr"), str)
+        for bad in ("0001-01-01T00:00:00+23:59", "9999-12-31T23:59:59-23:59", "9999-12-31T23:59:59Z",
+                    "1970-01-01T00:00:00Z", "", None, 5):
+            ck._epoch(bad)
+            i18n.fmt_time(bad, "fr")
+            i18n.fmt_datetime(bad, "en")
+
+
 class PermanentPagesCarryNoPublisherText(unittest.TestCase):
     def _tokenised(self):
         ev = copy.deepcopy(FIRE)
@@ -620,6 +679,32 @@ class Roadworks(unittest.TestCase):
         self.assertIn("plus de six heures", stale)
         self.assertNotIn("Collecte à actualiser", ck.roadworks_block(VIEWS["roadworks"], "fr"))
 
+    def test_a_collection_newer_than_the_render_clock_is_not_stale(self):
+        # The render clock is the edition clock in practice; the hourly lane is
+        # routinely fresher than the edition. That is not "more than six hours".
+        store = {"fetched_at": "2026-10-06T02:53:47Z", "events": [{"event_id": "a", "road_names": ["Rue A"]}]}
+        for clock in ("2026-10-06T00:03:00Z", "2026-10-05T23:00:00Z"):
+            view = ck.roadworks_view(store, render_clock=clock)
+            self.assertFalse(view["stale"], clock)
+            for lang in ("fr", "en"):
+                html = ck.roadworks_block(view, lang)
+                self.assertNotIn("plus de six heures", html)
+                self.assertNotIn("more than six hours", html)
+        # within five minutes of the clock: neither stale nor skewed
+        near = ck.roadworks_view(store, render_clock="2026-10-06T02:50:00Z")
+        self.assertFalse(near["stale"])
+        self.assertFalse(near["clock_skew"])
+        skew = ck.roadworks_view(store, render_clock="2026-10-05T23:00:00Z")
+        self.assertTrue(skew["clock_skew"])
+        self.assertIn("Horodatage incohérent", ck.roadworks_block(skew, "fr"))
+        self.assertIn("Inconsistent timestamp", ck.roadworks_block(skew, "en"))
+        # a genuinely old collection is still stale, with its own sentence
+        old = ck.roadworks_view(store, render_clock="2026-10-06T09:00:00Z")
+        self.assertTrue(old["stale"])
+        self.assertFalse(old["clock_skew"])
+        self.assertIn("plus de six heures", ck.roadworks_block(old, "fr"))
+        self.assertNotIn("Horodatage incohérent", ck.roadworks_block(old, "fr"))
+
     def test_rows_keep_the_given_order_and_label_closures_in_words(self):
         block = ck.roadworks_block(VIEWS["roadworks"], "fr")
         order = [block.index(f'<span class="st">{s}</span>') for s in ("Avenue des Érables", "Rue des Fabricants", "Boulevard de la Rivière", "Rue du Quai")]
@@ -781,6 +866,44 @@ class FailSoftOnSkeletalViews(unittest.TestCase):
                     page = ck.event_page(ev, lang)
                     ck.event_card(ev, lang)
                     self.assertEqual(parse(page).count("h1"), 1)
+
+    def test_junk_entries_in_every_list_are_skipped(self):
+        base = copy.deepcopy(BYLAW)
+        fields = ("neighbours", "silence", "words", "facts", "language_pairs", "anchors", "members", "seals")
+        for junk in (None, 5, "x", [], {}):
+            for field in fields:
+                for container in ([junk], [junk, None, 5], junk):
+                    ev = copy.deepcopy(base)
+                    if field == "members":
+                        ev[field] = list(ev["members"]) + (container if isinstance(container, list) else [])
+                    else:
+                        ev[field] = container
+                    for lang in ("fr", "en"):
+                        for perm in (False, True):
+                            page = ck.event_page(dict(ev, permanent=perm), lang)
+                            ck.event_card(dict(ev, permanent=perm), lang)
+                            self.assertEqual(parse(page).count("h1"), 1, (field, junk))
+        nested = (("independence", [None]), ("independence", {"groups": [None, 5, "ab"], "count": "x"}),
+                  ("independence", {"groups": 5}), ("independence", 5), ("why", {"shared": [None, 5]}),
+                  ("why", {"shared": 5}), ("why", [1]), ("ledger", {"changes": [None]}), ("ledger", 5),
+                  ("languages", 5), ("languages", [None, 5]),
+                  ("facts", [{"slot": 5, "values": [None, {"institutions": 5}]}]), ("facts", [{"values": 5}]),
+                  ("words", [{"forms": 5}, {"forms": [None], "label": None}]),
+                  ("neighbours", [{"member": 5}, {"member": {"title": "t"}, "why": 5}]))
+        for key, value in nested:
+            ev = dict(copy.deepcopy(base), **{key: value})
+            for lang in ("fr", "en"):
+                for perm in (False, True):
+                    ck.event_page(dict(ev, permanent=perm), lang)
+                    ck.event_card(dict(ev, permanent=perm), lang)
+
+    def test_card_with_mixed_or_missing_languages_and_no_languages_key(self):
+        members = [{"item_id": "a", "language": "fr", "title": "t"}, {"item_id": "b", "title": "u"},
+                   {"item_id": "c", "language": None}, {"item_id": "d", "language": 5}]
+        for lang in ("fr", "en"):
+            for ms in (members, members[:2], members[1:2]):
+                html = ck.event_card({"event_id": "ev-x", "label": {"fr": "x", "en": "x"}, "members": ms}, lang)
+                self.assertIn("<article", html)
 
     def test_editions_and_roadworks(self):
         editions = ({}, {"events": None}, {"events": [{}], "roster": [None, {}], "official": [None, {}], "seal": {"seq": "x"}, "suggestions": None, "clock": 5})

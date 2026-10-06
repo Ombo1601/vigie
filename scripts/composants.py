@@ -106,8 +106,15 @@ may be newer than the edition; it is never derived from the EditionView)::
   total           int         declarations in the collection
   closed          int         of which "all lanes closed"
   planned         int | None  of which planned (optional)
-  stale           bool        the builder compares collected_at with its own
-                              render clock (the kit has no clock)
+  stale           bool        True only when collected_at is OLDER than the
+                              threshold (6 h) at the builder's render clock
+                              (the kit has no clock of its own)
+  clock_skew      bool        optional: collected_at is more than 5 minutes
+                              LATER than the render clock; printed as an
+                              inconsistent timestamp, never as "stale". In
+                              practice the render clock is the edition clock
+                              and the hourly lane is routinely newer than it,
+                              so skew is a tolerated, labelled case
   rows            [{"id", "street", "places", "text", "direction", "what",
                     "status": active|planned|pending, "from", "to",
                     "estimated": bool, "impact": the City's vehicle_impact code}]
@@ -128,7 +135,7 @@ import re
 import shutil
 import sys
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -239,6 +246,16 @@ def _has(key: str, lang: str) -> bool:
 
 def _pct(x: float) -> str:
     return f"{round(x, 2):g}%"
+
+
+def _dicts(x: object) -> list[dict]:
+    """The dict entries of a list; anything else (None, a number, a string) is
+    skipped, so a thin or malformed view renders thinly and never crashes."""
+    return [i for i in x if isinstance(i, dict)] if isinstance(x, (list, tuple)) else []
+
+
+def _map(x: object) -> dict:
+    return x if isinstance(x, dict) else {}
 
 
 def _cls(*names: object) -> str:
@@ -443,7 +460,7 @@ def lang_chip(code: object, lang: str) -> str:
 
 def event_lang_chip(languages: object, lang: str) -> str:
     """`FR + EN`, a single language chip, or the English-only label."""
-    langs = sorted({str(x) for x in (languages or []) if str(x) in ("fr", "en")})
+    langs = sorted({str(x) for x in (languages if isinstance(languages, (list, tuple, set, frozenset)) else ()) if str(x) in ("fr", "en")})
     if langs == ["en", "fr"]:
         return (f'<span class="chip lang"><span aria-hidden="true">FR + EN</span>'
                 f'{_sr(t("lang.chip.both", lang))}</span>')
@@ -488,8 +505,13 @@ def origin_chip(member: dict, lang: str) -> str:
 # Member helpers
 # --------------------------------------------------------------------------- #
 def _epoch(iso: object) -> float | None:
-    dt = i18n.parse_instant(iso)
-    return None if dt is None else dt.timestamp()
+    """Seconds since the epoch, or None for anything that does not parse or
+    cannot be represented (a wrong year is a fact to show, never a crash)."""
+    try:
+        dt = i18n.parse_instant(iso)
+        return None if dt is None else dt.timestamp()
+    except (OSError, OverflowError, ValueError):
+        return None
 
 
 def _shown_instant(m: dict) -> str:
@@ -499,7 +521,7 @@ def _shown_instant(m: dict) -> str:
 
 
 def _sorted_members(ev: dict) -> list[dict]:
-    ms = [m for m in (ev.get("members") or []) if isinstance(m, dict)]
+    ms = _dicts(ev.get("members"))
 
     def key(m: dict) -> tuple:
         e = _epoch(_shown_instant(m))
@@ -525,7 +547,8 @@ def _origin_groups(ev: dict, ms: list[dict]) -> list[list[dict]]:
     by_id = {str(m.get("item_id")): m for m in ms}
     groups: list[list[dict]] = []
     seen: set[str] = set()
-    raw = (ev.get("independence") or {}).get("groups") or []
+    raw = _map(ev.get("independence")).get("groups")
+    raw = [g for g in raw if isinstance(g, (list, tuple))] if isinstance(raw, (list, tuple)) else []
     for g in raw:
         row = [by_id[str(i)] for i in g if str(i) in by_id and str(i) not in seen]
         for m in row:
@@ -589,7 +612,32 @@ def mini_timeline(ev_or_members: object, lang: str) -> str:
     )
 
 
+EVENT_SPAN_HOURS = 72  # docs/EVENTS.md: the event window; the time axis never exceeds it
+_EPOCH0 = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _window(ts: list[float]) -> tuple[float, float]:
+    """The 72 h window holding the most declared times (ties: the earliest).
+
+    A member whose declared date is wrong (kept and flagged date_suspect, never
+    corrected) falls outside this window and is pinned to its edge, so one bad
+    date can never stretch the axis or the page.
+    """
+    xs = sorted(ts)
+    span = EVENT_SPAN_HOURS * 3600.0
+    best_i, best_n = 0, 0
+    for i, x in enumerate(xs):
+        k = i
+        while k < len(xs) and xs[k] <= x + span:
+            k += 1
+        if k - i > best_n:
+            best_i, best_n = i, k - i
+    return xs[best_i], xs[best_i] + span
+
+
 def _axis(ts: list[float]) -> tuple[float, float]:
+    """Hourly-aligned axis around already-clamped times: at most the window
+    plus padding, so a bounded number of ticks."""
     mn, mx = min(ts), max(ts)
     pad = max(45 * 60.0, (mx - mn) * 0.15)
     a = float(int((mn - pad) // 3600) * 3600)
@@ -599,8 +647,24 @@ def _axis(ts: list[float]) -> tuple[float, float]:
     return a, b
 
 
+def _tick_step(a: float, b: float) -> int:
+    """Hours between labelled ticks: 1 on a short axis, else the smallest step
+    that keeps the label count at or under 12."""
+    n = (b - a) / 3600.0
+    if n <= 7:
+        return 1
+    for step in (2, 3, 4, 6, 12, 24, 48, 96):
+        if n / step <= 12:
+            return step
+    return 168
+
+
 def _tick_label(epoch: float, lang: str) -> str:
-    text = i18n.fmt_time(datetime.fromtimestamp(epoch, timezone.utc), lang)
+    try:
+        when = _EPOCH0 + timedelta(seconds=epoch)
+        text = i18n.fmt_time(when, lang)
+    except (OSError, OverflowError, ValueError):
+        return ""
     return re.sub(r"\s?(?:a\.m\.|p\.m\.)", "", text) if lang == "en" else text
 
 
@@ -616,10 +680,12 @@ def full_timeline(ev_or_members: object, lang: str, *, linked: bool = True) -> s
     pts = [(m, e) for m, e in pts if e is not None]
     if not pts:
         return ""
-    a, b = _axis([e for _m, e in pts])
+    w0, w1 = _window([e for _m, e in pts])
+    a, b = _axis([min(max(e, w0), w1) for _m, e in pts])
 
     def pos(e: float) -> float:
-        return (e - a) / (b - a) * 100
+        # out-of-window members are pinned to the axis edge, never off it
+        return (min(max(e, w0), w1) - a) / (b - a) * 100
 
     lanes: list[tuple[str, list[tuple[dict, float]]]] = []
     for m, e in pts:
@@ -638,7 +704,9 @@ def full_timeline(ev_or_members: object, lang: str, *, linked: bool = True) -> s
         dots = []
         for m, e in row:
             x = pos(e)
-            label = i18n.fmt_time(_shown_instant(m), lang)
+            outside = not (w0 <= e <= w1)
+            label = (i18n.fmt_datetime(_shown_instant(m), lang, short=True) if outside
+                     else i18n.fmt_time(_shown_instant(m), lang))
             anchor = "start" if x < 6 else ("end" if x > 94 else "middle")
             ring = (f'<circle class="dot-ring {_color(m)}" cx="{_pct(x)}" cy="20" r="13"/>'
                     if (multi and str(m.get("item_id")) == first_id) else "")
@@ -658,7 +726,7 @@ def full_timeline(ev_or_members: object, lang: str, *, linked: bool = True) -> s
             '<line class="tl-line" x1="0" x2="100%" y1="20" y2="20"/>' + "".join(dots) + "</svg></div>"
         )
     ticks = []
-    step = 2 if (b - a) > 7 * 3600 else 1
+    step = _tick_step(a, b)
     tm, i = a, 0
     while tm <= b:
         if i % step == 0:
@@ -738,7 +806,7 @@ def event_card(ev: dict, lang: str) -> str:
     else:
         head = f'<h2 class="ev-h"><a href="{esc(href)}">{esc(label)}</a></h2>'
         byline = summary = ""
-    langs = event_lang_chip(ev.get("languages") or sorted({m.get("language") for m in ms}), lang)
+    langs = event_lang_chip(ev.get("languages") or sorted({str(m.get("language") or "") for m in ms} & {"fr", "en"}), lang)
     facts = f'<b>{esc(tn("n.voices", n, lang))}</b> · {esc(tn("n.orgs", orgs, lang))} · {langs}'
     primary = " primary" if n > 1 else ""
     action = t("compare", lang, n=i18n.fmt_int(n, lang)) if n > 1 else t("see", lang)
@@ -865,8 +933,11 @@ def words_panel(ev: dict, lang: str) -> str:
         return ""
     ms = _sorted_members(ev)
     items = []
-    for w in ev.get("words") or []:
-        forms = [str(f) for f in (w.get("forms") or [w.get("label")]) if f]
+    for w in _dicts(ev.get("words")):
+        raw_forms = w.get("forms")
+        forms = [str(f) for f in (raw_forms if isinstance(raw_forms, (list, tuple)) and raw_forms else [w.get("label")]) if f]
+        if not forms:
+            continue
         present = [_word_present(forms, fold(f'{m.get("title") or ""} {m.get("excerpt") or ""}')) for m in ms]
         n = sum(present)
         if not n:
@@ -905,7 +976,7 @@ def origins_panel(ev: dict, lang: str) -> str:
     if not ms:
         return ""
     groups = _origin_groups(ev, ms)
-    n_origins = _int((ev.get("independence") or {}).get("count"), len(groups)) or len(groups)
+    n_origins = _int(_map(ev.get("independence")).get("count"), len(groups)) or len(groups)
     rows = []
     for g in groups:
         name, own = _group_label(g, lang)
@@ -913,7 +984,7 @@ def origins_panel(ev: dict, lang: str) -> str:
         rows.append(f'<li><span class="n">{len(g)}</span><div><b>{esc(name)}</b>{own_html}</div></li>')
     note = ""
     by_id = {str(m.get("item_id")): m for m in ms}
-    for pair in ev.get("language_pairs") or []:
+    for pair in _dicts(ev.get("language_pairs")):
         if pair.get("same_owner") and str(pair.get("fr")) in by_id and str(pair.get("en")) in by_id:
             a, b = by_id[str(pair["fr"])], by_id[str(pair["en"])]
             group = loc(a.get("owner_name"), lang) or str(a.get("owner_group") or "")
@@ -940,12 +1011,12 @@ def numbers_panel(ev: dict, lang: str) -> str:
     """Figures stated in the coverage, side by side with who stated them. A
     divergence is shown, never reconciled and never called a disagreement.
     Derived from publisher text, so never on a permanent page."""
-    if ev.get("permanent") or not ev.get("facts"):
+    if ev.get("permanent") or not _dicts(ev.get("facts")):
         return ""
     names = {str(m.get("institution")): _inst(m, lang) for m in _sorted_members(ev)}
     rows = []
-    for fact in ev.get("facts") or []:
-        slot = fact.get("slot") or {}
+    for fact in _dicts(ev.get("facts")):
+        slot = _map(fact.get("slot"))
         unit, kind = str(slot.get("unit") or ""), str(slot.get("kind") or "")
         if _has(f"unit.{unit}", lang):
             label = t(f"unit.{unit}", lang)
@@ -954,8 +1025,9 @@ def numbers_panel(ev: dict, lang: str) -> str:
         else:
             label = unit
         vals = []
-        for v in fact.get("values") or []:
-            who = ", ".join(names.get(str(i), str(i)) for i in v.get("institutions") or [])
+        for v in _dicts(fact.get("values")):
+            insts = v.get("institutions")
+            who = ", ".join(names.get(str(i), str(i)) for i in (insts if isinstance(insts, (list, tuple)) else []))
             who_html = f'<span class="who">{esc(who)}</span>' if who else ""
             vals.append(f'<span class="val"><code>{esc(_fact_value(slot, v.get("value"), lang))}</code>{who_html}</span>')
         flag = chip(t("nums.divergent", lang), "note") if fact.get("divergent") else ""
@@ -970,10 +1042,11 @@ def why_panel(ev: dict, lang: str) -> str:
     ms = _sorted_members(ev)
     if len(ms) < 2:
         return _panel(t("grp.h", lang), f'<p class="m0">{esc(t("why.single", lang))}</p>', hid="gp-h")
-    why = ev.get("why") or {}
+    why = _map(ev.get("why"))
     perm = bool(ev.get("permanent"))
     rows: list[tuple[str, str]] = []
-    shared = why.get("shared") or []
+    shared = why.get("shared")
+    shared = [x for x in shared if isinstance(x, (dict, str))] if isinstance(shared, (list, tuple)) else []
     if shared and not perm:
         parts = []
         for s in shared:
@@ -1008,7 +1081,7 @@ def silence_panel(ev: dict, lang: str) -> str:
     """Institutions followed with no linked article in this collection: a
     measured fact of our feeds, never an accusation, never a proof of silence."""
     rows = []
-    for s in ev.get("silence") or []:
+    for s in _dicts(ev.get("silence")):
         state = str(s.get("state") or "no_linked_item")
         state = state if state in SILENCE_STATES else "no_linked_item"
         rows.append(f'<li><b>{esc(loc(s.get("institution_name"), lang))}</b><span>{esc(t("sil." + state, lang))}</span></li>')
@@ -1024,7 +1097,7 @@ def official_link_panel(ev: dict, lang: str) -> str:
     absence."""
     perm = bool(ev.get("permanent"))
     rows = []
-    anchors = [x for x in (ev.get("anchors") or []) if isinstance(x, dict)]
+    anchors = _dicts(ev.get("anchors"))
     for a in sorted(anchors, key=lambda x: (str(x.get("type")), str(x.get("ref")))):
         typ = str(a.get("type") or "")
         if typ not in ANCHOR_TYPES:
@@ -1060,8 +1133,8 @@ def neighbours_panel(ev: dict, lang: str) -> str:
     if ev.get("permanent"):
         return ""
     items = []
-    for n in ev.get("neighbours") or []:
-        m = n.get("member") or {}
+    for n in _dicts(ev.get("neighbours")):
+        m = _map(n.get("member"))
         if not m.get("title"):
             continue
         code = _lang_code(m, lang)
@@ -1084,7 +1157,7 @@ def neighbours_panel(ev: dict, lang: str) -> str:
 def ledger_panel(ev: dict, lang: str) -> str:
     """Headline history. Current pages list each change with both headlines;
     permanent pages keep only how many changes were observed."""
-    changes = [c for c in ((ev.get("ledger") or {}).get("changes") or []) if isinstance(c, dict)]
+    changes = _dicts(_map(ev.get("ledger")).get("changes"))
     if not changes:
         body = f'<p class="small m0">{esc(t("ledger.none", lang))}</p>'
     elif ev.get("permanent"):
@@ -1119,7 +1192,7 @@ def archive_panel(ev: dict, lang: str) -> str:
     parts.append(esc(t("k.links", lang)))
     if str(ev.get("tier") or "") in TIERS:
         parts.append(esc(t("k.tier", lang)))
-    seals = sorted({_int(s) for s in (ev.get("seals") or []) if _int(s) > 0})
+    seals = sorted({_int(s) for s in (ev.get("seals") if isinstance(ev.get("seals"), (list, tuple)) else []) if _int(s) > 0})
     seal_line = ""
     if seals:
         nums = []
@@ -1172,7 +1245,7 @@ def event_page(ev: dict, lang: str, *, edition: dict | None = None, followed: in
         activity_chip(ev.get("activity"), lang), tier_chip(ev.get("tier"), lang),
         chip(place) if place else "", event_lang_chip(langs, lang) if langs == ["en"] else "",
     ) if x)
-    if any(p.get("same_owner") for p in (ev.get("language_pairs") or []) if isinstance(p, dict)):
+    if any(p.get("same_owner") for p in _dicts(ev.get("language_pairs"))):
         chips += chip(t("chip.same_owner", lang), "same-owner")
     head = (f'<header class="evp-head"><div class="ev-top">{chips}</div>'
             f'<h1 id="h1" tabindex="-1">{esc(label)}</h1><p class="facts-line">{line}</p></header>')
@@ -1266,7 +1339,7 @@ def roadworks_block(rw: dict | None, lang: str) -> str:
     delivered nothing; the age note is a fixed sentence (the kit has no
     clock), and the script adds the relative age on the reader's device."""
     rw = rw if isinstance(rw, dict) else {}
-    rows = [r for r in (rw.get("rows") or []) if isinstance(r, dict)]
+    rows = _dicts(rw.get("rows"))
     inst = loc(rw.get("institution_name"), lang) or t("roads.inst_default", lang)
     collected = str(rw.get("collected_at") or "")
     parsed = i18n.parse_instant(collected)
@@ -1289,6 +1362,8 @@ def roadworks_block(rw: dict | None, lang: str) -> str:
     stale = ""
     if rw.get("stale"):
         stale = f'<p class="fact warn mt-s" data-rw-stale>{esc(t("roads.stale", lang))}</p>'
+    elif rw.get("clock_skew"):
+        stale = f'<p class="fact warn mt-s" data-rw-skew>{esc(t("roads.skew", lang))}</p>'
     items = []
     for r in rows:
         status = str(r.get("status") or "")
@@ -1342,8 +1417,8 @@ def roadworks_block(rw: dict | None, lang: str) -> str:
 def official_block(items: list[dict] | None, lang: str) -> str:
     """Official releases, as published, none linked to an event above."""
     rows = []
-    for o in items or []:
-        if not isinstance(o, dict) or not o.get("title"):
+    for o in _dicts(items):
+        if not o.get("title"):
             continue
         code = _lang_code(o, "fr")
         color = OWN_COLOR.get(str(o.get("ownership_class") or "government"), "c-gov")
@@ -1378,9 +1453,7 @@ def _period(ed: dict) -> str:
 
 def roster_block(ed: dict, lang: str) -> str:
     rows = []
-    for r in ed.get("roster") or []:
-        if not isinstance(r, dict):
-            continue
+    for r in _dicts(ed.get("roster")):
         state = str(r.get("state") or "not_established")
         state = state if state in ROSTER_STATES else "not_established"
         if state == "in_events":
@@ -1417,7 +1490,7 @@ def end_card(ed: dict, lang: str) -> str:
     """The edition is finite: it ends, says when the next collection is
     expected (never a promise), and shows who spoke and who did not."""
     period = _period(ed)
-    events = [e for e in (ed.get("events") or []) if isinstance(e, dict)]
+    events = _dicts(ed.get("events"))
     text = t("end.p", lang, end=t(f"ed.end.{period}", lang), events=tn("n.events", len(events), lang))
     nxt = i18n.fmt_time(ed.get("next_collection"), lang)
     if nxt:
@@ -1437,7 +1510,7 @@ def edition_page(ed: dict, lang: str, *, roadworks: dict | None = None, fr_path:
 
     `roadworks` is a RoadworksView of its own, normally fresher than the
     edition (hourly lane)."""
-    events = [e for e in (ed.get("events") or []) if isinstance(e, dict)]
+    events = _dicts(ed.get("events"))
     period = _period(ed)
     followed = _int(ed.get("institutions_followed"))
     clock = ed.get("clock")
@@ -1457,7 +1530,7 @@ def edition_page(ed: dict, lang: str, *, roadworks: dict | None = None, fr_path:
         cards = "".join(event_card(e, lang) for e in events)
     else:
         cards = f'<p class="card panel">{esc(t("ed.empty", lang))}</p>'
-    suggestions = [str(s) for s in (ed.get("suggestions") or [])][:6]
+    suggestions = [str(s) for s in (ed.get("suggestions") if isinstance(ed.get("suggestions"), (list, tuple)) else [])][:6]
     aside = (f'<aside class="aside stack" aria-label="{esc(t("roads.h", lang))}">'
              f'{mine_panel(lang, suggestions)}{roadworks_block(roadworks, lang)}{official_block(ed.get("official"), lang)}</aside>')
     main = (f'{head}<div class="grid"><div class="stack" id="cards">{cards}</div>{aside}</div>{end_card(ed, lang)}')
@@ -1486,13 +1559,13 @@ def roadworks_view(store: dict | None, *, limit: int = RW_ROWS_DEFAULT, stale_af
     update, then event id. A foreign or corrupt store yields an empty view
     (collected_at empty: the block prints that the time is unknown)."""
     doc = store if isinstance(store, dict) else {}
-    events = [e for e in (doc.get("events") or []) if isinstance(e, dict) and e.get("event_id")]
+    events = [e for e in _dicts(doc.get("events")) if e.get("event_id")]
     ordered = sorted(events, key=lambda e: str(e.get("event_id") or ""))
     ordered.sort(key=lambda e: str(e.get("update_date") or ""), reverse=True)
     ordered.sort(key=lambda e: RW_SEVERITY.get(str(e.get("vehicle_impact") or ""), 6))
     rows = []
     for e in ordered[: max(0, int(limit))]:
-        names = [str(x).strip() for x in (e.get("road_names") or []) if str(x or "").strip()]
+        names = [str(x).strip() for x in (e.get("road_names") if isinstance(e.get("road_names"), (list, tuple)) else []) if str(x or "").strip()]
         accuracy = (str(e.get("start_date_accuracy") or ""), str(e.get("end_date_accuracy") or ""))
         rows.append({
             "id": str(e.get("event_id")),
@@ -1510,15 +1583,20 @@ def roadworks_view(store: dict | None, *, limit: int = RW_ROWS_DEFAULT, stale_af
     closed = sum(1 for e in events if e.get("vehicle_impact") == "all-lanes-closed")
     planned = sum(1 for e in events if e.get("event_status") in ("planned", "pending"))
     collected = str(doc.get("fetched_at") or "")
-    stale = False
+    stale = skew = False
     a, b = i18n.parse_instant(collected), i18n.parse_instant(render_clock)
     if a is not None and b is not None:
         age = (b - a).total_seconds()
-        stale = age > stale_after_hours * 3600 or age < -300
+        # "stale" means exactly "older than the threshold". A collection NEWER
+        # than the clock is the normal case when the clock is the edition's
+        # (the hourly lane runs between editions): it is not stale. Only a gap
+        # beyond five minutes is flagged, separately, as an inconsistent stamp.
+        stale = age > stale_after_hours * 3600
+        skew = age < -300
     return {
         "collected_at": collected if a is not None else "",
         "institution_name": str(doc.get("institution_name") or ""),
-        "total": len(events), "closed": closed, "planned": planned, "stale": stale, "rows": rows,
+        "total": len(events), "closed": closed, "planned": planned, "stale": stale, "clock_skew": skew, "rows": rows,
         "dataset_url": str(doc.get("dataset_url") or ""),
     }
 
