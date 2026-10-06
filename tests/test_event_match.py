@@ -384,6 +384,81 @@ class Rules(unittest.TestCase):
         self.assertEqual(events[0]["event_id"], em.event_id_for("z1"))
 
 
+ZERO = "0001-01-01T00:00:00Z"            # the Go zero time some feeds stamp
+FAR = "9999-12-31T23:59:59Z"
+EDGE_DATES = [ZERO, "0001-01-01T00:00:00+05:00", FAR, "9999-12-31T23:59:59-05:00",
+              "Fri, 31 Dec 9999 23:59:59 -0500", "1970-01-01T00:00:00Z", "2101-01-01T00:00:00Z"]
+
+
+class EdgeOfRangeDates(unittest.TestCase):
+    """A feed that stamps an instant at the edge of the datetime range must
+    not take down event building for the whole edition: such an instant is
+    not a publication date, so it counts as absent."""
+
+    def test_implausible_instants_are_absent_never_fatal(self):
+        from datetime import datetime, timezone
+        for raw in EDGE_DATES:
+            self.assertIsNone(em.published_when({"published_at": raw}), raw)
+            self.assertIsNone(em._clock(raw), raw)
+        self.assertIsNone(em._clock(datetime(1, 1, 1, tzinfo=timezone.utc)))
+        self.assertIsNone(em._clock(datetime.max.replace(tzinfo=timezone.utc)))
+        # a plausible instant is untouched (and still converted to UTC)
+        self.assertEqual(em.published_when({"published_at": "2026-09-20T08:00:00-04:00"}),
+                         datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc))
+        self.assertEqual(em.published_when({"published_at": "1990-01-01T00:00:00Z"}).year, 1990)
+        self.assertEqual(em.published_when({"published_at": "2100-12-31T23:00:00Z"}).year, 2100)
+
+    def test_attach_survives_zero_and_far_dates(self):
+        a = item("z1", "Incendie Zorblax à Limoilou", ZERO)
+        b = item("z2", "Incendie Zorblax à Limoilou, suite", ZERO)
+        c = item("z3", "Incendie Zorblax à Limoilou: le bilan", FAR)
+        hostile = [item("z%d" % (4 + k), "Incendie Zorblax à Limoilou, mise à jour %d" % k, raw)
+                   for k, raw in enumerate(EDGE_DATES)]
+        batch = [a, b, c] + hostile
+        ctx = ctx_for(batch + [FIRE_FR])
+        events, dec = em.attach([], batch + [FIRE_FR], ctx, edition="2026-09-21T00:00:00Z")
+        owners = {m["item_id"]: e["event_id"] for e in events for m in e["members"]}
+        self.assertEqual(sorted(owners), sorted(it["id"] for it in batch + [FIRE_FR]))
+        self.assertEqual(owners["z1"], owners["z2"], "two zero-dated copies fall back to one clock and pair up")
+        again, dec2 = em.attach([], batch + [FIRE_FR], ctx, edition="2026-09-21T00:00:00Z")
+        self.assertEqual(json.dumps([events, dec], sort_keys=True), json.dumps([again, dec2], sort_keys=True))
+
+    def test_existing_members_and_editions_at_the_edges(self):
+        a = item("z1", "Incendie Zorblax à Limoilou", ZERO, first_seen=FAR)
+        b = item("z2", "Incendie Zorblax à Limoilou, suite", FAR, first_seen=ZERO)
+        ctx = ctx_for([a, b])
+        existing = [{"event_id": "ev-" + "1" * 16, "born_edition": ZERO,
+                     "members": [{"item_id": "z1", "published_at": ZERO, "first_seen": FAR}],
+                     "lineage": {"merged_into": "", "absorbed": []}}]
+        for edition in ("2026-09-21T00:00:00Z", ZERO, FAR, "9999-12-31T23:59:59-05:00"):
+            events, _ = em.attach(existing, [b], ctx, edition=edition, items_by_id={"z1": a})
+            owners = {m["item_id"]: e["event_id"] for e in events for m in e["members"]}
+            self.assertEqual(owners["z1"], "ev-" + "1" * 16, "sticky")
+            self.assertIn("z2", owners)
+        self.assertEqual(em.cluster([a, b], ctx, edition=FAR), [["z1", "z2"]])
+
+    def test_span_arithmetic_cannot_overflow_even_without_the_bound(self):
+        """With the plausibility bound switched off, year-1 and year-9999
+        instants reach the window checks themselves: an attach and a merge at
+        the very edge of the range still run (the checks compare differences,
+        never shifted instants)."""
+        saved = em.PLAUSIBLE_YEARS
+        em.PLAUSIBLE_YEARS = (1, 9999)
+        try:
+            self.assertEqual(em.published_when({"published_at": FAR}).year, 9999)
+            rules = Rules()
+            for edge in ("9999-12-31T%02d:00:00+00:00", "0001-01-01T%02d:00:00+00:00"):
+                texts = [item(i, "Zorblax %s" % i, edge % (8 + k)) for k, i in enumerate(["a1", "a2", "b1"])]
+                new = [item("n1", "Zorblax n1", edge % 12)]
+                table = {("n1", "b1"): 0.95, ("n1", "a1"): 0.5, ("n1", "a2"): 0.05,
+                         ("a1", "b1"): 0.6, ("a2", "b1"): 0.5}
+                events, dec = rules._run(rules._events(), new, table, texts, edition=edge % 23)
+                self.assertEqual(sorted(len(g) for g in em.groups(events)), [4], edge)
+                self.assertEqual(dec[-1]["action"], "merged", edge)
+        finally:
+            em.PLAUSIBLE_YEARS = saved
+
+
 _DETERMINISM = r"""
 import hashlib, json, sys
 sys.path.insert(0, sys.argv[1])

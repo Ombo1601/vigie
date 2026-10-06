@@ -117,6 +117,12 @@ TIME_SCALE_HOURS = 12.0
 FAR_HOURS = 7 * 24.0        # pairs further apart are never compared by the clusterer
 WINDOW_HOURS = 72.0         # an event accepts members while within 72 h of one
 EDITION_WINDOW_DAYS = 7     # and while its newest member is within 7 days of the edition
+# An instant outside these years (UTC, inclusive) is not a publication date:
+# feeds stamp the Go zero time 0001-01-01, the Unix epoch 1970-01-01 or
+# 9999-12-31 for "unknown". It counts as absent, so the item falls back to
+# first_seen or the edition clock, and no window arithmetic ever meets the
+# edge of the datetime range.
+PLAUSIBLE_YEARS = (1990, 2100)
 CHAR_N = 4
 SUMMARY_CHARS = 400
 BLOCK_MIN_CAP = 30          # a blocking key shared by more items than the cap
@@ -226,7 +232,24 @@ def _surface(text: str, where: list[int], start: int, end: int) -> str:
     return text[where[start]: where[end - 1] + 1] if end > start else ""
 
 
+def _plausible_utc(dt: datetime) -> datetime | None:
+    """dt in UTC, or None when it is naive or outside PLAUSIBLE_YEARS.
+
+    The year is checked before the conversion too: astimezone() itself
+    overflows at the edges of the range (0001-01-01T00:00+05:00)."""
+    lo, hi = PLAUSIBLE_YEARS
+    try:
+        if dt.tzinfo is None or dt.utcoffset() is None or not lo <= dt.year <= hi:
+            return None
+        utc = dt.astimezone(timezone.utc)
+    except (ValueError, TypeError, OverflowError):
+        return None
+    return utc if lo <= utc.year <= hi else None
+
+
 def published_when(item: dict) -> datetime | None:
+    """The item's publication instant in UTC, or None when it is absent,
+    unparseable, naive or implausible (see PLAUSIBLE_YEARS)."""
     raw = str(item.get("published_at") or "").strip()
     if not raw:
         return None
@@ -236,13 +259,13 @@ def published_when(item: dict) -> datetime | None:
         except (ValueError, TypeError, OverflowError):
             continue
         if dt.tzinfo is not None:
-            return dt.astimezone(timezone.utc)
+            return _plausible_utc(dt)
     return None
 
 
 def _clock(raw) -> datetime | None:
     if isinstance(raw, datetime):
-        return raw.astimezone(timezone.utc) if raw.tzinfo else None
+        return _plausible_utc(raw)
     return published_when({"published_at": raw})
 
 
@@ -1045,7 +1068,9 @@ def attach(events: list[dict], new_items: list[dict], ctx: MatchContext, *, edit
         s = span.get(eid)
         if t is None or s is None:
             return True
-        if t < s[0] - window or t > s[1] + window:
+        # Differences, never shifted instants: (s[0] - window) overflows at
+        # the edge of the datetime range, a difference of two instants cannot.
+        if s[0] - t > window or t - s[1] > window:
             return False
         return clock is None or clock - s[1] <= timedelta(days=EDITION_WINDOW_DAYS)
 
@@ -1142,7 +1167,7 @@ def attach(events: list[dict], new_items: list[dict], ctx: MatchContext, *, edit
                 continue
             older, younger = sorted((r1, r2), key=born)
             s_old, s_young = span.get(older), span.get(younger)
-            if s_old and s_young and (s_young[0] > s_old[1] + window or s_old[0] > s_young[1] + window):
+            if s_old and s_young and (s_young[0] - s_old[1] > window or s_old[0] - s_young[1] > window):
                 continue
             if clock is not None and any(s and clock - s[1] > timedelta(days=EDITION_WINDOW_DAYS)
                                          for s in (s_old, s_young)):
