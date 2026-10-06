@@ -54,8 +54,12 @@ House law carried here
 
 Shadow extensions beyond the event-v1 schema (EVENTS.md section 14), kept in
 the same object under EXT_KEYS: family, geo (best member geo, for ranking),
-place_basis, tier, neighbours (ids and integer scores), withdrawn,
-facts_reduced, facts_state. `to_v1()` projects an event onto the schema.
+place_basis, tier, neighbours (ids and integer scores), withdrawn, copies
+(near-duplicate id pairs), facts_reduced, facts_state; plus
+`lineage.merged_at` and `independence.declarations/reporting_count` (open
+objects in the schema). `to_v1()` projects an event onto the schema. The
+current-edition view adds member_count, in_edition (member ids whose text is
+in this edition) and silence (the followed institutions without a member).
 
     python -X utf8 scripts/events.py                     # one edition (pipeline step)
     python -X utf8 scripts/events.py --replay DIR        # every DIR/*_candidates.json, from an empty store
