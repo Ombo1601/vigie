@@ -48,10 +48,12 @@ MEDIA_MAX_BYTES = 900_000
 
 # Discoverability: every staged release carries a permissive robots.txt (this is
 # public-interest aggregation; nothing here is private) and a sitemap listing the
-# front door and the published method files.
+# front door and the published method files. Only permanent URLs belong in it: the
+# English explorer / morning pages are off the French resident path, and the
+# per-dossier record pages exist for one edition only, so neither is advertised.
 SITE_URL = "https://vigieqc.com"
 ROBOTS_TEXT = f"User-agent: *\nAllow: /\n\nSitemap: {SITE_URL}/sitemap.xml\n"
-SITEMAP_PATHS = ("/", "/explorer.html", "/morning.html")
+SITEMAP_PATHS = ("/",)
 
 
 def sitemap_xml(directory: Path) -> str:
@@ -63,15 +65,11 @@ def sitemap_xml(directory: Path) -> str:
     except OSError:
         lastmod = None
     optional = tuple(f"/{name}" for name in OPTIONAL_PAGES if (directory / name).is_file())
-    dossier_pages = (
-        tuple(f"/dossiers/{p.name}" for p in sorted((directory / "dossiers").glob("*.html")))
-        if (directory / "dossiers").is_dir() else ()
-    )
     methode_pages = (
         tuple(f"/methode/{slug}.html" for slug in METHOD_PAGES
               if (directory / "methode" / f"{slug}.html").is_file())
     )
-    paths = (*SITEMAP_PATHS, *optional, *dossier_pages, *methode_pages)
+    paths = (*SITEMAP_PATHS, *optional, *methode_pages)
     parts = []
     for path in paths:
         loc = f"{SITE_URL}/" if path == "/" else f"{SITE_URL}{path}"

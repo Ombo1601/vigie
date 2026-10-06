@@ -255,7 +255,9 @@ class ReleaseNavigation(unittest.TestCase):
                 (root / "methode" / f"{name}.html").write_text("placeholder", encoding="utf-8")
             self.assertEqual(stage_public.validate_site(root), [])
 
-    def test_sitemap_lists_dossier_pages_when_present(self):
+    def test_sitemap_lists_the_dossier_index_but_not_one_edition_pages(self):
+        # A per-dossier record page exists for a single edition and is gone from the
+        # next; advertising it would hand crawlers URLs that 404 within hours.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "index.html").write_text("<p>x</p>", encoding="utf-8")
@@ -264,7 +266,9 @@ class ReleaseNavigation(unittest.TestCase):
             (root / "dossiers.html").write_text("<p>i</p>", encoding="utf-8")
             xml = stage_public.sitemap_xml(root)
             self.assertIn("https://vigieqc.com/dossiers.html", xml)
-            self.assertIn("https://vigieqc.com/dossiers/aa11bb22cc33dd44.html", xml)
+            self.assertNotIn("/dossiers/aa11bb22cc33dd44.html", xml)
+            self.assertNotIn("/explorer.html", xml)
+            self.assertNotIn("/morning.html", xml)
 
 
 if __name__ == "__main__":
