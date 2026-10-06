@@ -344,6 +344,48 @@ def author_chip(c: dict) -> str:
     return f"<span class='chip author'>Par {esc(author)}</span>" if author else ""
 
 
+def backfill_dossier_authors(issues: list, candidates: list) -> list:
+    """R1 for a dossier store clustered before items carried `author`.
+
+    The render-only lanes re-render the stores of the last full edition; a
+    store written by an older cluster step has no `author` key on its dossier
+    items, so those rows would show a title without its byline. The byline is
+    taken from the same collection's candidate with the same URL - the
+    publisher's own feed, never guessed - and only where the key is absent (an
+    explicit empty or None stays as the feed gave it). Returns new dicts: the
+    store, and so the registre's input, is never mutated.
+    """
+    by_url: dict[str, str] = {}
+    for c in candidates or []:
+        if isinstance(c, dict) and isinstance(c.get("url"), str):
+            author = author_of(c)
+            if author:
+                by_url.setdefault(c["url"], author)
+    if not by_url or not isinstance(issues, list):
+        return issues
+
+    def _fill(entry: object) -> object:
+        if isinstance(entry, dict) and "author" not in entry and by_url.get(entry.get("url")):
+            return {**entry, "author": by_url[entry["url"]]}
+        return entry
+
+    out: list = []
+    for iss in issues:
+        if not isinstance(iss, dict):
+            out.append(iss)
+            continue
+        tensions = [
+            {**t, "items": [_fill(it) for it in t["items"]]}
+            if isinstance(t, dict) and isinstance(t.get("items"), list) else t
+            for t in (iss.get("tensions") or [])
+        ]
+        label = _fill(iss.get("label_source"))
+        if tensions != (iss.get("tensions") or []) or label is not iss.get("label_source"):
+            iss = {**iss, "tensions": tensions, **({"label_source": label} if "label_source" in iss else {})}
+        out.append(iss)
+    return out
+
+
 def same_fight_bits(links: list[tuple[str, str, str]], cap: int) -> list[str]:
     """Same-fight links with their author, the one renderer for every Stage/card."""
     return [
@@ -2598,6 +2640,8 @@ def main() -> None:
             # store as collected (IDs and counts only), so no seal ever moves.
             issues = takedown.filter_issues(issues, rules)
             ledger = takedown.filter_ledger(ledger, rules)
+            # R1 on a store clustered before dossier items carried `author`.
+            issues = backfill_dossier_authors(issues, candidates)
             print(f"issues: {len(issues)} from {ISSUES}")
         else:
             # A corrupt/partial dossier store renders no dossier section instead

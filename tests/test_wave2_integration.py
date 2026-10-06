@@ -24,6 +24,7 @@ import harness  # noqa: F401 - puts scripts/ on sys.path
 import affiche
 import ingest_rss
 import method_site
+import rank_display
 import registre
 import resident_brief as brief
 import substrate
@@ -124,6 +125,32 @@ class BylinesSurviveTakedownFiltering(unittest.TestCase):
         self.assertNotIn(charlie["title"], html)
         self.assertNotIn("Auteur Retiré", html)
         self.assertNotIn(charlie["url"], html)
+
+    def test_a_store_clustered_before_r1_still_renders_bylines(self):
+        """The render-only lanes re-render the last full edition's stores: a
+        dossier store written before items carried `author` gets the byline
+        from the same collection's candidate (by URL), never a guessed one."""
+        old = dossier_issue(attributed=True)
+        for t in old["tensions"]:
+            for it in t["items"]:
+                del it["author"]
+        del old["label_source"]["author"]
+        signed_none = item("delta", "Delta : un titre sans signature connue", None, sid="le-soleil")
+        old["tensions"][0]["items"].append({"title": signed_none["title"], "url": signed_none["url"],
+                                            "source_name": "Le Soleil", "author": None})
+        frozen = copy.deepcopy(old)
+        filled = rank_display.backfill_dossier_authors([old], RANKED + [signed_none | {"author": "Inventé"}])
+        self.assertEqual(old, frozen)  # the store (registre input) is never mutated
+        html = brief.dossier_html(filled[0], {c["id"]: c for c in RANKED})
+        self.assertIn(f"Par {ALPHA['author']}", html)
+        self.assertIn(f"Par {BRAVO['author']}", html)
+        self.assertIn(f"Titre d’un éditeur, cité tel quel — Par {ALPHA['author']} · Le Soleil.", html)
+        self.assertNotIn("Inventé", html)  # an explicit "no author" is never overridden
+        self.assertIsNone(filled[0]["tensions"][0]["items"][-1]["author"])
+        self.assertEqual(filled[0]["tensions"][0]["items"][0]["author"], ALPHA["author"])
+        # A store that already carries authors is returned as is.
+        current = dossier_issue()
+        self.assertIs(rank_display.backfill_dossier_authors([current], RANKED)[0], current)
 
     def test_attributed_label_of_a_withdrawn_headline_drops_the_dossier(self):
         iss = dossier_issue(attributed=True)
