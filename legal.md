@@ -1,6 +1,6 @@
 # Mentions légales — Vigie
 
-Dernière mise à jour : 2026-09-19.
+Dernière mise à jour : 2026-10-06.
 
 Vigie est un **agrégateur de nouvelles local, gratuit et sans but commercial**,
 fait pour la ville de Québec. Vigie ne produit pas d'articles, n'en réécrit
@@ -34,6 +34,13 @@ licence **CC-BY 4.0** avec attribution (via Données Québec), conformément à
 cette licence. Les citations courtes affichées dans les dossiers proposés
 (≤ 200 caractères, attribuées à leur locuteur) relèvent du droit de citation.
 
+L'auteur est affiché à côté du titre relayé sur les pages de
+Vigie (le point, les dossiers, l'affiche et les fichiers pour machines) : « Par
+{auteur} » quand le flux de l'éditeur le donne. Les fichiers pour machines
+(`/index.html.md`, `/delta/latest.json`, `/llms.txt`) ne portent que l'éditeur,
+l'auteur, le titre et le lien — jamais d'extrait — et rappellent que les titres
+appartiennent à leurs éditeurs.
+
 Vigie ne reproduit **jamais** le corps des articles, ne revend rien, ne
 distribue aucun flux à des tiers et n'entraîne aucun modèle sur les contenus.
 
@@ -48,28 +55,33 @@ tout changement, et cette page serait mise à jour.
 
 ## Identité de collecte
 
-La collecte des flux et des images s'identifie honnêtement :
+Toute la collecte (flux, pages d'articles, images, fichiers robots.txt)
+s'identifie d'une seule façon, honnêtement :
 
 ```
 Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)
 ```
 
-Certains serveurs ralentissent ou interrompent les lecteurs automatisés au
-niveau du transport (sans refus HTTP) ; pour ceux-là uniquement, et c'est
-documenté ici, Vigie utilise une identité de navigateur standard :
+Vigie n'emprunte aucune autre identité : ni identité de navigateur, ni en-tête
+Referer imitant une visite sur le site de l'éditeur. Un serveur qui ne répond
+pas à cette identité n'est pas contourné : la collecte manquée est consignée
+comme une lacune de collecte de Vigie, jamais comme un silence de l'institution.
 
-```
-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Vigie/0.2
-```
+**Un refus HTTP (403, 410, 429…) est toujours respecté** : il met fin à la
+collecte de ce flux pour cette édition, sans nouvelle tentative, ni par une
+autre identité, ni par un autre chemin. Seul un serveur qui ne donne aucune
+réponse (délai dépassé, connexion coupée) peut être relu à une autre adresse
+que l'éditeur publie pour le même flux, avec la même identité.
 
-Le changement d'identité n'a lieu qu'après un échec de transport réel (délai,
-connexion réinitialisée), jamais après un refus HTTP, et il expire après
-30 jours : l'identité honnête est alors réessayée. **Un refus
-HTTP (403, 410, 429…) est toujours respecté** : il n'est jamais contourné, ni
-par une autre identité, ni par un autre chemin. Aucun mur de paiement n'est
-jamais touché. La collecte est conditionnelle (ETag / If-Modified-Since) pour
-ne transférer que ce qui a changé, et chaque silence est diagnostiqué plutôt
-que comblé.
+Avant de lire une page d'article ou une image, Vigie consulte le fichier
+robots.txt du site (une fois par collecte) et respecte ses interdictions
+visant Vigie ou tous les robots. Si ce fichier est absent (404), la lecture est
+permise ; s'il ne peut pas être lu pour toute autre raison, la page ou l'image
+n'est pas lue, et la raison est consignée.
+
+Aucun mur de paiement n'est jamais touché. La collecte est conditionnelle
+(ETag / If-Modified-Since) pour ne transférer que ce qui a changé, et chaque
+silence est diagnostiqué plutôt que comblé.
 
 ## Conservation
 
@@ -79,10 +91,20 @@ Les journaux internes ne contiennent aucune donnée de lecteur.
 
 ## Retrait et contact
 
-Un éditeur qui souhaite que Vigie cesse de relayer son flux, un article ou une
-image est retiré **dans l'heure qui suit la demande** (une édition), et la
-source est désactivée publiquement dans `sources.yaml` avec la raison de la
-coupure — jamais silencieusement.
+Un éditeur ou un ayant droit qui souhaite que Vigie cesse de relayer son flux,
+son domaine, un article ou une image l'obtient. Dès réception d'une demande, le retrait est appliqué le jour même par une édition déclenchée à la main ; à défaut, au prochain passage planifié (toutes les 6 h environ, parfois jusqu'à une dizaine d'heures). Une mise en ligne qui contiendrait encore l'élément retiré est refusée. La demande est inscrite au registre
+public des retraits (`takedowns.yaml`). Dès lors,
+l'élément n'entre plus dans aucune édition ni aucune page ; un flux ou un
+domaine retiré n'est plus collecté ; les images d'aperçu concernées sont
+supprimées de ce site et ne sont plus récupérées. Les instantanés bruts d'une
+source retirée sont supprimés au même moment.
+
+La liste des retraits — éditeur, portée et date, jamais le contenu retiré —
+est publiée sur la [page des sources](/methode/sources.html#retraits), où une source retirée
+reste nommée, avec la mention de son retrait à la demande de l'éditeur : jamais
+silencieusement.
+Les sceaux déjà publiés du registre ne contiennent aucun texte d'éditeur
+(identifiants et comptes seulement) et restent intacts.
 
 Contact : dépôt public [github.com/Ombo1601/vigie](https://github.com/Ombo1601/vigie)
 (section Issues), ou l'adresse qui y figure.

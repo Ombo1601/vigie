@@ -158,7 +158,9 @@ def digest_approach_link_html(ap: dict, details: dict | None = None) -> str:
     if (details or {}).get("label_kind") == "attributed_headline":
         source = (details or {}).get("label_source") or {}
         name = rank_display.esc(str(source.get("source_name") or source.get("source_id") or "la source"))
-        origin = f"<span class='approach-origin'>Titre de {name} · rapprochement proposé</span>"
+        author = rank_display.author_of(source)
+        by = f" · Par {rank_display.esc(author)}" if author else ""
+        origin = f"<span class='approach-origin'>Titre de {name}{by} · rapprochement proposé</span>"
     return (
         f"<a class='approach{remix_cls}' href=\"{href}\" "
         f"data-i='{idx}' data-issue-id='{issue_id}' data-fp='{fp}' "
@@ -198,7 +200,9 @@ def render_morning_txt(digest: dict) -> str:
         details = (digest.get("source_details") or {}).get(str(ap.get("issue_id") or "")) or {}
         if details.get("label_kind") == "attributed_headline":
             source = details.get("label_source") or {}
-            lines.append(f"   Titre de {source.get('source_name') or source.get('source_id') or 'la source'} · rapprochement proposé")
+            author = rank_display.author_of(source)
+            by = f" · Par {author}" if author else ""
+            lines.append(f"   Titre de {source.get('source_name') or source.get('source_id') or 'la source'}{by} · rapprochement proposé")
         units = [u for u in (ap.get("units") or []) if isinstance(u, dict)]
         unit_raw = [str(u.get("raw") or "").strip() for u in units if str(u.get("raw") or "").strip()]
         if unit_raw:

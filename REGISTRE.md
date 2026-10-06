@@ -17,7 +17,7 @@ Those are three different facts and only the last one is about Vigie. Conflating
 them is how an aggregator ends up accusing a public body of silence it never
 observed.
 
-## Correction of 2026-09-30 (seals 1–40)
+## Correction of 2026-09-30
 
 Until this date the register defined "did not speak" as "absent from every
 dossier of the edition". A dossier requires a named subject **and two
@@ -26,6 +26,12 @@ measuring Vigie's clustering rules and publishing them as institutional
 behaviour. On live data it asserted `editions_spoke: 0` for Hydro‑Québec and the
 Ville de Québec while their feeds returned 40 and 9 items, collected
 successfully, in the same edition.
+
+A seal is concerned when it carries no collection facts. The affected range is
+**derived from the chain**, never fixed in prose: `chain.json` →
+`correction` (`affects_seal_min`, `affects_seal_max`, `first_seal_with_facts`),
+also printed on the registre page and the mémoire index. (An earlier version of
+this page named a fixed range that the live chain has since outgrown.)
 
 The seals are **not** rewritten — a chain that can be edited is not a chain.
 Instead:
@@ -70,13 +76,20 @@ five states:
 | `collection_gap` | at least one of its feeds failed — **Vigie's** outage |
 | `not_established` | sealed before collection facts existed; no claim is made |
 
+Two more states are **derived at render time and never sealed**: `withdrawn`
+(the publisher asked for removal — `takedowns.yaml`, R10) and `cut` (Vigie itself
+stopped following the institution: every one of its feeds is `enabled: false`
+with `cut_reason` and `cut_at` in `sources.yaml`; it applies only once an edition
+no longer follows the institution, so a measured state always wins). Neither is
+a silence, and neither changes a sealed record.
+
 Only `collection_gap` accumulates a streak (`collection_gap_streak`), and it
 accumulates against Vigie. `collection` is sealed only when the enriched store's
 own collection clock equals the edition key, so a mismatched edition can never
 borrow another edition's counts.
 
 `edition` is the collection clock (`dossier_history.updated_at`), never the
-render clock: an offline rebuild or the hourly roads-only re-render re-seals
+render clock: an offline rebuild or the roads-only re-render re-seals
 the same edition to identical bytes instead of minting a new one.
 
 ## How it is chained
@@ -96,7 +109,7 @@ Published files (all static, all CORS‑open, no key needed):
 |------|---------|
 | `/registre/checkpoint.txt` | origin, chain size, current root, edition stamp, latest roadworks root |
 | `/registre/chain.json` | the last 200 seals with their records, plus `anchor_root` (the root before the first published seal) |
-| `/registre/institutions.json` | per followed institution: state this edition (`spoke` / `published` / `no_items` / `collection_gap` / `not_established`), collected item counts, per-state edition counters, last time it entered a dossier, and Vigie's own `collection_gap_streak` |
+| `/registre/institutions.json` | per followed institution: state this edition (`spoke` / `published` / `no_items` / `collection_gap` / `not_established`, or the derived `withdrawn` / `cut`), collected item counts, per-state edition counters, last time it entered a dossier, and Vigie's own `collection_gap_streak` |
 | `/registre/travaux.json` | the roadworks chain: one root per *change* of the City's active obstruction set |
 | `/registre.html` | the human view |
 
@@ -111,7 +124,7 @@ or by hand: recompute each leaf from its record, chain the roots from
 
 ## The roadworks chain
 
-The hourly official lane (`refresh.py --roads-only`) re-renders when the
+The official roads lane (`refresh.py --roads-only`, scheduled about hourly, actually less often) re-renders when the
 declared obstruction set changes. Each distinct active set gets one seal
 (`registre-travaux-v1`): record = `{fetched_at, active: [event ids]}`. Only
 the latest record is published in full (`latest_record`); the earlier seals
@@ -145,12 +158,19 @@ completion.
 ## For machines
 
 The register is the memory that stateless agents lack. `/delta/latest.json`
-(`delta-v1`) carries the current edition keyed by its chain root (`cursor`),
+(`delta-v1.1`) carries the current edition keyed by its chain root (`cursor`),
 with `previous_cursor`, the new / developed / quiet dossiers with verbatim
-titles and publisher URLs, the per-institution state (`spoke`, `published`,
+titles, `author` (when the publisher's feed gave one) and publisher URLs — never
+an excerpt or a summary: the machine files carry publisher, author, title and
+URL only — the per-institution state (`spoke`, `published`,
 `no_items_collected`, `collection_gap`, `not_established`, with collected item
-counts), and the roadworks diff. `/llms.txt` maps these files; the front door
+counts, plus `withdrawn_on_request` and `cut_by_vigie` only when they apply),
+and the roadworks diff. `/llms.txt` maps these files; the front door
 advertises `/index.html.md` as its Markdown twin (`rel="alternate"`).
+`delta-v1.1` is `delta-v1` plus an `author` on items (empty string when the feed gave none) and on
+`label_source`, and a top-level `attribution` notice; every v1 key keeps its
+meaning, so a v1 reader still works. Every machine file says that titles belong
+to their publishers and points to `/methode/legal.html`.
 
 Rules for agents, repeated inside every machine file: cite the publisher, not
 Vigie; titles are verbatim; **never infer that an institution was silent** —
@@ -162,7 +182,7 @@ an edition a record.
 
 - **Seal growth is unbounded.** Every seal keeps its full record; measured cost
   is ~10 KB per edition, so ~15 MB/year in the private state tarball that the
-  refresh workflow downloads *and* uploads every six hours. `voice` rows prune
+  refresh workflow downloads *and* uploads at every scheduled refresh (about every six hours). `voice` rows prune
   at 400 while `seals` do not, so beyond that point the chain and the register
   describe different windows. Not yet fixed: it degrades over months, not days.
 - **`checkpoint.txt` has a variable-length line.** The `travaux` line is absent

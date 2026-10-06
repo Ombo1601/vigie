@@ -30,6 +30,12 @@ if str(SCRIPTS) not in sys.path:
 import ingest_rss  # noqa: E402
 import resident_brief as brief  # noqa: E402
 import store_io  # noqa: E402
+import takedown  # noqa: E402
+
+# Same sentence as legal.md ("Retrait et contact"); tests pin the equality.
+TAKEDOWN_PHRASE_FR = (
+    "Dès réception d'une demande, le retrait est appliqué le jour même par une édition déclenchée à la main ; à défaut, au prochain passage planifié (toutes les 6 h environ, parfois jusqu'à une dizaine d'heures). Une mise en ligne qui contiendrait encore l'élément retiré est refusée."
+)
 
 METHOD = "methode-v1"
 OUT_DIR = ROOT / "public" / "methode"
@@ -239,16 +245,23 @@ def _deferred_sources() -> list[dict]:
 
 
 def _rules_scalars() -> dict:
+    """The one-line scalars of the `rules:` block (keys indented two spaces).
+
+    Folded (`>`) values and their deeper-indented continuation lines are
+    skipped: only single-line facts such as the RSS ceiling are rendered."""
     text = (ROOT / "sources.yaml").read_text(encoding="utf-8")
     m = re.search(r"(?ms)^rules:\n(.*?)\Z", text)
     out: dict = {}
     if not m:
         return out
     for raw_line in m.group(1).splitlines():
-        if not raw_line or raw_line.startswith(("#", " ", ">")) or ":" not in raw_line:
+        if not raw_line.startswith("  ") or raw_line.startswith("   ") or ":" not in raw_line:
             continue
-        key, _, val = raw_line.partition(":")
-        out[key.strip()] = brief.plain(val)
+        key, _, val = raw_line.strip().partition(":")
+        val = val.strip()
+        if not key or key.startswith("#") or val in ("", ">", "|"):
+            continue
+        out[key] = brief.plain(val)
     return out
 
 
@@ -297,21 +310,63 @@ def _sources_html() -> str:
             f'<li><strong>{brief.esc(str(src.get("name") or src.get("id")))}</strong> — '
             f'{brief.esc(str(src.get("reason") or "coupé, raison consignée"))}</li>'
         )
+    # A source cut in the registry itself (enabled: false + cut_reason) or
+    # withdrawn on a publisher's request stays named here, never vanishes.
+    requests = takedown.load()[0]
+    withdrawn = {
+        str(rec.get("id")): rec
+        for rec in takedown.withdrawn_sources(takedown.Rules(requests), sources_path=ROOT / "sources.yaml")
+    }
+    for src in ingest_rss.load_sources(ROOT / "sources.yaml"):
+        sid = str(src.get("id") or "")
+        name = brief.esc(str(src.get("name") or sid))
+        if sid in withdrawn:
+            req = withdrawn[sid].get("takedown") or {}
+            cut_rows.append(
+                f'<li><strong>{name}</strong> — {brief.esc(takedown.WITHDRAWN_LABEL_FR)}'
+                f' (demande du {brief.esc(str(req.get("requested_at") or "—"))})</li>'
+            )
+        elif src.get("enabled") is not True:
+            reason = str(src.get("cut_reason") or "coupé, raison consignée")
+            cut_at = brief.plain(src.get("cut_at")) if src.get("cut_at") else ""
+            when = f" (coupé le {brief.esc(cut_at)})" if cut_at else ""
+            cut_rows.append(f'<li><strong>{name}</strong> — {brief.esc(brief.plain(reason))}{when}</li>')
     cuts = (
         f'<h3 id="coupes">Coupées ou reportées</h3><ul class="methode-cuts">{"".join(cut_rows)}</ul>'
         if cut_rows else ""
     )
+    removals = takedown.public_rows(requests)
+    removal_rows = "".join(
+        "<tr>"
+        f"<td>{brief.esc(r['by'])}</td><td>{brief.esc(r['kind_label'])}</td>"
+        f"<td>{brief.esc(r['requested_at'])}</td><td>{brief.esc(r['status_label'])}</td>"
+        "</tr>"
+        for r in removals
+    )
+    retraits = (
+        '<h3 id="retraits">Retraits à la demande des éditeurs</h3>'
+        + (
+            "<table><thead><tr><th>Éditeur ou ayant droit</th><th>Portée</th><th>Demande</th>"
+            f"<th>État</th></tr></thead><tbody>{removal_rows}</tbody></table>"
+            if removal_rows else '<p class="no-data">Aucune demande de retrait à ce jour.</p>'
+        )
+        + '<p class="fine">' + TAKEDOWN_PHRASE_FR + " "
+        "Seuls l’éditeur, la portée et la date sont publiés — jamais le "
+        "contenu retiré. <a href=\"/methode/legal.html#retrait-et-contact\">Demander un retrait</a>.</p>"
+    )
     fine = []
     if rules.get("max_enabled_rss_v0"):
-        fine.append(f"Plafond : {brief.esc(rules['max_enabled_rss_v0'])} flux RSS actifs.")
-    if rules.get("coverage_note"):
-        fine.append(brief.esc(str(rules["coverage_note"])))
+        rss_now = len([src for src in sources if src.get("type") == "rss"])
+        fine.append(f"Plafond : au plus {brief.esc(rules['max_enabled_rss_v0'])} flux RSS actifs "
+                    f"({rss_now} aujourd’hui).")
+    # rules.coverage_note is an English working note of the registry (served as
+    # /sources.yaml); this French page states the ceiling only.
     return (
         f'<p>Vigie suit une liste <strong>finie et publiée</strong> de sources : '
-        f"<strong>{len(sources)}</strong> actives, <strong>{len(deferred)}</strong> coupées ou "
+        f"<strong>{len(sources)}</strong> actives, <strong>{len(cut_rows)}</strong> coupées ou "
         "reportées. Chaque coupe est consignée avec sa raison, jamais effacée en silence. "
         "Toute institution est nommée ; aucune ne possède le point.</p>"
-        f"{table}{cuts}"
+        f"{table}{cuts}{retraits}"
         + (f'<p class="fine">{" ".join(fine)}</p>' if fine else "")
     )
 

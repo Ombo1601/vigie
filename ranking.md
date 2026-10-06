@@ -189,7 +189,7 @@ Silent boosts = propaganda with better geography.
 
 - Fetch only what the map shows: Near me + Province/Linked life-hit crown + fight voices (not all 244).
 - `og:image` / `twitter:image` only. Never stock. Never AI fill. Empty strip when silent.
-- JdQ hardened (browser UA, Referer, retry) — still **403 Forbidden** from their wall; fail = typography (honest).
+- JdQ hardened (browser UA, Referer, retry) — still **403 Forbidden** from their wall; fail = typography (honest). [retiré le 2026-10-05 : identité honnête seule, sans Referer]
 - Thin `fetch_media` after **morning** pulse only (08:00), not every tick. RENT.md bound.
 - This run: map_scope=76, with_image=80, fetched=40. Method string in `latest_faces.json`.
 
@@ -434,6 +434,8 @@ PDCA: sister desks are one house. Fight gate and silence seat use `institution`,
 Chancellery: every enabled RSS carries `institution` + `institution_name`.
 Collapse: CBC Montreal+Politics → `cbc`; Radio-Canada Québec/National/Ottawa → `radio-canada`.
 12 feeds → **9** institutions.
+(2026-10-06: both CBC desks were cut — `cut_reason` in sources.yaml — so the live
+registry follows 10 RSS feeds → 8 institutions; the ceiling stays `max_enabled_rss_v0`.)
 
 Schema delta (`silence` v0.2):
 `scope: enabled_institutions`, `enabled_feed_count`, `silent[].institution_id` + `feed_ids`.

@@ -23,8 +23,7 @@ if str(SCRIPTS) not in sys.path:
 
 import rank_display as rd  # noqa: E402
 from ingest_rss import (  # noqa: E402
-    public_http_url, public_opener, choose_user_agent, mark_browser_identity,
-    is_transport_stall, USER_AGENT, FALLBACK_USER_AGENT,
+    public_http_url, public_opener, robots_verdict, USER_AGENT,
 )
 
 ENRICHED = ROOT / "data" / "normalized" / "latest_enriched.json"
@@ -87,13 +86,18 @@ def _is_timeout(exc: BaseException) -> bool:
 
 
 def fetch_html(url: str, *, retries: int = 2, diag: dict | None = None) -> str | None:
-    """Browser-like GET with one retry — Journal de Québec often fails once.
+    """Honest-identity GET, robots.txt first; one retry for transport/5xx only.
+
+    The request carries Vigie's own identity and no Referer. The host's
+    robots.txt is read first (once per run); a Disallow, or a robots.txt
+    that cannot be read for any reason but a 404, skips the page. Any 4xx
+    answer is a refusal: final, never retried.
 
     When `diag` is a dict it receives {"reason", "detail"} classifying the
     failure (media-sentinel diagnosis): article_http_403/404/410/4xx/5xx,
     article_timeout, article_network_error, article_guard_rejected,
-    article_too_large. An unfilled diag means the caller was mocked or the
-    failure predates classification.
+    article_too_large, robots_disallow, robots_unreachable. An unfilled diag
+    means the caller was mocked or the failure predates classification.
     """
     last: tuple[str, str] = ("article_fetch_failed", "")
 
@@ -113,17 +117,17 @@ def fetch_html(url: str, *, retries: int = 2, diag: dict | None = None) -> str |
         # permanent and blinded forever.
         fail("article_network_error", f"{type(exc).__name__}: {exc}")
         return None
-    host = urlparse(url).hostname or ""
-    ua = choose_user_agent(url)
+    allowed, robots_reason, robots_detail = robots_verdict(url)
+    if not allowed:
+        fail(robots_reason or "robots_unreachable", robots_detail)
+        return None
     headers = {
-        "User-Agent": ua,
+        "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "fr-CA,fr;q=0.9,en-CA;q=0.8,en;q=0.7",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
     }
-    if host in {"journaldequebec.com", "www.journaldequebec.com", "journaldemontreal.com", "www.journaldemontreal.com"}:
-        headers["Referer"] = "https://www.journaldequebec.com/"
     opener = public_opener()
     attempts = max(1, min(retries, 3))
     for attempt in range(attempts):
@@ -144,17 +148,12 @@ def fetch_html(url: str, *, retries: int = 2, diag: dict | None = None) -> str |
             return None
         except urllib.error.HTTPError as exc:
             last = (_classify_http_error(exc.code, "article"), f"HTTP {exc.code}")
-            # An HTTP refusal is respected - never retried under another identity.
+            if 400 <= exc.code < 500:
+                break  # a refusal is final: never retried, never another identity
         except (OSError, urllib.error.URLError, http.client.HTTPException) as exc:
+            # A stall stays a diagnosed miss under the same honest identity.
             reason = "article_timeout" if _is_timeout(exc) else "article_network_error"
             last = (reason, f"{type(exc).__name__}: {exc}")
-            if ua == USER_AGENT and is_transport_stall(exc):
-                # Server-side stall of the honest identity: mark the host and
-                # continue under the disclosed browser identity. Local failures
-                # and HTTP refusals never switch identity.
-                mark_browser_identity(url, type(exc).__name__)
-                ua = FALLBACK_USER_AGENT
-                headers["User-Agent"] = ua
         if attempt + 1 < attempts:
             time.sleep(0.35 * (attempt + 1))
     fail(*last)
@@ -267,7 +266,8 @@ def main() -> int:
         # Retry prior fetch_failed / no-image for map-scoped (JdQ often needs a second try)
         if prev.get("reason") in ("fetch_failed", "no og:image"):
             retried += 1
-        html = fetch_html(url, retries=2)
+        diag: dict = {}
+        html = fetch_html(url, retries=2, diag=diag)
         fetched += 1
         if not html:
             faces[cid] = {
@@ -276,6 +276,7 @@ def main() -> int:
                 "source": "og:image",
                 "article_url": url,
                 "reason": "fetch_failed",
+                "diagnosis": diag.get("reason"),
             }
             continue
         img = extract_og(html, url)
@@ -290,7 +291,7 @@ def main() -> int:
 
     out = {
         "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "method": "faces-v0.2 map-scoped og:image only; never invent; JdQ retry+Referer",
+        "method": "faces-v0.2 map-scoped og:image only; never invent; honest identity, robots.txt first",
         "map_scope_count": len(scope),
         "face_count": len(faces),
         "with_image": sum(1 for v in faces.values() if v.get("image_url")),

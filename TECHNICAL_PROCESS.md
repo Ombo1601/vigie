@@ -32,7 +32,7 @@ Open http://127.0.0.1:8765/
 | 4 Cluster | `scripts/cluster_issues.py` | `data/issues/latest_issues.json` — multi-voice only |
 | 4b Edge Atlas | `scripts/edge_atlas.py` | `data/edges/latest_edges.json` — literal street-name joins between the official collection and the dossiers (`edge.md`) |
 | 4c Anomalies | `scripts/compile_anomalies.py` | `data/anomalies/latest_verdict.json` — fixed-threshold structural rules over the official collection (`anomalies.md`) |
-| 4d Brief media | `scripts/fetch_brief_media.py` | `data/media/brief/` + `brief_manifest.json` — publisher images (og:image, else the feed's own media), locally re-hosted and sniffed; every miss diagnosed + `data/ops/media_health.json` ledger |
+| 4d Brief media | `scripts/fetch_brief_media.py` | `data/media/brief/` + `brief_manifest.json` — publisher images (og:image, else the feed's own media), robots.txt first for every page and image, locally re-hosted and sniffed; every miss diagnosed + `data/ops/media_health.json` ledger |
 | 5 Rank+HTML | `scripts/rank_display.py` | `latest_ranked.json` + `public/index.html` (French brief, incl. roadworks/civic/beacon/joins) + `explorer.html` + ambient twin via `ambient_pulse` |
 | 5b Ambient | `scripts/ambient_pulse.py` | `data/pulse/latest_morning.{json,txt}` + `public/morning.html` (same Approaches; no second rank; store order — no facets, no beacon) |
 | 5c Récits | `scripts/recits.py` | `public/dossiers.html` + `public/dossiers/<issue_id>.html` — one complete, addressable record page per current-edition dossier (every voice, every verbatim headline, collection timeline, silence roster, measured evidence); linked from the brief, the machine substrate and the sitemap; pages exist only for the current edition (a quiet dossier keeps its counters in the history and the registre, never its page) |
@@ -42,6 +42,10 @@ Open http://127.0.0.1:8765/
 | 6 Edition metrics | `scripts/compile_metrics.py` | `data/ops/edition_metrics.json` — per-edition snapshot: items, top-30 churn, per-source yield, dossier population, roadworks diff volume, image coverage; capped 120-edition history; idempotent per edition; observes the machine, never steers the ranking |
 | 6b Watchdog | `scripts/compile_watchdog.py` | `data/ops/watchdog.{md,json}` — the weekly human read: fixed-threshold attention rules over the three ledgers + refresh log + disk usage; same-week recompiles replace; capped 26-week history |
 | Serve | `scripts/serve.py` | local static server |
+
+Stage 5 is not read-only: `rank_display.main` also mutates `data/` during the render step
+(`takedown.purge_media` deletes withdrawn preview files and rewrites `brief_manifest.json`;
+fail-soft on `OSError`).
 
 ## Published method files
 
@@ -80,6 +84,7 @@ form of the edition itself).
 - Status always `proposed`
 - Same-language event buckets: complete-link, ≥3 shared headline tokens, Jaccard ≥0.55, 72h, road-name intersection
 - FR/EN event buckets: same complete-link plus a shared place or proper name, then bilingual-canonical tokens (≥2 shared, Jaccard ≥0.40). Precision over recall. Lévis is not télévision.
+  Since the CBC cut (2026-10-06) no English feed is followed; the rule stays for any future one.
 
 ## Ranking (see ranking.md)
 
@@ -103,14 +108,25 @@ house law, not defaults to be "fixed" by a future feature.
   that very feed image — never guessed for an og:image). s. 29.2 fair dealing for news
   reporting requires source **and** author; both Canadian aggregation cases were lost on
   missing author names.
-- **Never circumvent (R9)**: an HTTP refusal (403/406/410/429) is respected — never retried
-  under another identity, never routed around, no paywall or bot wall ever touched. Collection
-  identity is honest (`Vigie/0.2 (+https://vigieqc.com/legal.md)`); a disclosed browser
-  identity is used only for hosts that stall automated readers at *transport* level (recorded
-  in `data/raw/_ua_policy.json`, published in legal.md). Silence is diagnosed, never filled.
-- **Honor opt-outs (R10)**: a publisher asking to leave → `enabled: false` + `cut_reason` in
-  `sources.yaml`, same day (one edition). The silence map then reports the cut honestly —
-  never silently.
+- **Never circumvent (R9)**: an HTTP refusal (any 4xx: 403/406/410/429…) is respected — it
+  ends that feed's collection for the run: never retried (a 412 to a conditional request is answered by one plain request: the validators were refused, not the feed), never sent to an alternate URL,
+  never under another identity; no paywall or bot wall ever touched. `URL_ALTERNATES` are
+  tried only when the origin gave no HTTP answer at all (timeout, reset, DNS/TLS), and a host
+  that never answered is not asked again in the same run. Collection identity is honest and
+  single: `Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)`
+  for feeds, article pages, images and robots.txt — no browser identity, no Referer. A host
+  that cannot be read honestly is a recorded collection gap (registre: « collecte en échec —
+  lacune de Vigie »). Article pages and images are fetched only after the host's robots.txt
+  (read once per host per run): Disallow for `Vigie` or `*` → `robots_disallow`; absent (404)
+  → allowed; any other failure → `robots_unreachable` (fail closed). Both reasons land in the
+  media manifest and `data/ops/media_health.json`. Silence is diagnosed, never filled.
+- **Honor opt-outs (R10)**: **On receipt of a request, the removal is applied the same day by a hand-triggered edition; failing that, at the next scheduled run (about every 6 h, sometimes up to about ten hours). A release that still contains the withdrawn item is refused.** A publisher's or rights-holder's request becomes an entry in `takedowns.yaml`
+  (`source` | `host` | `url` | `image`; their name only, never personal data), enforced by
+  `scripts/takedown.py` at collection, normalize, render, media and staging, with a purge of
+  a withdrawn source's raw snapshots and bodies. Emergency path: edit `takedowns.yaml`, push,
+  run the refresh workflow manually (`workflow_dispatch`). The sources page lists the
+  requests (publisher, scope, date — never the content) and the silence map / registre
+  report a withdrawn institution as « retirée à la demande de l'éditeur » — never silently.
 - **Retention (R6)**: raw feed snapshots are pruned after 30 days (newest per source always
   survives for offline rebuilds); preview images are deleted when an article leaves the local
   brief scope.
@@ -149,13 +165,13 @@ Doctrine: **every silence is a diagnosed fact, and every diagnosis feeds a fixed
 - `data/ops/` ledgers are capped by design (media 28 runs, feed/edition
   windows, watchdog 26 weeks) and written atomically; internal, never staged.
 - `data/` and `deploy/` are unversioned: a git-built edition starts without
-  cross-edition memory, and the six-hour refresh restores it.
+  cross-edition memory, and the scheduled refresh restores it.
 
 ## Release law (hardening)
 
-- **The collector runs on GitHub Actions**, not a laptop (`.github/workflows/vigie-refresh.yml`, every 6 h). It restores the cross-edition state tarball from the private `Ombo1601/vigie-state` store (`scripts/state_sync.py`, fail closed and verified against the git anchor; `scripts/state_pack.py` packs it), runs `refresh.py`, and persists it back. Vercel git auto-deploy is disabled (`vercel.json` `git.deploymentEnabled: false`), so the verified chain is the only production writer and a bare push cannot publish a data-less build. The public repo never carries publisher content.
-- A second schedule (`vigie-roads.yml`, hourly) refreshes only the real-time WZDX reading via `refresh.py --roads-only`: ingest → anomalies/edges → `pipeline --render-only` → verify → deploy **only when the declarations changed** (content signal ignores collection clocks and presence counters). It never runs normalize/enrich/cluster, so no edition, diff, history or metric is created.
-- `stage_public.py` serializes the release swap with an `O_EXCL` lock in `deploy/` (reclaimed after 10 min) and retries transient Windows sharing violations (`winerror` 5/32/33 only), so the six-hour refresh and a manual `verify.py` can never rename `deploy/public` at the same instant.
+- **The collector runs on GitHub Actions**, not a laptop (`.github/workflows/vigie-refresh.yml`, scheduled about every 6 h; GitHub drops scheduled runs — measured roughly 3-4 full editions a day, gaps up to ~10 h; every page states the age of its data). It restores the cross-edition state tarball from the private `Ombo1601/vigie-state` store (`scripts/state_sync.py`, fail closed and verified against the git anchor; `scripts/state_pack.py` packs it), runs `refresh.py`, and persists it back. Vercel git auto-deploy is disabled (`vercel.json` `git.deploymentEnabled: false`), so the verified chain is the only production writer and a bare push cannot publish a data-less build. The public repo never carries publisher content.
+- A second schedule (`vigie-roads.yml`, scheduled about hourly; measured roughly every 5-9 h) refreshes only the real-time WZDX reading via `refresh.py --roads-only`: ingest → anomalies/edges → `pipeline --render-only` → verify → deploy **only when the declarations changed** (content signal ignores collection clocks and presence counters). It never runs normalize/enrich/cluster, so no edition, diff, history or metric is created.
+- `stage_public.py` serializes the release swap with an `O_EXCL` lock in `deploy/` (reclaimed after 10 min) and retries transient Windows sharing violations (`winerror` 5/32/33 only), so the scheduled refresh and a manual `verify.py` can never rename `deploy/public` at the same instant.
 - `verify.py` refuses to stage an empty edition (0 candidates) on every path, not only `--rebuild`: one surviving source that yields nothing cannot overwrite a good production site. The previous release stays up.
 - Pipeline stores are written with unique-temp atomic replacement (`store_io`); a crash, a full disk or overlapping writers never expose a truncated handoff file.
 - A feed network/DNS failure is diagnosed as transient, never as a permanent guard rejection, so one resolver blip does not blind an article or image forever.

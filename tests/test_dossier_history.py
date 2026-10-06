@@ -225,6 +225,10 @@ class TrackingOf(unittest.TestCase):
 
 
 class ClusterHistoryMain(unittest.TestCase):
+    def setUp(self) -> None:
+        # The mechanism under test needs both CBC desks followed (fixture registry).
+        harness.use_cbc_chancellery(self)
+
     def tearDown(self) -> None:
         cluster_issues.IN_PATH = harness.ROOT / "data" / "normalized" / "latest_enriched.json"
         cluster_issues.OUT_ISSUES = harness.ROOT / "data" / "issues" / "latest_issues.json"

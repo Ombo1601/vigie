@@ -8,8 +8,10 @@ no-circumvention (R9) and same-day opt-out (R10) are permanent house law.
 
 ## Where collection runs
 
-The collector is **not** a laptop. `.github/workflows/vigie-refresh.yml` runs every
-6 hours: it restores the cross-edition state tarball from the **private**
+The collector is **not** a laptop. `.github/workflows/vigie-refresh.yml` is scheduled about every
+6 hours (GitHub drops scheduled runs: measured reality is roughly 3-4 full
+editions a day, gaps up to ~10 h; never promise a cadence the platform cannot
+keep, every page states the age of its data): it restores the cross-edition state tarball from the **private**
 `Ombo1601/vigie-state` repo (`scripts/state_sync.py restore`, which verifies
 then calls `state_pack.py unpack`), runs `scripts/refresh.py` (pipeline →
 verify → stage → `vercel deploy --prod`), and persists the state back
@@ -94,10 +96,11 @@ failed (automated)”; the next successful run closes it — diagnosed silence, 
 external alerting service. `.github/workflows/keepalive.yml` commits a monthly
 heartbeat so GitHub never disables the schedules (it does that after ~60 days
 without repository activity). `.github/workflows/ci.yml` runs
-`verify.py --code-only` on every push/PR, so the six-hourly refresh is not the
+`verify.py --code-only` on every push/PR, so the scheduled refresh is not the
 first place a broken commit surfaces.
 
-`.github/workflows/vigie-roads.yml` runs **hourly** and refreshes only the
+`.github/workflows/vigie-roads.yml` is scheduled **about hourly** (measured: roughly
+every 5-9 h) and refreshes only the
 official WZDX lane (`refresh.py --roads-only`): ingest → anomalies/edges →
 `pipeline --render-only` → verify → deploy, and **only when the declared
 obstructions actually changed** (a content signal ignores collection clocks and
@@ -139,7 +142,7 @@ twin), from the same stores, with no second brain:
   `public/index.html.md` (Markdown twin, advertised with
   `rel="alternate" type="text/markdown"`; the brief also carries
   `rel="describedby" href="/llms.txt"`), `public/delta/latest.json`
-  (`delta-v1`, cursor = chain root).
+  (`delta-v1.1`, cursor = chain root; publisher, author, title and URL only, no excerpts).
 - `scripts/recits.py` — **Les Récits**: `public/dossiers.html` + one complete,
   addressable record page per current-edition dossier (`public/dossiers/<issue_id>.html`):
   every voice with every verbatim headline, the full silence roster, the
@@ -279,3 +282,8 @@ Tests alone: `python -X utf8 -m unittest discover -s tests`.
 - **Deterministic output.** No wall clock in ledgers, sorted iteration, stable
   ids (`sha256` of canonical URL). Same inputs must rebuild byte-identically.
 - **Line endings.** Text is LF (`.gitattributes`); keep `sources.yaml` LF.
+- **Takedowns (R10).** A publisher's removal request is one entry in
+  `takedowns.yaml` (source | host | url | image; their name only), enforced by
+  `scripts/takedown.py` at collection, normalize, render, media and staging
+  (`python -X utf8 scripts/takedown.py --check` validates it). **On receipt of a request, the removal is applied the same day by a hand-triggered edition; failing that, at the next scheduled run (about every 6 h, sometimes up to about ten hours). A release that still contains the withdrawn item is refused.** Edit, push, then run "Vigie refresh" via
+  `workflow_dispatch`.

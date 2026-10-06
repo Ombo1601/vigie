@@ -15,7 +15,7 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,26 +25,24 @@ import store_io
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES_PATH = ROOT / "sources.yaml"
 RAW_DIR = ROOT / "data" / "raw"
-# Identity law (LEGAL_RISK.md R5/R9): the honest reader identity is the
-# default. Some origins (CBC is a documented scar) stall or reset transport
-# for automated-reader identities; those hosts are remembered in
-# _ua_policy.json and read with the disclosed browser identity instead. An
-# HTTP refusal (403/406/410/429) is ALWAYS respected - never retried under
-# another identity, never circumvented. Both identities are disclosed in
-# legal.md.
+# Identity law (LEGAL_RISK.md R5/R9): every collection request - feeds,
+# article pages, images, robots.txt - carries this one honest identity and
+# nothing else: no browser identity, no Referer mimicking on-site navigation.
+# A host that cannot be read honestly is a recorded collection gap, never a
+# spoof. An HTTP refusal (any 4xx) is final for that feed in that run: never
+# retried under another identity, never routed to an alternate URL.
 USER_AGENT = "Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)"
-FALLBACK_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Vigie/0.2"
-)
-UA_POLICY_PATH = RAW_DIR / "_ua_policy.json"
 TIMEOUT = 25
 RETRIES = 3
 MAX_FEED_BYTES = 8 * 1024 * 1024
 RETENTION_DAYS = 30  # raw snapshot retention (LEGAL_RISK.md R6)
-UA_POLICY_MAX_AGE_DAYS = 30  # re-probe the browser identity after this window
+ROBOTS_TIMEOUT = 14
+MAX_ROBOTS_BYTES = 500 * 1024  # RFC 9309 s. 2.5: parse at least 500 KiB
 
-# CBC often resets Python urllib; URL alternates stay as a second path.
+# Alternate addresses the publisher itself serves for the same feed (CBC scar).
+# Tried ONLY after a transport failure - the origin gave no HTTP answer at all
+# (timeout, reset, DNS, TLS). Any HTTP answer, a refusal above all, ends the
+# fetch: alternates never route around a refusal.
 URL_ALTERNATES = {
     "https://rss.cbc.ca/lineup/canada-montreal.xml": [
         "https://www.cbc.ca/cmlink/rss-canada-montreal",
@@ -63,74 +61,6 @@ def utc_now() -> datetime:
 
 def _host_of(url: str) -> str:
     return (urlsplit(url).hostname or "").lower()
-
-
-def _load_ua_policy() -> dict:
-    try:
-        doc = json.loads(UA_POLICY_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return doc if isinstance(doc, dict) else {}
-
-
-def _policy_is_fresh(entry: dict) -> bool:
-    marked = entry.get("marked_at")
-    if not isinstance(marked, str):
-        return False
-    try:
-        when = datetime.fromisoformat(marked)
-    except ValueError:
-        return False
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    return utc_now() - when <= timedelta(days=UA_POLICY_MAX_AGE_DAYS)
-
-
-def choose_user_agent(url: str) -> str:
-    """Honest identity by default; the disclosed browser identity only for a
-    host that stalled an automated reader at transport level (never for a
-    refusal), and only while the marker is fresh. A stale marker is re-probed
-    under the honest identity, so one bad network day cannot switch a host
-    forever."""
-    entry = _load_ua_policy().get(_host_of(url))
-    if isinstance(entry, dict) and entry.get("identity") == "browser" and _policy_is_fresh(entry):
-        return FALLBACK_USER_AGENT
-    return USER_AGENT
-
-
-def is_transport_stall(exc: BaseException) -> bool:
-    """True only for a server-side transport stall of the honest identity:
-    a timeout, reset, refused connection, truncated exchange or a TLS
-    handshake the server aborted. Local failures (DNS resolution, certificate
-    trust, the SSRF guard) are never blamed on the origin and never switch
-    identity. HTTP refusals are handled by the caller and never reach this
-    predicate."""
-    if isinstance(exc, (socket.gaierror, ssl.SSLCertVerificationError, ssl.CertificateError,
-                        http.client.InvalidURL, http.client.UnknownProtocol)):
-        return False
-    reason = getattr(exc, "reason", None)
-    if isinstance(reason, BaseException):
-        return is_transport_stall(reason)
-    return isinstance(exc, (TimeoutError, ConnectionError, http.client.HTTPException,
-                            urllib.error.ContentTooShortError, ssl.SSLError))
-
-
-def mark_browser_identity(url: str, reason: str) -> None:
-    """Record a transport-level stall for a host. Fail-soft: an unwritable
-    policy file only means the stall is paid again on the next run."""
-    host = _host_of(url)
-    if not host:
-        return
-    try:
-        policy = _load_ua_policy()
-        policy[host] = {"identity": "browser", "reason": str(reason)[:80],
-                        "marked_at": utc_now().isoformat(timespec="seconds")}
-        UA_POLICY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        part = UA_POLICY_PATH.with_name(UA_POLICY_PATH.name + ".tmp")
-        part.write_text(json.dumps(policy, ensure_ascii=False, indent=2), encoding="utf-8")
-        part.replace(UA_POLICY_PATH)
-    except OSError:
-        pass
 
 
 def _scalar(val: str):
@@ -154,7 +84,29 @@ def _scalar(val: str):
 
 
 def load_enabled_by_type(path: Path, source_type: str) -> list[dict]:
-    """Minimal parser for our sources.yaml list-of-maps. Not a general YAML engine."""
+    """Enabled sources of one type, minus any source withdrawn on a
+    publisher's request (takedowns.yaml, R10): a withdrawn feed is never
+    fetched, never followed and never counted as a silent voice."""
+    out = [
+        rec for rec in load_sources(path)
+        if rec.get("enabled") is True and rec.get("type") == source_type and rec.get("id") and rec.get("url")
+    ]
+    try:
+        import takedown  # noqa: PLC0415 - lazy: takedown reuses this module's parser
+
+        rules = takedown.load_rules()
+        if rules:
+            out = [rec for rec in out if rules.match_source(rec) is None]
+    except Exception as exc:  # noqa: BLE001 - the release gate (stage_public) diagnoses a bad file
+        print(f"takedowns: could not load ({type(exc).__name__}: {exc}); staging will refuse the release")
+    return out
+
+
+def load_sources(path: Path) -> list[dict]:
+    """Minimal parser for our sources.yaml list-of-maps. Not a general YAML engine.
+
+    Every entry of the `sources:` block, enabled or cut, so a cut source can be
+    reported publicly instead of vanishing."""
     text = path.read_text(encoding="utf-8")
     m = re.search(r"(?ms)^sources:\n(.*?)(?=^[a-zA-Z].*:|\Z)", text)
     if not m:
@@ -177,7 +129,7 @@ def load_enabled_by_type(path: Path, source_type: str) -> list[dict]:
                 line = line[2:]
             key, _, val = line.partition(":")
             rec[key.strip()] = _scalar(val)
-        if rec.get("enabled") is True and rec.get("type") == source_type and rec.get("id") and rec.get("url"):
+        if rec.get("id"):
             out.append(rec)
     return out
 
@@ -285,6 +237,122 @@ def public_opener():
     )
 
 
+# robots.txt law for article pages and images (LEGAL_RISK.md R9): read once
+# per host per run (one process = one run) with the honest identity, under the
+# same guarded boundary. Absent (404) = allowed; any other failure = the fetch
+# is skipped and diagnosed (robots_unreachable), never guessed open.
+ROBOTS_AGENT = USER_AGENT.split("/", 1)[0].lower()  # product token: "vigie"
+_ROBOTS_CACHE: dict[str, tuple[list[tuple[bool, str]] | None, str | None, str]] = {}
+
+
+def robots_fetch(robots_url: str) -> bytes:
+    """GET one robots.txt: guarded, honest identity, bounded. Raises on failure."""
+    public_http_url(robots_url, resolve=True)
+    req = urllib.request.Request(robots_url, headers={
+        "User-Agent": USER_AGENT, "Accept": "text/plain, */*;q=0.5"}, method="GET")
+    with public_opener().open(req, timeout=ROBOTS_TIMEOUT) as resp:
+        return resp.read(MAX_ROBOTS_BYTES)
+
+
+ROBOTS_FETCHER = robots_fetch  # injection point: tests swap in a hermetic fake
+
+
+def robots_rules(text: str, agent: str = ROBOTS_AGENT) -> list[tuple[bool, str]]:
+    """(allow, pattern) rules that bind `agent` (RFC 9309): the groups naming
+    its product token, else the '*' groups. Other lines never end a group."""
+    groups: list[tuple[list[str], list[tuple[bool, str]]]] = []
+    agents: list[str] = []
+    rules: list[tuple[bool, str]] = []
+    for raw in text.lstrip("﻿").splitlines():
+        key, sep, value = raw.split("#", 1)[0].partition(":")
+        key, value = key.strip().lower(), value.strip()
+        if not sep:
+            continue
+        if key == "user-agent":
+            if rules:
+                groups.append((agents, rules))
+                agents, rules = [], []
+            token = re.match(r"[A-Za-z_-]+|\*", value)
+            agents.append(token.group(0).lower() if token else "")
+        elif key in ("allow", "disallow") and agents and value:
+            rules.append((key == "allow", value))
+    if agents:
+        groups.append((agents, rules))
+    own = [r for names, group in groups if agent in names for r in group]
+    if own or any(agent in names for names, _ in groups):
+        return own
+    return [r for names, group in groups if "*" in names for r in group]
+
+
+def _robots_pattern_matches(pattern: str, target: str) -> bool:
+    """Prefix match with '*' (any run) and a trailing '$' (end). Linear scan,
+    no regex: a hostile robots.txt cannot make matching blow up."""
+    anchored = pattern.endswith("$")
+    parts = (pattern[:-1] if anchored else pattern).split("*")
+    if not target.startswith(parts[0]):
+        return False
+    pos = len(parts[0])
+    if len(parts) == 1:
+        return not anchored or pos == len(target)
+    for middle in parts[1:-1]:
+        found = target.find(middle, pos)
+        if found < 0:
+            return False
+        pos = found + len(middle)
+    if anchored:
+        return len(target) - len(parts[-1]) >= pos and target.endswith(parts[-1])
+    return target.find(parts[-1], pos) >= 0
+
+
+def robots_allows(rules: list[tuple[bool, str]], url: str) -> bool:
+    """Longest matching rule wins; on a tie Allow wins; no match = allowed."""
+    parts = urlsplit(url)
+    target = unquote((parts.path or "/") + (f"?{parts.query}" if parts.query else ""))
+    best: tuple[int, bool] | None = None
+    for allow, pattern in rules:
+        if _robots_pattern_matches(unquote(pattern), target):
+            rank = (len(pattern), allow)
+            if best is None or rank > best:
+                best = rank
+    return best is None or best[1]
+
+
+def robots_verdict(url: str) -> tuple[bool, str | None, str]:
+    """(allowed, reason, detail) for one article-page or image URL.
+
+    reason is None when allowed, else 'robots_disallow' (the publisher's
+    robots.txt forbids it to Vigie or to every robot) or 'robots_unreachable'
+    (robots.txt could not be read for any reason but a 404). Never raises."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except (TypeError, ValueError) as exc:
+        return False, "robots_unreachable", f"{type(exc).__name__}: {exc}"[:160]
+    host = (parts.hostname or "").lower()
+    origin = f"{parts.scheme.lower()}://{host}" + (f":{port}" if port else "")
+    robots_url = origin + "/robots.txt"
+    cached = _ROBOTS_CACHE.get(origin)
+    if cached is None:
+        try:
+            raw = ROBOTS_FETCHER(robots_url)
+            cached = (robots_rules(bytes(raw).decode("utf-8", errors="replace")), None, "")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                cached = (None, None, "")  # no robots.txt: nothing is forbidden
+            else:
+                cached = (None, "robots_unreachable", f"{robots_url} HTTP {exc.code}")
+        except Exception as exc:  # timeout, reset, guard, TLS: fail closed
+            cached = (None, "robots_unreachable",
+                      f"{robots_url} {type(exc).__name__}: {exc}"[:160])
+        _ROBOTS_CACHE[origin] = cached
+    rules, reason, detail = cached
+    if reason:
+        return False, reason, detail
+    if rules is None or robots_allows(rules, url):
+        return True, None, ""
+    return False, "robots_disallow", f"{robots_url} disallows {parts.path or '/'}"[:160]
+
+
 def _http_cache_path() -> Path:
     """Resolved through RAW_DIR at call time so tests can redirect it."""
     return RAW_DIR / "_http_cache.json"
@@ -339,8 +407,17 @@ def _delete_body_cache(url: str) -> None:
         pass
 
 
-def fetch_bytes(url: str) -> tuple[bytes, str | None]:
-    """Fetch with retries, optional alternate URLs (CBC scar) and conditional GET.
+def fetch_bytes(url: str, *, stalled_hosts: dict[str, str] | None = None) -> tuple[bytes, str | None]:
+    """Fetch with retries, transport-only alternate URLs (CBC scar) and conditional GET.
+
+    Identity is always USER_AGENT. Any 4xx answer is a refusal and ends the
+    fetch at once - no retry, no alternate URL, no other identity - and the
+    HTTPError reaches the caller, which records it. A 5xx is retried on the
+    same URL; it is still an HTTP answer, so it never opens an alternate.
+    Alternates are tried only after a transport failure (the origin gave no
+    HTTP answer at all). `stalled_hosts`, when the caller passes one dict per
+    run, remembers hosts that never answered so the next feed on that host is
+    not knocked on again this run: the miss is a recorded collection gap.
 
     Bandwidth is rent: when a server previously sent an ETag or
     Last-Modified, the next request carries the matching conditional header
@@ -356,7 +433,12 @@ def fetch_bytes(url: str) -> tuple[bytes, str | None]:
     cache = _load_http_cache()
     last_err: Exception | None = None
     for candidate in candidates:
-        ua = choose_user_agent(candidate)
+        host = _host_of(candidate)
+        if stalled_hosts is not None and host in stalled_hosts:
+            last_err = last_err or ConnectionError(
+                f"{host} gave no HTTP answer earlier in this run "
+                f"({stalled_hosts[host]}); not retried")
+            continue
         entry = cache.get(candidate)
         entry = entry if isinstance(entry, dict) else {}
         validators: dict[str, str] = {}
@@ -364,13 +446,12 @@ def fetch_bytes(url: str) -> tuple[bytes, str | None]:
             validators["If-None-Match"] = entry["etag"]
         if isinstance(entry.get("last_modified"), str) and entry["last_modified"]:
             validators["If-Modified-Since"] = entry["last_modified"]
-        refused = False
         for conditional in ((True, False) if validators else (False,)):
             for attempt in range(1, RETRIES + 1):
                 try:
                     public_http_url(candidate, resolve=True)
                     headers = {
-                        "User-Agent": ua,
+                        "User-Agent": USER_AGENT,
                         "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
                         "Accept-Language": "en-CA,fr-CA;q=0.9,en;q=0.8",
                     }
@@ -421,29 +502,26 @@ def fetch_bytes(url: str) -> tuple[bytes, str | None]:
                         if cached_body is not None:
                             return cached_body, entry.get("content_type")
                         break  # validator without body: refetch unconditionally
-                    # An HTTP refusal is respected: never identity-switched, and
-                    # a 4xx on the plain request is final for this URL. But a
-                    # 4xx raised *because of* the validators (412, a proxy that
-                    # dislikes If-None-Match) is the very case the unconditional
-                    # second pass exists for - so let it fall through first.
                     last_err = e
-                    if 400 <= e.code < 500:
-                        if not conditional:
-                            refused = True
+                    if e.code == 412 and conditional:
+                        # Precondition Failed is the validators' fault, not the
+                        # origin refusing the feed: one plain request follows.
                         break
-                    continue
+                    if 400 <= e.code < 500:
+                        # A refusal is final for this feed in this run: no
+                        # retry, no alternate URL, no other identity.
+                        raise
+                    continue  # 5xx: same URL, same identity, bounded retries
                 except Exception as e:
-                    if ua == USER_AGENT and is_transport_stall(e):
-                        # Server-side stall of the honest identity (the CBC
-                        # scar): mark the host and retry under the disclosed
-                        # browser identity. Local failures and refusals never
-                        # land here.
-                        mark_browser_identity(candidate, type(e).__name__)
-                        ua = FALLBACK_USER_AGENT
                     last_err = e
                     continue
-            if refused:
-                break
+        if isinstance(last_err, urllib.error.HTTPError):
+            # The origin answered over HTTP (a 5xx after every retry): the
+            # failure is recorded as it stands. Alternates exist for
+            # transport failures only, never to route around an answer.
+            break
+        if stalled_hosts is not None and host and last_err is not None:
+            stalled_hosts[host] = type(last_err).__name__
     assert last_err is not None
     raise last_err
 
@@ -634,7 +712,8 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def ingest_one(src: dict, fetched_at: datetime) -> dict:
+def ingest_one(src: dict, fetched_at: datetime,
+               stalled_hosts: dict[str, str] | None = None) -> dict:
     source_id = src["id"]
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", source_id):
         raise ValueError("Invalid source identifier")
@@ -643,7 +722,7 @@ def ingest_one(src: dict, fetched_at: datetime) -> dict:
     dest_dir.mkdir(parents=True, exist_ok=True)
     stamp = fetched_at.strftime("%Y%m%dT%H%M%SZ")
     try:
-        raw, content_type = fetch_bytes(url)
+        raw, content_type = fetch_bytes(url, stalled_hosts=stalled_hosts)
     except Exception as e:
         err = {
             "ok": False,
@@ -652,6 +731,9 @@ def ingest_one(src: dict, fetched_at: datetime) -> dict:
             "error": f"{type(e).__name__}: {e}",
             "fetched_at": fetched_at.isoformat(),
         }
+        if isinstance(e, urllib.error.HTTPError) and 400 <= e.code < 500:
+            # The refusal is a recorded fact: respected, never routed around.
+            err["refused"] = e.code
         err_path = dest_dir / f"{stamp}_error.json"
         err_path.write_text(json.dumps(err, ensure_ascii=False, indent=2), encoding="utf-8")
         return err
@@ -797,10 +879,11 @@ def main() -> int:
         "results": [],
     }
     print(f"Vigie ingest {fetched_at.isoformat()} — {len(sources)} enabled RSS")
+    stalled_hosts: dict[str, str] = {}  # one run: a host that never answered is asked once
     for src in sources:
         print(f"  fetch {src['id']} ...", flush=True)
         try:
-            result = ingest_one(src, fetched_at)
+            result = ingest_one(src, fetched_at, stalled_hosts)
         except OSError as exc:
             # A transient snapshot write failure (antivirus/search indexer
             # holding a handle) must cost this one source, never the run.
@@ -815,6 +898,7 @@ def main() -> int:
             "item_count": result.get("item_count", 0),
             "dropped_no_url_title": result.get("dropped_no_url_title", 0),
             "error": result.get("error"),
+            "refused": result.get("refused"),
             "parse_error": result.get("parse_error"),
             "xml_file": result.get("xml_file"),
             "meta_file": result.get("meta_file"),

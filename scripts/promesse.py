@@ -1,6 +1,6 @@
 """La promesse — what the record already knows about the official voice.
 
-A dossier is a question several institutions answered. The durable history
+A dossier is a question several institutions each addressed. The durable history
 already records, edition after edition, whether an *official* document was
 present. This module turns that arithmetic into one honest line — never a
 verdict: « aucun document officiel dans les N éditions suivies » is a measured
@@ -45,19 +45,20 @@ def status_of(issue: dict) -> dict | None:
     editions = len(measured)
     if editions < 2:
         return None
-    answered_index = None
-    answered_at = None
+    official_index = None
+    official_at = None
     for index, entry in enumerate(measured):
         if _safe_int(entry.get("official")) >= 1:
-            answered_index = index
-            answered_at = str(entry.get("ts"))
+            official_index = index
+            official_at = str(entry.get("ts"))
             break
     return {
         "method": METHOD,
-        "status": "answered" if answered_index is not None else "unanswered",
+        # Measured presence of an official document, never an "answer".
+        "status": "official_present" if official_index is not None else "no_official_recorded",
         "editions": editions,
-        "answered_index": answered_index,
-        "answered_at": answered_at,
+        "official_first_index": official_index,
+        "official_first_at": official_at,
         "first_seen": tracking.get("first_seen"),
     }
 
@@ -68,10 +69,10 @@ def line_of(issue: dict) -> str | None:
     if status is None:
         return None
     editions = status["editions"]
-    if status["status"] == "unanswered":
+    if status["status"] == "no_official_recorded":
         unit = "édition suivie" if editions == 1 else "éditions suivies"
         return f"Aucun document officiel dans les {editions} {unit} de ce dossier."
-    index = status["answered_index"]
+    index = status["official_first_index"]
     if index == 0:
         return "Un document officiel est présent dès la première édition suivie de ce dossier."
     label = "édition" if index == 1 else "éditions"
@@ -81,7 +82,7 @@ def line_of(issue: dict) -> str | None:
             f"après {index} {label} sans document officiel."
         )
     return (
-        f"Un document officiel est présent dans ce dossier depuis le {status['answered_at']} — "
+        f"Un document officiel est présent dans ce dossier depuis le {status['official_first_at']} — "
         f"après {index} {label} sans document officiel."
     )
 

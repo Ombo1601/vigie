@@ -24,10 +24,12 @@ Established by code audit, not memory:
 | 403/410/bot walls are respected, never circumvented; no paywall is ever touched | media sentinel retry policy |
 | WZDX roadworks: CC-BY 4.0, attribution rendered on the page (« Données : … (CC-BY 4.0, via Données Québec) ») | `resident_brief.py` rw-attr |
 | Civic HTML calendar: Ville participation table, `IdProjet` identity, titles and date windows quoted verbatim, each item links to the City fiche; robots.txt respected; never ranked with articles | `ingest_civic.py`, `resident_brief.py` civic section |
-| 13 sources, all named in public (`sources.yaml` is served); cuts are logged, never silent | sources.yaml law |
+| every enabled source (10 RSS + wzdx + civic), all named in public (`sources.yaml` is served); cuts are logged, never silent | sources.yaml law |
 | No accounts, no tracking, no ads, no revenue; saved articles stay in the visitor's browser | method section |
 | Dossiers are « proposés », with « Rapprochement automatique à vérifier » disclaimer; questions never assert facts | cluster/rank law |
-| Fetcher identifies itself honestly (`Vigie/0.2 (+https://vigieqc.com/legal.md)`; a disclosed browser fallback is used only for hosts that stall automated readers at *transport* level); conditional GETs (ETag/304) minimize load | `ingest_rss.py` |
+| Fetcher identifies itself honestly, always and only as `Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)` — no browser identity, no Referer; a host that cannot be read honestly is a recorded collection gap (since 2026-10-05; the former browser fallback is removed); conditional GETs (ETag/304) minimize load | `ingest_rss.py` |
+| A 4xx refusal ends a feed's collection for the run (no retry, no alternate URL); alternates are tried only when the origin gave no HTTP answer at all | `ingest_rss.py` fetch_bytes |
+| robots.txt is read (once per host per run, honest identity) before any article page or image: Disallow → `robots_disallow`; absent (404) → allowed; any other failure → `robots_unreachable`, fetch skipped | `ingest_rss.py` robots_verdict, `fetch_media.py`, `fetch_brief_media.py` |
 | Raw feed XML snapshots kept in `data/raw` (internal, never published) | ingest law |
 | Known DOM excess: `data-search` attribute embeds up to 2000 chars of feed summary per item (search index), more than the 240 displayed | `resident_brief.py` SUMMARY_CAP — see remediation R4 |
 
@@ -109,7 +111,9 @@ A lawsuit is unlikely; a **cease-and-desist is the realistic scenario** if tract
 - **CBC** (terms on file): feeds "for personal, noncommercial use"; display/excerpt/link
   allowed on "personal web site… for personal, noncommercial purposes", links must redirect,
   no distortion, attribution « CBC », removal on request. Vigie is non-commercial but not
-  *personal* → strictly, permission needed (permissions@cbc.ca).
+  *personal* → strictly, permission needed (permissions@cbc.ca). (Both CBC feeds were cut on
+  2026-10-06 — see below and `cut_reason` in sources.yaml; from the next edition on, no CBC
+  item is collected or relayed.)
 - **Radio-Canada**: same posture ("contact them before commercial reuse" — already logged in
   sources.yaml license_note).
 - **Quebecor (JdQ)** — the most aggressive house in Quebec (blocked Google over C-18,
@@ -132,7 +136,8 @@ low severity.
 ## 6. Everything else
 
 - **Anti-circumvention (s. 41 TPM)**: Vigie respects 403/410 and never cracks a paywall or bot
-  wall (JdQ's 403s are *diagnosed and worked around only via the publisher's own feed media*).
+  wall (a JdQ article page that answers 403 is diagnosed and never re-asked under another
+  identity or path; the only image then shown is the one the publisher attaches to its own feed).
   Codify as permanent law (R9). **No exposure as long as this holds.**
 - **Defamation (Quebec art. 1457 CCQ / common law)**: *Crookes v. Newton* (2011 SCC 47) — a
   hyperlink, by itself, is **never** publication; liability only if Vigie's own text repeats
@@ -173,20 +178,33 @@ linked from the brief footer, `data-search` shrunk to title + displayed excerpt,
 transport-level stalls only, 30-day raw-snapshot retention). R7–R10 codified below and in
 TECHNICAL_PROCESS.md. Tests: `tests/test_legal_remediations.py`.
 
+**Status 2026-10-06 (R5/R9 tightened):** the per-host browser fallback is removed; the only
+identity is `Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)`,
+with no Referer. A 4xx refusal stops a feed for the run (no alternate URL), and robots.txt
+gates every article-page and image fetch. Hosts that stall the honest identity (CBC on
+2026-10-05) become recorded collection gaps, never a spoof. The two CBC feeds, which also lie
+outside the City's area, were then cut on 2026-10-06 (`enabled: false` + `cut_reason`), so a
+permanent gap is not carried edition after edition.
+
 - **R1 — Author attribution (s. 29.2(b))**: capture `<dc:creator>` / `<media:credit>` /
   byline when the feed provides it and render it (« Par {author} — {source} »). Cedrom and
   Stross were both *lost on missing author names*. This is the single highest-value fix.
+  (2026-10-05: the byline now travels with the title on every surface — dossier rows, peers,
+  record pages, the sheet, the explorer and the machine files — through `author_of` /
+  `label_attribution` in `resident_brief.py`; `tests/test_author_attribution.py` fails when a
+  surface shows a title without a known author.)
 - **R2 — Image credit line**: render « Photo : {source} » adjacent to every re-hosted image
   (plus author when R1 has one).
 - **R3 — Public legal page** (`/legal.md` or method subsection): what Vigie copies and why
   (fair dealing, news reporting, attribution), non-commercial declaration, **named contact +
-  takedown commitment** (any publisher request honored within one edition), pointer to
-  sources.yaml. Notice-and-takedown posture is what kept Stross damages nominal.
+  takedown commitment** (On receipt of a request, the removal is applied the same day by a hand-triggered edition; failing that, at the next scheduled run (about every 6 h, sometimes up to about ten hours). A release that still contains the withdrawn item is refused. See R10), pointer to sources.yaml. Notice-and-takedown posture is what kept Stross
+  damages nominal.
 - **R4 — Shrink the DOM excess**: `data-search` should carry title + the displayed ≤240-char
   excerpt, not the 2000-char summary. Aligns the *amount* factor with what a visitor sees.
-- **R5 — Honest User-Agent**: `Vigie/0.2 (+https://vigieqc.com/legal.md)` without the Chrome
-  spoof prefix where feeds accept it; keep browser fallback only for origins that block all
-  automated readers, and say so on the legal page (good-faith optics).
+- **R5 — Honest User-Agent**: `Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news
+  aggregator; non-commercial)` and nothing else — no Chrome prefix, no browser fallback, no
+  Referer. An origin that does not serve the honest identity is a recorded collection gap
+  (decision 2026-10-05: trust is the product; a disclosed spoof is still a spoof).
 - **R6 — Retention**: cap `data/raw` XML history (e.g. 30 days) — internal copies are the
   least defensible ones; conditional fetching already minimizes new bytes.
 - **R7 — Monetization gate (HARD LAW)**: no revenue, no ads, no paid tier, no sponsored
@@ -200,10 +218,23 @@ TECHNICAL_PROCESS.md. Tests: `tests/test_legal_remediations.py`.
 - **R8 — Never rewrite**: titles/excerpts stay verbatim (already law: "truncated, never
   padded or rewritten") — distortion would break CBC's terms and add defamation surface.
 - **R9 — Codify no-circumvention**: respecting 403/410/paywalls becomes explicit law in
-  TECHNICAL_PROCESS.md, so no future feature "fixes" a bot wall.
-- **R10 — Honor opt-outs**: a publisher asking to leave → `enabled: false` + `cut_reason`,
-  same day. The silence map then reports the cut honestly — the doctrine already matches the
-  legal remedy.
+  TECHNICAL_PROCESS.md, so no future feature "fixes" a bot wall. A refusal is never routed
+  to an alternate URL, and robots.txt is honoured for article pages and images (fail closed
+  unless the file is absent).
+- **R10 — Honor opt-outs**: one commitment, everywhere: **On receipt of a request, the removal is applied the same day by a hand-triggered edition; failing that, at the next scheduled run (about every 6 h, sometimes up to about ten hours). A release that still contains the withdrawn item is refused.** A request (public GitHub Issues) becomes an
+  entry in the versioned `takedowns.yaml` (kind `source` | `host` | `url` | `image`;
+  publisher or rights-holder *name* only, never personal data). `scripts/takedown.py`
+  enforces it at every boundary: a withdrawn feed or domain is no longer fetched, normalize
+  drops matching items, the render step drops them again (so the hourly roads lane honours a
+  new request too), the media step never fetches or re-hosts a matching image and deletes
+  stored copies by URL or sha256, the pipeline purges a withdrawn source's raw snapshots and
+  bodies, and `stage_public` refuses a release that still carries a withdrawn image or link.
+  Emergency path: edit `takedowns.yaml`, push, run the "Vigie refresh" workflow manually
+  (`workflow_dispatch`). The public sources page lists publisher, scope and date (never the
+  content); the silence map and the registre show a withdrawn institution as « retirée à la
+  demande de l'éditeur », never a silent vanishing. Published registre seals carry no
+  publisher text and are never rewritten. `enabled: false` + `cut_reason` remains the cut for
+  Vigie's own reasons.
 
 ## 9. Bottom line
 
