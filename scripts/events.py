@@ -379,11 +379,19 @@ def event_type(ids: list[str], items: dict) -> str:
     return best if totals[best] >= vocabulaire.MIN_SCORE else vocabulaire.UNCLASSIFIED
 
 
+CITY_SCOPE = "quebec-city"
+
+
 def event_places(ids: list[str], items: dict) -> tuple[list[str], str]:
     """(places, basis). Named specific places first (quartier > arrondissement >
-    site > corridor > neighbour); then scope codes, the members' own geo first:
-    an item whose geo says Québec City is never labelled with the bare scope
-    "ottawa" because its headline mentions Canada. Never empty."""
+    site > corridor > neighbour); then scope codes. A member whose enrich geo
+    says Québec City (strict city evidence) puts the city scope before any
+    scope its headline names, so an item about the city is never labelled with
+    the bare scope "ottawa" because its headline mentions Canada. A scope the
+    headlines name comes before the province geo (that one is mostly the
+    source's own nest, weaker than the text). Never empty: no place at all
+    falls back to a scope code with basis "fallback" (the label then names
+    no place)."""
     specific: set[str] = set()
     scope_text: set[str] = set()
     scope_geo: set[str] = set()
@@ -397,13 +405,18 @@ def event_places(ids: list[str], items: dict) -> tuple[list[str], str]:
         if geo_code:
             scope_geo.add(geo_code)
     key = vocabulaire.specificity_key
-    places = sorted(specific, key=key) + sorted(scope_geo, key=key) + sorted(scope_text - scope_geo, key=key)
+    city = [CITY_SCOPE] if CITY_SCOPE in scope_geo else []
+    named_scopes = sorted(scope_text - set(city), key=key)
+    other_geo = sorted(scope_geo - set(city) - scope_text, key=key)
+    places = sorted(specific, key=key) + city + named_scopes + other_geo
     if specific:
         basis = "named"
-    elif scope_geo:
+    elif city:
         basis = "geo"
-    elif scope_text:
+    elif named_scopes:
         basis = "named"
+    elif other_geo:
+        basis = "geo"
     else:
         return [vocabulaire.FALLBACK_PLACE], "fallback"
     return places, basis

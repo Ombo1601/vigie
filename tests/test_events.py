@@ -544,6 +544,11 @@ class PlacesTypeLabel(unittest.TestCase):
         # a linked item that names Ottawa only is about Ottawa
         self.assertEqual(events.event_places(["i3"], {"i3": {"places": ["ottawa"], "geo": "linked"}}),
                          (["ottawa"], "named"))
+        # the province geo (mostly the source's nest) yields to a scope the headline names
+        self.assertEqual(events.event_places(["i4"], {"i4": {"places": ["ottawa"], "geo": "quebec"}}),
+                         (["ottawa", "province"], "named"))
+        self.assertEqual(events.event_places(["i5"], {"i5": {"places": [], "geo": "quebec"}}),
+                         (["province"], "geo"))
 
     def test_no_place_falls_back_to_a_scope_code_and_the_label_names_none(self):
         places, basis = events.event_places(["i"], {"i": {"places": [], "geo": "linked"}})
@@ -957,3 +962,52 @@ class Wiring(unittest.TestCase):
         import state_pack
         self.assertIn("events/store.json", state_pack.EXPLICIT)
         self.assertIn("events/latest_events.json", state_pack.EXPLICIT)
+
+
+# --------------------------------------------------------------------------- #
+# Lexicon fixes found by reading the replayed events. Every headline below is
+# written from scratch for the test (invented places, people and events): only
+# the lexicon terms under test are shared with the lexicon.
+# --------------------------------------------------------------------------- #
+class LexiconFixes(unittest.TestCase):
+    def test_a_ceremony_for_firefighters_is_not_a_building_fire(self):
+        ceremony = ["Un pompier de Zorblaxville décoré pour un sauvetage dans un incendie "
+                    "lors d'une journée nationale de reconnaissance",
+                    "Gala de reconnaissance des pompiers volontaires de la Zorblaxie : "
+                    "trois caporaux décorés pour leur courage face aux flammes"]
+        self.assertNotEqual(vocabulaire.classify_type(ceremony)[0], "fire-building")
+        # The ceremony phrase is what blocks the type: without it, the same words are a fire.
+        bare = [t.replace(" lors d'une journée nationale de reconnaissance", "").replace("de reconnaissance ", "")
+                for t in ceremony]
+        for title in bare:
+            self.assertEqual(vocabulaire.classify_type([title])[0], "fire-building", title)
+        self.assertEqual(vocabulaire.classify_type(["Un triplex de la rue Zorblax ravagé par un incendie"])[0],
+                         "fire-building")
+
+    def test_a_vehicle_ramming_pedestrians_at_a_festival_is_pedestrians_struck(self):
+        titles = ["Zorblaxfest : une camionnette percute trois piétons près de la grande scène",
+                  "Trois piétons percutés en marge du festival Zorblax",
+                  "Festival Zorblax : les enquêteurs n'écartent pas l'hypothèse d'une voiture-bélier",
+                  "Festival Zorblax : quatre spectateurs blessés, la soirée de clôture annulée",
+                  "Une conductrice fonce dans la foule à la sortie du festival Zorblax",
+                  "Message de solidarité des élus aux blessés du festival Zorblax"]
+        self.assertEqual(vocabulaire.classify_type(titles)[0], "pedestrian-cyclist-struck")
+        for harmed in titles[2:]:
+            self.assertNotIn("festival-event", [r["type"] for r in vocabulaire.explain_type([harmed])], harmed)
+        self.assertEqual(vocabulaire.classify_type(["Festival Zorblax : quatre spectateurs, la soirée de clôture annulée"])[0],
+                         "festival-event", "the harm word is what blocks the festival type")
+        self.assertEqual(vocabulaire.classify_type(["Police say a van rammed pedestrians near the Zorblax festival grounds"])[0],
+                         "pedestrian-cyclist-struck")
+        self.assertEqual(vocabulaire.classify_type(["Coup d'envoi du festival Zorblax ce soir au parc des Zorblaxiens"])[0],
+                         "festival-event")
+
+    def test_rape_is_an_assault_not_a_campus_story(self):
+        titles = ["Plainte pour viol collectif : l'Université de Zorblax suspend deux étudiants",
+                  "Zorblax : un étudiant accusé de viol sur le campus universitaire",
+                  "Gang rape reported at a Zorblax University residence"]
+        self.assertEqual(vocabulaire.classify_type(titles)[0], "assault")
+        for word_boundary in ("Le conseil de Zorblaxville blâmé pour une violation de son code d'éthique",
+                              "Hockey mineur à Zorblax : la violence dans les gradins inquiète les arbitres"):
+            self.assertNotEqual(vocabulaire.classify_type([word_boundary])[0], "assault", word_boundary)
+        self.assertEqual(vocabulaire.classify_type(["L'Université de Zorblax ouvre un nouveau programme de doctorat"])[0],
+                         "higher-education")
