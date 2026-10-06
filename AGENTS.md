@@ -10,15 +10,36 @@ no-circumvention (R9) and same-day opt-out (R10) are permanent house law.
 
 The collector is **not** a laptop. `.github/workflows/vigie-refresh.yml` runs every
 6 hours: it restores the cross-edition state tarball from the **private**
-`Ombo1601/vigie-state` repo (`scripts/state_pack.py unpack`), runs
-`scripts/refresh.py` (pipeline → verify → stage → `vercel deploy --prod`), and
-persists the state back (`state_pack.py pack`, uploaded as the `state` release
-asset). Secrets: `VERCEL_TOKEN` and `STATE_TOKEN` (contents:write on
+`Ombo1601/vigie-state` repo (`scripts/state_sync.py restore`, which verifies
+then calls `state_pack.py unpack`), runs `scripts/refresh.py` (pipeline →
+verify → stage → `vercel deploy --prod`), and persists the state back
+(`state_sync.py persist`: `state_pack.py pack`, uploaded to the `state`
+release). Secrets: `VERCEL_TOKEN` and `STATE_TOKEN` (contents:write on
 `vigie-state`). Vercel git auto-deploy is disabled on purpose — this chain is the
 only production writer; a bare `git push` must never publish a data-less build.
 The public repo never carries publisher content; `data/` stays gitignored and
 only the private state store holds it. The Windows scheduled task remains an
 optional fallback and runs the same `refresh.py`.
+
+**State moves fail closed** (the tarball is the only copy of the registre).
+Restore calls it a first run only on a definitive answer — repository visible
+*and* release 404, or a release with no state asset at all — and never while
+`anchors/checkpoint.txt` names a seal; any other failure (401/403, 429, 5xx,
+network, timeout, garbage) is retried 3× and then fails the job before
+`refresh.py` runs. The download must match its size, the sha256 recorded at
+persist time (`state.tar.gz.sha256`; absent only for the one-time legacy
+archive, accepted with a warning) and the anchored seal. Outcome
+(`restored|fresh|failed`, seal count, digest, size) goes to `$GITHUB_OUTPUT`;
+persist runs only after `restored`/`fresh`. It refuses a chain that shrank or
+forked or lost `registre/registre.json`, and a member count or size below half
+of the restored state unless the repository variable
+`VIGIE_STATE_ALLOW_SHRINK=1` (logged). The full refresh uploads an immutable
+`state-YYYYMMDDTHHMMSSZ.tar.gz` first, confirms it, then replaces `state.tar.gz`
+and its digest (`--clobber` deletes before it uploads) and prunes to the newest
+12 dated copies; the roads lane replaces the rolling asset only, through the
+same checks. A release holding a digest or dated copies but no `state.tar.gz`
+is an interrupted persist: re-upload the newest dated copy as `state.tar.gz`
+with its digest by hand.
 
 When `data/` is needed locally, seed it by unpacking the private state tarball;
 never commit it.

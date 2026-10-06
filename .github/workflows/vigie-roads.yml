@@ -44,15 +44,10 @@ jobs:
         with:
           node-version: "20"
 
+      # Fail closed, exactly as the full refresh (scripts/state_sync.py).
       - name: Restore cross-edition state
-        run: |
-          mkdir -p "$RUNNER_TEMP/state"
-          if gh release download state --repo "$STATE_REPO" \
-               --pattern state.tar.gz --dir "$RUNNER_TEMP/state" --clobber; then
-            python3 -X utf8 scripts/state_pack.py unpack "$RUNNER_TEMP/state/state.tar.gz"
-          else
-            echo "No state yet (first run) - starting a fresh memory."
-          fi
+        id: restore
+        run: python3 -X utf8 scripts/state_sync.py restore --repo "$STATE_REPO" --tag state --dir "$RUNNER_TEMP/state"
 
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
@@ -60,16 +55,13 @@ jobs:
       - name: Roads refresh (ingest WZDX -> anomalies/edges -> render -> deploy if changed)
         run: python3 -X utf8 scripts/refresh.py --roads-only
 
+      # The same refusals as the full refresh; the rolling asset only (dated
+      # copies are the six-hourly refresh's job).
       - name: Persist cross-edition state
-        if: always()
-        run: |
-          python3 -X utf8 scripts/state_pack.py pack "$RUNNER_TEMP/state/state.tar.gz"
-          gh release view state --repo "$STATE_REPO" >/dev/null 2>&1 \
-            || gh release create state --repo "$STATE_REPO" \
-                 --title "Vigie state" \
-                 --notes "Rolling snapshot of the cross-edition state (private; publisher content never enters the public repo)."
-          gh release upload state "$RUNNER_TEMP/state/state.tar.gz" \
-            --repo "$STATE_REPO" --clobber
+        if: always() && (steps.restore.outputs.outcome == 'restored' || steps.restore.outputs.outcome == 'fresh')
+        env:
+          VIGIE_STATE_ALLOW_SHRINK: ${{ vars.VIGIE_STATE_ALLOW_SHRINK }}
+        run: python3 -X utf8 scripts/state_sync.py persist --repo "$STATE_REPO" --tag state --dir "$RUNNER_TEMP/state"
 
       - name: Report failure
         if: failure()

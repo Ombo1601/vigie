@@ -26,8 +26,11 @@ Usage:
 """
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 import tarfile
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -154,12 +157,24 @@ def pack(out_path: Path) -> int:
     return len(members())
 
 
+# A state archive carries ~100 files and ~10 MB; anything far beyond is not a
+# state snapshot (a decompression bomb from a compromised asset, or a packing bug).
+MAX_MEMBERS = 10_000
+MAX_BYTES = 1 << 30
+
+
 def unpack(in_path: Path) -> int:
     src = Path(in_path)
-    count = 0
     data_root = (ROOT / "data").resolve()
     with tarfile.open(src, "r:gz") as tar:
-        for info in tar.getmembers():
+        infos = tar.getmembers()
+        if len(infos) > MAX_MEMBERS:
+            raise ValueError(f"archive has {len(infos)} members (cap {MAX_MEMBERS})")
+        total = sum(info.size for info in infos if info.isfile())
+        if total > MAX_BYTES:
+            raise ValueError(f"archive expands to {total} bytes (cap {MAX_BYTES})")
+        plan: list[tuple[tarfile.TarInfo, Path]] = []
+        for info in infos:
             name = info.name.replace("\\", "/")
             # Mirror the pack-side filter: an archive packed by an older run can
             # still carry refresh.lock, and unpacking it with a fresh mtime
@@ -172,19 +187,28 @@ def unpack(in_path: Path) -> int:
             # method files (a compromised state asset must not become RCE).
             if name.startswith("/") or not target.is_relative_to(data_root):
                 raise ValueError(f"unsafe archive member: {name}")
-            if info.isdir():
-                continue
-            if not info.isfile() and not info.islnk() and not info.issym():
-                continue
-            if info.issym() or info.islnk():
-                continue  # a state snapshot is plain files only
-            target.parent.mkdir(parents=True, exist_ok=True)
-            extracted = tar.extractfile(info)
-            if extracted is None:
-                continue
-            target.write_bytes(extracted.read())
-            count += 1
-    return count
+            if info.isfile():
+                plan.append((info, target))  # dirs and links skipped: plain files only
+        # Extract everything into a sibling staging dir first, then move into
+        # place: a member that fails to read leaves data/ exactly as it was.
+        data_root.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=".unpack-", dir=data_root))
+        staged: list[tuple[Path, Path]] = []
+        try:
+            for n, (info, target) in enumerate(plan):
+                extracted = tar.extractfile(info)
+                if extracted is None:
+                    continue
+                part = staging / str(n)
+                with extracted, open(part, "wb") as out:
+                    shutil.copyfileobj(extracted, out)
+                staged.append((part, target))
+            for part, target in staged:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(part, target)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+    return len(staged)
 
 
 def main(argv: list[str] | None = None) -> int:
