@@ -511,6 +511,44 @@ class ClassifyPlaces(unittest.TestCase):
         # Federal evidence still names the federal scope when the city is also named.
         self.assertIn("ottawa", V.classify_places(["Le gouvernement fédéral annonce à Ottawa un plan Zorblax"]))
 
+    def test_ottawa_addressed_or_paying_is_the_federal_government(self) -> None:
+        # Quebec French addresses the federal government as "Ottawa": asked,
+        # paying, answering, sitting. Those phrases stay federal; the city's
+        # "à Ottawa" / "d'Ottawa" stay the city.
+        for title in ("Le syndicat Zorblax demande à Ottawa un moratoire",
+                      "Les maires du Zorblax réclament des fonds à Ottawa",
+                      "Québec exige d’Ottawa une compensation pour le Zorblax",
+                      "Zorblax : l'aide d'Ottawa se fait attendre", "Le refus d'Ottawa irrite les Zorblax",
+                      "Session parlementaire à Ottawa : le Zorblax en tête",
+                      "Zorblax caucus returns to Parliament Hill"):
+            places = V.classify_places([title])
+            self.assertIn("ottawa", places, title)
+            self.assertNotIn("elsewhere", places, title)
+        for title in ("Un suspect interpellé à Ottawa près du parc Zorblax", "Zorblax : la Ville d'Ottawa ouvre une patinoire"):
+            self.assertEqual(V.classify_places([title]), ["elsewhere"], title)
+        # More than four words between the verb and "à Ottawa": no longer read as addressed.
+        self.assertEqual(V.classify_places(["Le Zorblax demande une pause pour ses quatre filiales à Ottawa"]),
+                         ["elsewhere"])
+        # Every federal phrase the ottawa rule keeps is a phrase the elsewhere rule masks.
+        doc = json.loads(V.LEXIQUE_PATH.read_text(encoding="utf-8"))
+        self.assertTrue(set(doc["places"]["ottawa"]["keep"]) <= set(doc["places"]["elsewhere"]["mask"]))
+        # Québec City's own colline Parlementaire stays a site of the capital.
+        self.assertEqual(V.classify_places(["Colline Parlementaire : le Zorblax plante un arbre"]), ["parliament-hill"])
+
+    def test_bets_are_not_paris(self) -> None:
+        for title in ("Paris en ligne : le Zorblax veut sa part", "Les paris sportifs du Zorblax inquiètent",
+                      "Paris et casinos : le Zorblax serre la vis"):
+            self.assertNotIn("elsewhere", V.classify_places([title]), title)
+        self.assertIn("elsewhere", V.classify_places(["À Paris, le Zorblax fait salle comble"]))
+
+    def test_a_gap_reads_up_to_four_words(self) -> None:
+        rx = re.compile(V._keyword_regex("demande ~ a ottawa"))
+        self.assertTrue(rx.search("le zorblax demande a ottawa"))
+        self.assertTrue(rx.search("le zorblax demande des fonds neufs a ottawa"))
+        self.assertFalse(rx.search("le zorblax demande un, deux, trois, quatre, cinq a ottawa".replace(",", "")))
+        self.assertFalse(rx.search("le zorblax redemande a ottawa"), "word-bounded")
+        self.assertEqual(V._keyword_regex("a ~ ottawa"), V._keyword_regex("a ~ ottawa ~"))
+
     def test_quebec_towns_outside_the_capital_region_are_the_province(self) -> None:
         for title in ("Grave accident à Trois-Rivières", "Un homme de Montréal arrêté au Zorblax",
                       "Inondations en Gaspésie", "Le Zorblax arrive à Gatineau"):
@@ -523,6 +561,12 @@ class ClassifyPlaces(unittest.TestCase):
         mask = V._mask(["le canadien", "le canadien de montreal"])
         self.assertEqual(mask.sub(" ", V.fold("Le Canadien de Montréal")).strip(), "")
         self.assertIsNone(V._mask([]))
+        self.assertIsNone(V._mask([], ["demande ~ a ottawa"]))
+
+    def test_a_kept_phrase_survives_the_mask(self) -> None:
+        mask = V._mask(["a ottawa"], ["demande ~ a ottawa"])
+        self.assertEqual(mask.sub(" ", "on demande des sous a ottawa puis on danse a ottawa").split(),
+                         ["on", "demande", "des", "sous", "a", "ottawa", "puis", "on", "danse"])
 
     def test_the_fallback_place_is_never_named_by_a_text(self) -> None:
         for title in ("Lieu non établi", "Place not established", "unplaced", "Un fait divers Zorblax"):

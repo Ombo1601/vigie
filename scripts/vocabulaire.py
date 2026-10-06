@@ -70,26 +70,40 @@ def fold(text: object) -> str:
     return " ".join(re.sub(r"[^a-z0-9]+", " ", raw).split())
 
 
+# `~` in a keyword: up to this many words of any kind ("demande ~ a ottawa"
+# reads "demande à Ottawa" and "demande des comptes à Ottawa").
+GAP_WORDS = 4
+
+
 def _keyword_regex(keyword: str) -> str | None:
     """One lexicon keyword -> regex source over folded text.
 
     A trailing `*` means word-prefix (no right boundary); `#` stands for a
-    number of one to three digits. Everything else is word-bounded on both
-    sides, with any run of spaces between words.
+    number of one to three digits; `~` between two words stands for up to
+    GAP_WORDS words. Everything else is word-bounded on both sides, with any
+    run of spaces between words.
     """
     prefix = keyword.rstrip().endswith("*")
     body = keyword.rstrip().rstrip("*")
-    words = []
+    pattern = ""
+    gap = False
     for token in body.replace("#", " # ").split():
+        if token == "~":
+            gap = bool(pattern)
+            continue
         if token == "#":
-            words.append(r"\d{1,3}")
+            word = r"\d{1,3}"
         else:
             folded = fold(token)
-            if folded:
-                words.append(r"\s+".join(re.escape(w) for w in folded.split()))
-    if not words:
+            if not folded:
+                continue
+            word = r"\s+".join(re.escape(w) for w in folded.split())
+        if pattern:
+            pattern += r"\s+" + (r"(?:[a-z0-9]+\s+){0,%d}?" % GAP_WORDS if gap else "")
+        pattern += word
+        gap = False
+    if not pattern:
         return None
-    pattern = r"\s+".join(words)
     tail = "" if prefix else r"(?![a-z0-9])"
     return r"(?<![a-z0-9])" + pattern + tail
 
@@ -101,12 +115,37 @@ def _alternation(keywords: list[str]) -> re.Pattern | None:
     return re.compile("|".join(parts))
 
 
-def _mask(phrases: list[str]) -> re.Pattern | None:
-    """A removal pattern: longest phrase first, so "le canadien de montreal"
-    is removed whole rather than "le canadien" leaving "de montreal" behind
-    (ties by the phrase itself: no list-order dependence)."""
+def _longest_first(phrases: list[str]) -> re.Pattern | None:
     folded = {fold(p.replace("*", "")): p for p in phrases if fold(p.replace("*", ""))}
     return _alternation([folded[k] for k in sorted(folded, key=lambda k: (-len(k), k))])
+
+
+class _KeepMask:
+    """A mask with phrases it must leave: a span a `keep` phrase matches is
+    never masked, so "demande à Ottawa" (the federal government addressed)
+    survives a mask that removes the city's "à Ottawa"."""
+
+    def __init__(self, mask: re.Pattern, keep: re.Pattern):
+        self.mask, self.keep = mask, keep
+
+    def sub(self, repl: str, text: str) -> str:
+        out, pos = [], 0
+        for m in self.keep.finditer(text):
+            out.append(self.mask.sub(repl, text[pos:m.start()]))
+            out.append(m.group(0))
+            pos = m.end()
+        out.append(self.mask.sub(repl, text[pos:]))
+        return "".join(out)
+
+
+def _mask(phrases: list[str], keep: list[str] | None = None) -> "re.Pattern | _KeepMask | None":
+    """A removal pattern: longest phrase first, so "le canadien de montreal"
+    is removed whole rather than "le canadien" leaving "de montreal" behind
+    (ties by the phrase itself: no list-order dependence). `keep` phrases
+    are left in place wherever they match (`_KeepMask`)."""
+    mask = _longest_first(phrases)
+    kept = _longest_first(keep or [])
+    return _KeepMask(mask, kept) if mask is not None and kept is not None else mask
 
 
 # --------------------------------------------------------------------------
@@ -308,8 +347,10 @@ def _lexicon() -> dict:
             "needs_context": bool(rule.get("needs_context")),
             # Phrases removed before THIS place's keywords are tested ("à
             # Ottawa" is the city of Ottawa, not the federal scope; "Nouvelle-
-            # France" is no evidence of France). Other places still see them.
-            "mask": _mask(_words(rule, "mask")),
+            # France" is no evidence of France), except where a `keep` phrase
+            # matches ("demande à Ottawa" addresses the federal government).
+            # Other places still see them.
+            "mask": _mask(_words(rule, "mask"), _words(rule, "keep")),
         })
     place_rules.sort(key=lambda r: specificity_key(r["code"]))
     context = _alternation(_words(doc, "place_context"))

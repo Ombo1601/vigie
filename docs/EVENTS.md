@@ -504,16 +504,35 @@ edition of 2026-10-06T00:03Z, 325 candidates, 194 events; and a replay of the
   `place_basis` (`named`, `geo`, `fallback`) and `place_votes` (`{code:
   {votes, named}}`) keep the evidence visible. `geo` (for ranking) is the
   plurality of the member geos, ties to the more local.
-- **Ottawa only when the evidence is federal.** "à Ottawa", "d'Ottawa", "police
-  d'Ottawa" name the city of Ottawa (Ontario): `elsewhere`. A place rule may
-  carry its own `mask` (phrases removed before its keywords are tested); masks
-  remove the longest phrase first. The province lexicon gains Quebec towns and
-  regions outside the capital (Montréal, Gatineau, Trois-Rivières, ...).
+- **Ottawa only when the evidence is federal.** Bare "Ottawa" is the usual
+  metonym of the federal government ("Ottawa annonce", "qu'Ottawa"). "à
+  Ottawa" and "d'Ottawa" usually locate a story in the city (Ontario,
+  `elsewhere`: "police d'Ottawa", "un suspect arrêté à Ottawa"), EXCEPT where
+  the phrase addresses or quotes the federal government, which stays
+  `ottawa`: a request or reproach made to it ("demande à Ottawa", "réclame
+  ... à Ottawa", "exige d'Ottawa", with up to 4 words between the verb and
+  Ottawa), what it pays or decides ("aide", "argent", "transferts", "refus",
+  "financement", "décision ... d'Ottawa", "auprès d'Ottawa") and Parliament
+  ("parlementaire à Ottawa", English "Parliament Hill"; Québec City's
+  own "colline Parlementaire" stays its site). The lexicon lists these
+  phrases once per rule: the `ottawa` rule `keep`s them through its mask, the
+  `elsewhere` rule masks them. A place rule may carry its own `mask` (phrases
+  removed before its keywords are tested, longest first) and `keep` (phrases
+  its mask never removes); `~` between two words stands for up to 4 words.
+  "paris" as bets ("paris sportifs", "paris en ligne", "les paris", "paris
+  et casinos", ...) is masked from `elsewhere`. The province lexicon gains
+  Quebec towns and regions outside the capital (Montréal, Gatineau,
+  Trois-Rivières, ...).
 - Measured. Live edition, `places[0]`: `quebec-city` 117 → 17 (with no
   evidence 98 → 0), `province` 57 → 69, `ottawa` 13 → 3, `elsewhere` 0 → 23,
   `unplaced` 0 → 75; events with place evidence 49.5 % → 61.3 %. Replay of the
   history (surviving events): `quebec-city` 887 → 90 (791 with no evidence →
-  0), evidence share 46.3 % → 56.9 %.
+  0), evidence share 46.3 % → 56.9 %. The federal-addressee and bet phrases
+  change 7 of the 2,139 history headlines (4 from `elsewhere` to `ottawa`, one
+  of them keeping `elsewhere` for an Ontario city it also names; 2 bet
+  headlines from `elsewhere` to no place; 1 English "Parliament Hill" from
+  the city's site to `ottawa`) and none of the 325 live candidates (the 10
+  city-of-Ottawa headlines of the live edition stay `elsewhere`).
 
 #### Table B additions
 
