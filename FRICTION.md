@@ -212,7 +212,7 @@ Canvas DoD: *Local delta strip from last visit (store timestamp); returning visi
 - [x] `public/morning.html` + `data/pulse/latest_morning.{json,txt}`
 - [x] Arrival CTA “Morning pulse”; `?approach=` deep-link
 - [x] No second ranking / no LLM / no For You; `w_impact` unchanged
-- [ ] Optional alert delivery channel (RENT v1) — deferred; payload ready as store twin
+- [ ] ~~Optional alert delivery channel (RENT v1)~~ — withdrawn 2026-10-06: Vigie is permanently non-commercial and has no paid alerts (see RENT.md); the store twin stays a payload, not a product
 
 ## Phase 5 verification (2026-09-17) — same pulse as Stage
 
@@ -223,9 +223,9 @@ Canvas DoD: *Morning digest + optional widget copy from same store; one pulse = 
 - [x] Optional widget: `data/pulse/latest_morning.widget.txt` (paste twin, no LLM)
 - [x] TXT carries silence + unit honesty (`no units yet`)
 - [x] Tests: `tests/test_phase5_ambient.py` + ambient suite
-- [x] RENT alert *delivery* still deferred; widget/json/txt are the payload
+- [x] Alert *delivery* not built (the paid RENT v1 candidates were withdrawn 2026-10-06); widget/json/txt are the payload
 
-**Phase 5 DoD: MET (instrument).** Delivery channel remains RENT v1.
+**Phase 5 DoD: MET (instrument).** No delivery channel: the paid RENT v1 candidates were withdrawn on 2026-10-06 (see RENT.md).
 
 ## Phase 6 status (2026-09-16) — Life facets (opt-in)
 

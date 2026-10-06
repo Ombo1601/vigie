@@ -25,7 +25,7 @@ evidence lists are capped at 8 ids.
 |----|-------|-----------|------------------------|
 | `poussee-declarations` | Poussée de déclarations | ≥ 3 events **new in this collection** (diff `new`) share a street | « N nouvelles entraves déclarées sur X dans cette même collecte. » |
 | `fin-reportee` | Fins reportées | ≥ 2 events on a street carry the City's own `end_date_moved: later` revision (diff `changed`) | « La Ville a reporté la fin déclarée de N entraves sur X depuis la dernière collecte. » |
-| `concentration` | Concentration | a street carries ≥ 8 active declarations **and** ≥ 4× the network median (median over streets with ≥ 1 active event) | « X concentre N entraves actives déclarées — R× la médiane du réseau (M). » |
+| `concentration` | Concentration | a street carries ≥ 8 active declarations **and** ≥ 4× the network median (median over streets with ≥ 1 active event) | « X compte N entraves actives déclarées ; médiane observée par rue sur le réseau : M (rapport R). » |
 | `fenetre-depassee` | Fenêtre officielle dépassée | ≥ 3 events on a street remain declared while their official `end_date` precedes the collection stamp | « N entraves sur X restent déclarées alors que leur fenêtre officielle est dépassée. » |
 
 Ratios and medians render in French notation (comma decimal, one digit).

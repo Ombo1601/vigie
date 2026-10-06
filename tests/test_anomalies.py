@@ -132,7 +132,7 @@ class Concentration(unittest.TestCase):
         row = _rules(verdict)["concentration"]
         self.assertEqual(row["count"], 8)
         self.assertEqual(row["median"], 1)
-        self.assertIn("8× la médiane du réseau (1)", row["claim"])
+        self.assertIn("médiane observée par rue sur le réseau : 1 (rapport 8)", row["claim"])
 
     def test_below_count_threshold_is_silent(self):
         verdict = ca.compile_verdict(_store(events=self._events(7, 20)))
@@ -152,7 +152,7 @@ class Concentration(unittest.TestCase):
         events += [_event(f"A-{n:03d}", roads=("Rue Alpha",)) for n in range(2)]
         events += [_event(f"B-{n:03d}", roads=("Rue Beta",)) for n in range(2)]
         row = _rules(ca.compile_verdict(_store(events=events)))["concentration"]
-        self.assertIn("4,5×", row["claim"])
+        self.assertIn("rapport 4,5", row["claim"])
         self.assertNotIn("4.5", row["claim"])
 
 

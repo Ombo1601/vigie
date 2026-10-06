@@ -140,7 +140,7 @@ def _question_pick(issues: list[dict]) -> dict | None:
     )
     for issue in candidates:
         status = promesse.status_of(issue)
-        if not status or status["status"] != "unanswered":
+        if not status or status["status"] != "no_official_recorded":
             continue
         if status["editions"] > best_editions:
             best = issue

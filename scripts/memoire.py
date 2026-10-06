@@ -105,10 +105,9 @@ def _voices_html(record: dict, names: dict) -> str:
     # Honest columns: an institution absent from the dossiers is classified by
     # what we actually collected, never by our clustering rules alone.
     columns = (
-        ("Dans un dossier", row.get("spoke") or []),
-        ("Publié, hors dossier", row.get("published") or []),
-        ("Collecte manquée par Vigie", [*(row.get("collection_gap") or []), *(row.get("no_items") or [])]),
-        ("Non établi", row.get("not_established") or []),
+        (registre.state_heading_fr(key), row.get(key) or [])
+        for key in (registre.STATE_SPOKE, registre.STATE_PUBLISHED, registre.STATE_NO_ITEMS,
+                    registre.STATE_COLLECTION_GAP, registre.STATE_NOT_ESTABLISHED)
     )
     columns = [(title, ids) for title, ids in columns if ids]
     if not columns:
@@ -121,8 +120,9 @@ def _voices_html(record: dict, names: dict) -> str:
         '<section class="memoire-section"><h2>Les voix de l’édition</h2>'
         f'<div class="memoire-voices">{blocks}</div>'
         '<p class="fine">« Publié, hors dossier » n’est pas un silence : un dossier exige un sujet nommé '
-        'et deux institutions. « Collecte manquée » est une lacune de Vigie, jamais une absence de '
-        'l’institution. Les éditions scellées avant la correction du 30 septembre 2026 restent '
+        'et deux institutions. « Aucun article collecté » : les flux ont répondu sans article dans la '
+        'fenêtre de 7 jours, ce n’est pas une lacune. « Collecte manquée » est une lacune de Vigie, '
+        'jamais une absence de l’institution. Une édition scellée sans mesure de collecte reste '
         '« non établi » : on ne réécrit pas un sceau.</p></section>'
     )
 
@@ -235,6 +235,20 @@ def render_edition(seal: dict, names: dict, *, prev_seq: int | None, next_seq: i
     )
 
 
+def _correction_note(seals: list[dict]) -> str:
+    """The affected seal range, derived from the chain shown here, never hard-coded."""
+    c = registre.correction_notice({"seals": seals})
+    if not c:
+        return ""
+    lo, hi, first = c["affects_seal_min"], c["affects_seal_max"], c.get("first_seal_with_facts")
+    span = f"n° {lo}" if lo == hi else f"n° {lo} à {hi}"
+    tail = f" ; le premier sceau avec mesure de collecte est le n° {first}" if first else ""
+    return (
+        f'<p class="fine">Sceaux sans mesure de collecte (lecture « non établi », correction du '
+        f'{brief.esc(c["corrected_at"])}) : {span}{tail}. Aucun sceau n’a été modifié.</p>'
+    )
+
+
 def render_index(seals: list[dict], names: dict, *, total: int | None = None) -> str:
     items = []
     for seal in sorted(seals, key=lambda s: _safe_int(s.get("seq")), reverse=True):
@@ -253,7 +267,10 @@ def render_index(seals: list[dict], names: dict, *, total: int | None = None) ->
         published = len(row.get("published") or [])
         if published:
             voices += f' · {published} publié{"s" if published != 1 else ""} hors dossier'
-        missed = len(row.get("collection_gap") or []) + len(row.get("no_items") or [])
+        no_items = len(row.get("no_items") or [])
+        if no_items:
+            voices += f" · {no_items} sans article collecté"
+        missed = len(row.get("collection_gap") or [])
         if missed:
             voices += f" · {missed} collecte manquée"
         undetermined = len(row.get("not_established") or [])
@@ -290,6 +307,7 @@ def render_index(seals: list[dict], names: dict, *, total: int | None = None) ->
         "texte d’éditeur, aucun verdict — la chaîne des éditions, édition par édition.</p></header>"
         f'<p class="section-note">{note}</p>'
         f"{listing}"
+        f'{_correction_note(seals)}'
         '<p class="fine">La vérification reste dans <a href="/registre.html">le registre</a> : '
         'chaque racine se recalcule avec sha256, sans compte ni clé.</p>'
     )

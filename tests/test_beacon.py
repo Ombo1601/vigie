@@ -56,7 +56,7 @@ def _store(events=None) -> dict:
     }
 
 
-def _anomaly(claim="Boulevard Laurier concentre 9 entraves actives déclarées.",
+def _anomaly(claim="Boulevard Laurier compte 9 entraves actives déclarées.",
              label="Concentration", rule="concentration", ids=("L-1", "L-2"), **over) -> dict:
     row = {"rule_id": rule, "rule_label": label, "street_key": "boulevard-laurier",
            "street_display": "Boulevard Laurier", "count": len(ids), "claim": claim,
@@ -127,7 +127,7 @@ class BeaconRender(unittest.TestCase):
         page = _render(roadworks=_store(), anomalies=_verdict([_anomaly()]))
         self.assertIn('id="anomalies"', page)
         self.assertIn("LECTURE STRUCTURELLE", page)
-        self.assertIn("Boulevard Laurier concentre 9 entraves actives déclarées.", page)
+        self.assertIn("Boulevard Laurier compte 9 entraves actives déclarées.", page)
         self.assertIn("Concentration", page)
         self.assertIn("/methode/anomalies.html", page)
         self.assertIn("2 entraves citées", page)

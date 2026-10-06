@@ -1491,7 +1491,7 @@ def civic_section(store: dict | None, now: datetime) -> str:
         count_note = "Aucune consultation<br>listée cette collecte."
     age = (now - fetched).total_seconds()
     stale_html = (
-        '<p class="fine">Collecte à actualiser — la Ville a pu modifier le calendrier depuis.</p>'
+        '<p class="fine">Collecte à actualiser : plus de six heures se sont écoulées ; la Ville a pu modifier le calendrier depuis.</p>'
         if age > 6 * 3600 or age < -300 else ""
     )
     diff = store.get("diff") if isinstance(store.get("diff"), dict) else {}
@@ -1686,7 +1686,7 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
             if active or stale:
                 text = (f"<strong>{active}</strong> entrave{'s' if active != 1 else ''} "
                         f"déclarée{'s' if active != 1 else ''} par la Ville"
-                        + (", collecte à actualiser." if stale else " dans la dernière collecte."))
+                        + (", collecte de plus de six heures." if stale else " dans la dernière collecte."))
                 items.append(_glance_item("Travaux", text, "#travaux"))
     civic_fetched = parse_date(civic.get("fetched_at")) if isinstance(civic, dict) else None
     if (isinstance(civic, dict) and civic.get("method") == "civic-html-v1"
@@ -1702,12 +1702,12 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
             text = (
                 f"<strong>{civic_n}</strong> consultation{'s' if civic_n != 1 else ''} "
                 f"listée{'s' if civic_n != 1 else ''} par la Ville"
-                + (", collecte à actualiser." if civic_stale else " dans la dernière collecte.")
+                + (", collecte de plus de six heures." if civic_stale else " dans la dernière collecte.")
             )
         else:
             text = (
                 "Aucune consultation listée par la Ville"
-                + (", collecte à actualiser." if civic_stale else " dans cette collecte.")
+                + (", collecte de plus de six heures." if civic_stale else " dans cette collecte.")
             )
         items.append(_glance_item("Consultations", text, "#participation"))
     if has_changes and isinstance(ledger, dict) and ledger.get("has_previous"):
@@ -1789,10 +1789,11 @@ def silence_bar(issues: list[dict], register: list[dict] | None = None) -> str:
         by = lambda st: [r for r in rows if r.get("current") == st]  # noqa: E731
         spoke = by(_registre.STATE_SPOKE)
         published = by(_registre.STATE_PUBLISHED)
-        missed = by(_registre.STATE_COLLECTION_GAP) + by(_registre.STATE_NO_ITEMS)
+        missed = by(_registre.STATE_COLLECTION_GAP)
+        no_items = by(_registre.STATE_NO_ITEMS)
         undetermined = by(_registre.STATE_NOT_ESTABLISHED)
         withdrawn = by(_registre.STATE_WITHDRAWN)
-        if len(spoke) + len(published) + len(missed) + len(undetermined) < 2:
+        if len(spoke) + len(published) + len(missed) + len(no_items) + len(undetermined) < 2:
             return ""
         items = sum(safe_int(r.get("items_collected")) for r in published)
         parts = [f'<strong>{len(spoke)}</strong> institution{"s" if len(spoke) != 1 else ""} dans un dossier']
@@ -1801,18 +1802,22 @@ def silence_bar(issues: list[dict], register: list[dict] | None = None) -> str:
                          + (f' ({items} articles collectés)' if items else ""))
         if missed:
             parts.append(f'<strong>{len(missed)}</strong> collecte{"s" if len(missed) != 1 else ""} manquée{"s" if len(missed) != 1 else ""} par Vigie')
+        if no_items:
+            parts.append(f'<strong>{len(no_items)}</strong> sans article collecté (flux répondus)')
         if undetermined:
             parts.append(f'<strong>{len(undetermined)}</strong> non établi{"s" if len(undetermined) != 1 else ""}')
         summary = " · ".join(parts) + "."
         ledger_rows = (
-            _row("Dans un dossier", spoke, "sb-spoke")
-            + _row("Publié, hors dossier", published, "sb-published")
-            + _row("Collecte manquée par Vigie", missed, "sb-missed")
-            + _row("Non établi", undetermined, "sb-unknown")
-            + _row("Retirée à la demande de l’éditeur", withdrawn, "sb-withdrawn")
+            _row(_registre.state_heading_fr(_registre.STATE_SPOKE), spoke, "sb-spoke")
+            + _row(_registre.state_heading_fr(_registre.STATE_PUBLISHED), published, "sb-published")
+            + _row(_registre.state_heading_fr(_registre.STATE_NO_ITEMS), no_items, "sb-unknown")
+            + _row(_registre.state_heading_fr(_registre.STATE_COLLECTION_GAP), missed, "sb-missed")
+            + _row(_registre.state_heading_fr(_registre.STATE_NOT_ESTABLISHED), undetermined, "sb-unknown")
+            + _row(_registre.state_heading_fr(_registre.STATE_WITHDRAWN), withdrawn, "sb-withdrawn")
         )
         note = ("« Publié, hors dossier » n’est pas un silence : un dossier exige un sujet nommé et deux "
-                "institutions. Une collecte manquée est notre lacune, jamais l’absence d’une institution. ")
+                "institutions. Une collecte manquée est notre lacune, jamais l’absence d’une institution ; "
+                "« sans article collecté » : les flux ont répondu, rien dans la fenêtre de 7 jours. ")
         return (
             '<section class="silence-bar" id="silence" aria-label="Les voix suivies de cette édition" data-cmdk="Voix des institutions">'
             '<div class="bar-header"><p class="eyebrow">LES VOIX SUIVIES · MESURÉES, PAS PRÉSUMÉES</p>'

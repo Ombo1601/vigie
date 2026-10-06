@@ -118,7 +118,8 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
     register = registre.institution_register(state)
     spoke = [r for r in register if r["current"] == registre.STATE_SPOKE]
     published = [r for r in register if r["current"] == registre.STATE_PUBLISHED]
-    missed = [r for r in register if r["current"] in (registre.STATE_COLLECTION_GAP, registre.STATE_NO_ITEMS)]
+    missed = [r for r in register if r["current"] == registre.STATE_COLLECTION_GAP]
+    no_items = [r for r in register if r["current"] == registre.STATE_NO_ITEMS]
     missed_names = ", ".join(esc(r["institution_name"]) for r in missed[:SILENT_NAMES_CAP])
     if len(missed) > SILENT_NAMES_CAP:
         rest = len(missed) - SILENT_NAMES_CAP
@@ -131,6 +132,8 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
         f'<strong>{len(published)}</strong> {"ont" if len(published) != 1 else "a"} publié sans entrer dans un dossier'
         + (f' · <strong>{len(missed)}</strong> collecte{"s" if len(missed) != 1 else ""} manquée{"s" if len(missed) != 1 else ""} par Vigie : {missed_names}.'
            if missed else ".")
+        + (f' {len(no_items)} institution{"s" if len(no_items) != 1 else ""} : flux répondus, aucun article collecté dans la fenêtre de 7 jours (ce n’est pas une lacune).'
+           if no_items else "")
         + "</p>"
         if register else "<p>Registre des voix : pas encore d’édition scellée.</p>"
     )

@@ -435,7 +435,7 @@ def render_markdown(rows: list[dict], issues: list[dict], ledger: dict | None, r
         correction = registre.correction_notice(state)
         if correction:
             lines.append("")
-            lines.append(f"Correction du {correction['corrected_at']} : les sceaux {correction['affects_seal_min']} à {correction['affects_seal_max']} avaient été publiés avec une définition du silence qui mesurait les règles de rapprochement de Vigie. Ils restent inchangés — une chaîne ne se réécrit pas — et leur lecture est désormais « non établi ».")
+            lines.append(f"Correction du {correction['corrected_at']} : les sceaux {correction['affects_seal_min']} à {correction['affects_seal_max']}{(' (le premier sceau avec mesure de collecte est le ' + str(correction['first_seal_with_facts']) + ')') if correction.get('first_seal_with_facts') else ''} avaient été publiés avec une définition du silence qui mesurait les règles de rapprochement de Vigie. Ils restent inchangés — une chaîne ne se réécrit pas — et leur lecture est désormais « non établi ».")
         lines.append("")
         lines.append(f"Registre complet et chaîne des éditions : {SITE_URL}/registre.html")
         lines.append("")

@@ -586,6 +586,23 @@ STATE_LABEL_FR = {
     STATE_WITHDRAWN: "retirée à la demande de l’éditeur",
 }
 
+# Short column / counter headings, same single source. "no_items" is its own
+# fact (feeds answered, nothing in the window): it is NOT a collection gap.
+# "withdrawn" is derived at render time (R10), never sealed: it is neither a
+# gap nor a silence, and has its own heading.
+STATE_HEADING_FR = {
+    STATE_SPOKE: "Dans un dossier",
+    STATE_PUBLISHED: "Publié, hors dossier",
+    STATE_NO_ITEMS: "Aucun article collecté (flux répondus)",
+    STATE_COLLECTION_GAP: "Collecte manquée par Vigie",
+    STATE_NOT_ESTABLISHED: "Non établi",
+    STATE_WITHDRAWN: "Retirée à la demande de l’éditeur",
+}
+
+
+def state_heading_fr(state: str) -> str:
+    return STATE_HEADING_FR.get(state, STATE_HEADING_FR[STATE_NOT_ESTABLISHED])
+
 
 def state_label_fr(row: dict) -> str:
     """One honest French sentence for an institution's state in the latest edition.
@@ -726,6 +743,14 @@ def correction_notice(state: dict) -> dict | None:
         "affects_seal_min": min(affected),
         "affects_seal_max": max(affected),
         "affects_count": len(affected),
+        # First seal after the affected range that carries collection facts.
+        "first_seal_with_facts": next(
+            (n for n in sorted(_int(s.get("seq")) for s in (state.get("seals") or [])
+                               if isinstance(s, dict) and isinstance(s.get("record"), dict)
+                               and isinstance(s["record"].get("collection"), dict))
+             if n > max(affected)),
+            None,
+        ),
         "wrong": CORRECTION_WRONG,
         "now": CORRECTION_NOW,
         "chain": CORRECTION_CHAIN,

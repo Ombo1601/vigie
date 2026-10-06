@@ -151,7 +151,7 @@ def rule_fin_reportee(diff: dict) -> list[dict]:
 
 
 def rule_concentration(events: list[dict]) -> list[dict]:
-    """One street carries far more active declarations than the network median."""
+    """One street carries many more active declarations than the network median (a measured ratio, not a judgement)."""
     groups = _group_by_street(events)
     if not groups:
         return []
@@ -167,8 +167,8 @@ def rule_concentration(events: list[dict]) -> list[dict]:
             ratio = round(n / median, 1)
             out.append(_anomaly(
                 "concentration", key, group,
-                f"{group.display()} concentre {n} entraves actives déclarées "
-                f"— {_num_fr(ratio)}× la médiane du réseau ({_num_fr(median)}).",
+                f"{group.display()} compte {n} entraves actives déclarées ; "
+                f"médiane observée par rue sur le réseau : {_num_fr(median)} (rapport {_num_fr(ratio)}).",
                 threshold=rule["min_count"], min_ratio=rule["min_ratio"],
                 ratio=ratio, median=median,
             ))

@@ -17,7 +17,7 @@ Those are three different facts and only the last one is about Vigie. Conflating
 them is how an aggregator ends up accusing a public body of silence it never
 observed.
 
-## Correction of 2026-09-30 (seals 1–40)
+## Correction of 2026-09-30
 
 Until this date the register defined "did not speak" as "absent from every
 dossier of the edition". A dossier requires a named subject **and two
@@ -26,6 +26,12 @@ measuring Vigie's clustering rules and publishing them as institutional
 behaviour. On live data it asserted `editions_spoke: 0` for Hydro‑Québec and the
 Ville de Québec while their feeds returned 40 and 9 items, collected
 successfully, in the same edition.
+
+A seal is concerned when it carries no collection facts. The affected range is
+**derived from the chain**, never fixed in prose: `chain.json` →
+`correction` (`affects_seal_min`, `affects_seal_max`, `first_seal_with_facts`),
+also printed on the registre page and the mémoire index. (An earlier version of
+this page named a fixed range that the live chain has since outgrown.)
 
 The seals are **not** rewritten — a chain that can be edited is not a chain.
 Instead:
@@ -76,7 +82,7 @@ own collection clock equals the edition key, so a mismatched edition can never
 borrow another edition's counts.
 
 `edition` is the collection clock (`dossier_history.updated_at`), never the
-render clock: an offline rebuild or the hourly roads-only re-render re-seals
+render clock: an offline rebuild or the roads-only re-render re-seals
 the same edition to identical bytes instead of minting a new one.
 
 ## How it is chained
@@ -111,7 +117,7 @@ or by hand: recompute each leaf from its record, chain the roots from
 
 ## The roadworks chain
 
-The hourly official lane (`refresh.py --roads-only`) re-renders when the
+The official roads lane (`refresh.py --roads-only`, scheduled about hourly, actually less often) re-renders when the
 declared obstruction set changes. Each distinct active set gets one seal
 (`registre-travaux-v1`): record = `{fetched_at, active: [event ids]}`. Only
 the latest record is published in full (`latest_record`); the earlier seals
@@ -168,7 +174,7 @@ an edition a record.
 
 - **Seal growth is unbounded.** Every seal keeps its full record; measured cost
   is ~10 KB per edition, so ~15 MB/year in the private state tarball that the
-  refresh workflow downloads *and* uploads every six hours. `voice` rows prune
+  refresh workflow downloads *and* uploads at every scheduled refresh (about every six hours). `voice` rows prune
   at 400 while `seals` do not, so beyond that point the chain and the register
   describe different windows. Not yet fixed: it degrades over months, not days.
 - **`checkpoint.txt` has a variable-length line.** The `travaux` line is absent

@@ -161,13 +161,13 @@ Doctrine: **every silence is a diagnosed fact, and every diagnosis feeds a fixed
 - `data/ops/` ledgers are capped by design (media 28 runs, feed/edition
   windows, watchdog 26 weeks) and written atomically; internal, never staged.
 - `data/` and `deploy/` are unversioned: a git-built edition starts without
-  cross-edition memory, and the six-hour refresh restores it.
+  cross-edition memory, and the scheduled refresh restores it.
 
 ## Release law (hardening)
 
-- **The collector runs on GitHub Actions**, not a laptop (`.github/workflows/vigie-refresh.yml`, every 6 h). It restores the cross-edition state tarball from the private `Ombo1601/vigie-state` store (`scripts/state_pack.py`), runs `refresh.py`, and persists it back. Vercel git auto-deploy is disabled (`vercel.json` `git.deploymentEnabled: false`), so the verified chain is the only production writer and a bare push cannot publish a data-less build. The public repo never carries publisher content.
-- A second schedule (`vigie-roads.yml`, hourly) refreshes only the real-time WZDX reading via `refresh.py --roads-only`: ingest → anomalies/edges → `pipeline --render-only` → verify → deploy **only when the declarations changed** (content signal ignores collection clocks and presence counters). It never runs normalize/enrich/cluster, so no edition, diff, history or metric is created.
-- `stage_public.py` serializes the release swap with an `O_EXCL` lock in `deploy/` (reclaimed after 10 min) and retries transient Windows sharing violations (`winerror` 5/32/33 only), so the six-hour refresh and a manual `verify.py` can never rename `deploy/public` at the same instant.
+- **The collector runs on GitHub Actions**, not a laptop (`.github/workflows/vigie-refresh.yml`, scheduled about every 6 h; GitHub drops scheduled runs — measured roughly 3-4 full editions a day, gaps up to ~10 h; every page states the age of its data). It restores the cross-edition state tarball from the private `Ombo1601/vigie-state` store (`scripts/state_pack.py`), runs `refresh.py`, and persists it back. Vercel git auto-deploy is disabled (`vercel.json` `git.deploymentEnabled: false`), so the verified chain is the only production writer and a bare push cannot publish a data-less build. The public repo never carries publisher content.
+- A second schedule (`vigie-roads.yml`, scheduled about hourly; measured roughly every 5-9 h) refreshes only the real-time WZDX reading via `refresh.py --roads-only`: ingest → anomalies/edges → `pipeline --render-only` → verify → deploy **only when the declarations changed** (content signal ignores collection clocks and presence counters). It never runs normalize/enrich/cluster, so no edition, diff, history or metric is created.
+- `stage_public.py` serializes the release swap with an `O_EXCL` lock in `deploy/` (reclaimed after 10 min) and retries transient Windows sharing violations (`winerror` 5/32/33 only), so the scheduled refresh and a manual `verify.py` can never rename `deploy/public` at the same instant.
 - `verify.py` refuses to stage an empty edition (0 candidates) on every path, not only `--rebuild`: one surviving source that yields nothing cannot overwrite a good production site. The previous release stays up.
 - Pipeline stores are written with unique-temp atomic replacement (`store_io`); a crash, a full disk or overlapping writers never expose a truncated handoff file.
 - A feed network/DNS failure is diagnosed as transient, never as a permanent guard rejection, so one resolver blip does not blind an article or image forever.
