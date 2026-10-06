@@ -469,9 +469,10 @@ def collect(sources: list[dict], now: datetime, *, offline: bool = False,
         features: list = []
         try:
             doc = json.loads(raw)
-            features = doc.get("features") if isinstance(doc, dict) else None
-            if not isinstance(features, list):
+            parsed_features = doc.get("features") if isinstance(doc, dict) else None
+            if not isinstance(parsed_features, list):
                 raise ValueError("no features array in GeoJSON document")
+            features = parsed_features
         except (ValueError, RecursionError) as exc:
             # A hostile or corrupt document can be deeply nested; json.loads
             # then raises RecursionError, which is not a ValueError. Either way

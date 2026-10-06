@@ -294,6 +294,27 @@ class Collect(unittest.TestCase):
             self.assertFalse(meta["ok"])
             self.assertIn("parse_error", meta)
 
+    def test_wrong_shape_json_is_diagnosed_not_fatal(self):
+        # A gateway can answer 200 with valid JSON that is not a GeoJSON
+        # FeatureCollection. That must be a diagnosed parse failure that keeps
+        # the previous store, never an uncaught exception that stalls the run.
+        bodies = (b'{"error": "rate limited"}', b"[]", b'{"features": null}', b'{"features": "x"}', b"null")
+        for body in bodies:
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as temp:
+                raw_dir, store_path = self._paths(temp)
+                previous = _store(events=[_event("prev")])
+                store_path.parent.mkdir(parents=True)
+                store_path.write_text(json.dumps(previous), encoding="utf-8")
+                result = ingest_wzdx.collect([SRC], NOW, raw_dir=raw_dir, store_path=store_path,
+                                             fetch=lambda url, body=body: (body, "application/json"))
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["reason"], "parse_failed")
+                self.assertEqual(json.loads(store_path.read_text(encoding="utf-8")), previous)
+                meta = json.loads(next((raw_dir / "wzdx-test").glob("*.json")).read_text(encoding="utf-8"))
+                self.assertFalse(meta["ok"])
+                self.assertEqual(meta["feature_count"], 0)
+                self.assertIn("no features array", meta["parse_error"])
+
     def test_corrupt_previous_store_claims_no_comparison(self):
         with tempfile.TemporaryDirectory() as temp:
             raw_dir, store_path = self._paths(temp)
