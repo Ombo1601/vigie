@@ -72,8 +72,9 @@ House law carried here
     sourced owner group, a wire credit (the closed list is a prior; any
     other credit is a wire only when copy carrying it is seen in two or more
     owner groups within the 7-day window, measured every edition), a relayed
-    communiqué, or near-duplicate text; each merged origin carries its
-    reason codes.
+    communiqué, or near-duplicate text: a union of relations, so a credited
+    copy or a relay keeps its outlet's owner key; each merged origin carries
+    its reason codes.
   * Window: a member whose publication date is suspect (more than 6 h after
     its first collection) is dated by its first collection, for the matcher
     as for the window, so a future date never keeps an event in window.
@@ -706,13 +707,23 @@ def member_keys(ids: list[str], rows: dict[str, dict], credits: dict[str, list[s
                 wire: set[str] | None = None) -> dict[str, list[str]]:
     """The keys that join members into one origin, per member (sorted).
 
-    official      declaration:<owner group or institution> (a declaration
-                  joins other declarations of the same owner, never media)
-    wire          wire:<agency> for every closed-list credit it carries (else
-                  the agency its origin rule names), plus any measured wire
-    measured wire wire:<credit> (a non-closed credit seen in >= 2 groups)
-    press_release release:unknown-issuer (the rules know no issuer yet)
-    other         owner:<sourced owner group>, else institution:<id>"""
+    docs/AUTONOMY.md joins two members when they share a sourced controlling
+    owner OR a wire credit OR a relayed communiqué OR near-duplicate text: a
+    union of relations. So a rule key is ADDED to the member's owner key,
+    never put in its place (keying a credited copy by its credit alone would
+    split two outlets of one owner into two origins as soon as their shared
+    credit is measured as a wire: a measurement would inflate independence).
+
+    every media member  owner:<sourced owner group>, else institution:<id>
+      + wire class      wire:<agency> for every closed-list credit it carries
+                        (else the agency its origin rule names)
+      + any credit      wire:<credit> for each measured wire it carries (a
+                        non-closed credit seen in >= 2 owner groups)
+      + press_release   release:unknown-issuer (the rules know no issuer yet)
+    official            declaration:<owner group or institution> only: a
+                        declaration joins other declarations of the same
+                        owner (and a media text that copies it), never a
+                        medium by owner."""
     credits = credits or {}
     wire = wire or set()
     out: dict[str, list[str]] = {}
@@ -721,23 +732,18 @@ def member_keys(ids: list[str], rows: dict[str, dict], credits: dict[str, list[s
         cls = _str(row.get("origin_class"))
         group = _str(row.get("owner_group"))
         inst = _str(row.get("institution")) or _str(row.get("source_id")) or i
-        mine = sorted(set(c for c in credits.get(i) or [] if isinstance(c, str)))
-        measured = ["wire:" + c for c in mine if c in wire and c not in WIRE_PRIORS]
         if cls == origin.OFFICIAL:
-            keys = ["declaration:" + (group or inst)]
-        elif cls == origin.WIRE:
+            out[i] = ["declaration:" + (group or inst)]
+            continue
+        mine = sorted(set(c for c in credits.get(i) or [] if isinstance(c, str)))
+        keys = ["owner:" + group if group else "institution:" + inst]
+        if cls == origin.WIRE:
             agencies = [c for c in mine if c in WIRE_PRIORS]
-            keys = ["wire:" + c for c in agencies] or \
+            keys += ["wire:" + c for c in agencies] or \
                 ["wire:" + (_str(row.get("origin_rule")).rsplit(".", 1)[-1] or "unknown")]
-            keys += measured
-        elif measured:
-            keys = measured
-        elif cls == origin.PRESS_RELEASE:
-            keys = ["release:unknown-issuer"]
-        elif group:
-            keys = ["owner:" + group]
-        else:
-            keys = ["institution:" + inst]
+        keys += ["wire:" + c for c in mine if c in wire and c not in WIRE_PRIORS]
+        if cls == origin.PRESS_RELEASE:
+            keys.append("release:unknown-issuer")
         out[i] = sorted(set(keys))
     return out
 

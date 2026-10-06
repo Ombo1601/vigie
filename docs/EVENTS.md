@@ -567,7 +567,25 @@ span), so a future date never holds an event open.
   rules: one origin), `near-duplicate` (word 3-shingles, Jaccard at least
   3/5, at least 6 shingles each side, whoever owns the outlets). The bounds
   are printed in every view (`rules`). `independence.keys` keeps the member
-  keys so a renderer can re-apply a takedown without a second brain.
+  keys so a page can say why two members are one origin.
+- **The relations are a union** (AUTONOMY's first row: same owner OR same
+  wire credit OR same communiqué OR near-duplicate). A rule key is ADDED to
+  the member's owner key (`owner:<group>`, else `institution:<id>`), never
+  put in its place: a closed-list wire copy carries `owner:<group>` and
+  `wire:<agency>`, a relay carries `owner:<group>` and `release:...`, a copy
+  carrying a measured credit carries `owner:<group>` and `wire:<credit>`.
+  Keying a credited copy by its credit alone (the rule of tranche B, and of
+  this branch before review) split two outlets of one sourced owner into two
+  origins as soon as their shared credit was measured as a wire: a
+  measurement raised the count. With the union, adding a credit to the
+  measured wires can only join origins (a test holds it monotone). One
+  origin is the closure of every relation (union-find), so a wire copy also
+  bridges its outlet's owner to the other outlets carrying the same credit:
+  outlet A's own story, A's CP copy, B's CP copy and B's own story are one
+  origin. That is the rule as AUTONOMY writes it, conservative (it never
+  inflates independence); whether a wire copy should instead count apart
+  from its outlet's own reporting is open to the founder (it would amend
+  AUTONOMY's first row).
 - Agence QMI is no longer a founder flag: events.py reads credits (codes
   only, stored per item as `credits`) and applies the measured rule;
   origin.py's `AGENCE_QMI_IS_WIRE` is not consulted by the event builder.
@@ -583,6 +601,12 @@ span), so a future date never holds an event open.
   `reporting_origin_count` {1: 2, 2: 13, 3: 2}, the same as before (no QMI
   credit, no official/media copy pair in that edition); 7 events carry a
   declaration. Replay: multi-institution view events 1,794 before and after.
+  The union changes no origin today: recomputed both ways, 0 of the 194 live
+  events and 0 of the 10,379 replayed view events change their origin groups
+  (the wire copies and relays seen, 6 and 1 live, 40 and 2 over the replay,
+  never share an event with a member of the same owner or the same credit;
+  merge reasons summed over the replayed views: `same-owner` 1,707,
+  `near-duplicate` 77, no `same-wire-credit`, no `same-release`).
 
 ### 17.4 R10 in stored views (sections 6, 13)
 

@@ -497,17 +497,34 @@ class Independence(unittest.TestCase):
             "g": row("g", "ville-x", "ville-x", "official", "official.source_kind"),
             "u": {**row("u", "solo", ""), "owner_group": ""},
         }
-        out = events.independence(sorted(rows), rows)
-        self.assertEqual(out["groups"], sorted([["a", "b"], ["c", "d"], ["w1", "w2"], ["w3"], ["o"], ["p1", "p2"],
-                                                 ["g"], ["u"]]))
-        self.assertEqual(out["count"], 8)
+        def groups(ids, copies=None):
+            return events.independence(sorted(ids), rows, copies)["groups"]
+
+        # Each relation on its own (docs/AUTONOMY.md, first row).
+        owners = ["a", "b", "c", "d", "o", "g", "u"]
+        out = events.independence(owners, rows)
+        self.assertEqual(out["groups"], [["a", "b"], ["c", "d"], ["g"], ["o"], ["u"]], "same sourced owner")
+        self.assertEqual(out["count"], 5)
         self.assertEqual(out["declarations"], ["g"], "official voices are declarations")
-        self.assertEqual(out["reporting_count"], 7, "a declaration never corroborates the reporting")
+        self.assertEqual(out["reporting_count"], 4, "a declaration never corroborates the reporting")
+        self.assertEqual(groups(["w1", "w2"]), [["w1", "w2"]], "the same wire credit, across owners")
+        self.assertEqual(groups(["w1", "w3"]), [["w1"], ["w3"]], "two agencies, two owners")
+        self.assertEqual(groups(["p1", "p2"]), [["p1", "p2"]], "the same relayed communiqué")
+        # The relations are a union: a credited copy or a relay keeps its outlet's owner.
+        self.assertEqual(groups(["o", "w3"]), [["o", "w3"]], "Delta's AFP copy and Delta's own story: one owner")
+        self.assertEqual(groups(["a", "p1"]), [["a", "p1"]])
+        self.assertEqual(events.member_keys(["w2"], rows)["w2"], ["owner:delta", "wire:cp"])
+        # ... so one origin is the closure of every relation (union-find).
+        everything = events.independence(sorted(rows), rows)
+        self.assertEqual(everything["groups"], [["a", "b", "c", "d", "o", "p1", "p2", "w1", "w2", "w3"], ["g"], ["u"]])
+        self.assertEqual((everything["count"], everything["reporting_count"]), (3, 2))
+        merged = everything["origins"][0]
+        self.assertEqual({r["rule"] for r in merged["reasons"]}, {"same-owner", "same-wire-credit", "same-release"})
         self.assertEqual(events.independence(["x"], {"x": row("x", "solo", "solo")})["count"], 1)
         # A near-duplicate copy is one origin, whoever owns it.
-        copied = events.independence(sorted(rows), rows, [["c", "o"], ["zz", "o"]])
+        copied = events.independence(owners, rows, [["c", "o"], ["zz", "o"]])
         self.assertIn(["c", "d", "o"], copied["groups"])
-        self.assertEqual(copied["count"], 7)
+        self.assertEqual(copied["count"], 4)
 
     def test_near_duplicate_copies_are_one_origin_and_stay_one(self):
         copy = item("cp1", "delta", F1["title"], iso(20, 8, 20), F1["summary"])
@@ -1603,7 +1620,30 @@ class IndependenceRules(unittest.TestCase):
         across = events.independence(sorted(rows), rows, credits=credits, wire={"qmi"})
         self.assertEqual(across["groups"], [["q1", "q2", "q3"]])
         self.assertEqual(across["origins"][0]["reasons"],
-                         [{"basis": "measured", "key": "qmi", "rule": "same-wire-credit"}])
+                         [{"basis": "measured", "key": "qmi", "rule": "same-wire-credit"},
+                          {"key": "quebecor", "rule": "same-owner"}])
+
+    def test_measuring_a_credit_as_a_wire_never_splits_one_owner(self):
+        # The case docs/AUTONOMY.md's first clause decides: two outlets of one
+        # sourced owner, one of them carrying the owner's agency credit.
+        rows = {"a": irow("a", "alpha", "quebecor"),
+                "b": irow("b", "beta", "quebecor", "unknown", "unknown.newsroom_credit"),
+                "d": irow("d", "delta", "delta")}
+        credits = {"b": ["qmi"]}
+        for wire in (set(), {"qmi"}):
+            out = events.independence(["a", "b"], rows, credits=credits, wire=wire)
+            self.assertEqual((out["groups"], out["reporting_count"]), ([["a", "b"]], 1), wire)
+        self.assertEqual(events.member_keys(["b"], rows, credits, {"qmi"})["b"], ["owner:quebecor", "wire:qmi"])
+        # Monotone: every credit added to the measured wires can only join origins, never split one.
+        rows.update({"c": irow("c", "delta", "delta", "unknown", "unknown.newsroom_credit"),
+                     "w": irow("w", "gamma", "cbc", "wire", "wire.author.cp")})
+        credits.update({"c": ["qmi", "zq"], "w": ["cp", "zq"]})
+        ids = sorted(rows)
+        for wire in (set(), {"qmi"}, {"zq"}, {"qmi", "zq"}):
+            count = events.independence(ids, rows, credits=credits, wire=wire)["count"]
+            for extra in ({"qmi"}, {"zq"}):
+                self.assertLessEqual(events.independence(ids, rows, credits=credits, wire=wire | extra)["count"],
+                                     count, (wire, extra))
         prior = events.wire_credits([(irow("w", "delta", "delta", "wire", "wire.author.cp"), ["cp"])])
         self.assertEqual(prior["cp"], {"items": 1, "owner_groups": 1, "wire": True, "basis": "prior"})
         self.assertFalse(hasattr(events, "AGENCE_QMI_IS_WIRE"), "no human flag decides it here")
