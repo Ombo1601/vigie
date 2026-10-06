@@ -620,8 +620,64 @@ present. The silence roster gains the state `withdrawn` ("retiré à la
 demande de l'éditeur"), scope `institution` (takedowns.yaml withdrew the whole
 voice; listed in every event) or `article` (its items here only), and says
 `not_established` only when the edition carries no collection fact for the
-institution. `events.apply_takedowns(view, rules)` re-applies the same rule
-to a stored view at render time (the hourly roads lane).
+institution.
+
+**Every derived field describes the members present**, in the builder and at
+render time alike: type, places, `place_basis`, `place_votes`, label,
+family and geo (`event_codes`), tier (`event_tier`: the weakest recorded
+link among the members present), the window (`window_state_at`: a withdrawn
+member's date never holds an event in window), independence, and facts with
+their reduced counts (`event_facts`). Reduced counts keep, per dropped value,
+the ids that stated it (`facts_reduced[].stated_by`, ids only, never the
+value), so a takedown after the reduction takes its statements out of the
+counts; a value kept because an official member stated it joins the counts
+when that member is withdrawn; a kept row's `divergent` describes the values
+it shows. The agency-credit measurement (`credits`, the window's wires)
+never counts a withdrawn member either.
+
+**Render time.** The view carries what those functions read: per member
+present, its stored codes (`member_codes`: type scores, places, geo,
+geo_place, credits, article domain, the join action and link, and its fact
+atoms that can reach an event, while in window), and at the top level the
+window's credit observations (`credit_observations`: per credit, item id,
+source id, article domain and owner group of each member counted) with the
+measurement (`credits`). `events.apply_takedowns(view, rules)` takes the
+withdrawn members out of the observations, re-measures the wires, and puts
+every event through `strip_withdrawn`, which recomputes every field above
+with the builder's own functions; an event nothing touched comes out as it
+went in (a test and the live edition hold an active rule that withdraws
+nothing to an identical view). The registre seals the result.
+
+Measured (scratch copies). Live edition, six single-source takedowns (six
+large newsrooms): 4 to 8 events touched each, after `apply_takedowns`
+0 events whose codes differ from `event_codes` over the members present
+and 0 whose `place_votes` count more votes than members, idempotent (before
+this fix, per source: up to 4 stale `place_votes`, 3 stale types, 2 stale
+first places, 3 events counting more votes than members).
+History, three points of the replay times the same six sources, the edition
+without the withdrawn source's articles (collection drops them once the
+takedown is listed): `apply_takedowns` of the view built before the takedown
+equals the rebuild under it, byte for byte, in 18 of 18 runs (190 withdrawn
+members kept by sticky membership). Cost: `apply_takedowns` 0.07 s on the
+live view; the view grows from 714,638 to 810,903 bytes (member codes 63 kB).
+
+What a rebuild cannot share with a stored view, and stays as built: when the
+withdrawn articles are in the very edition the view was built from, the
+matcher compared them with the others, so the link an article joining in
+that edition was attached with, the neighbours, an event minted by a
+withdrawn article (its id), `activity`/`last_edition` (an event "developed"
+by a withdrawn article) and the members other articles chose may differ from
+a rebuild that never read them. The stored view also lists those articles
+by id under `withdrawn` and says `withdrawn` (scope `article`) for a voice
+whose only article there was one of them, where the rebuild states that
+voice's measured collection state. The next full edition rebuilds all of
+it. Measured on the same 18 history runs with the withdrawn articles left
+in the edition: every difference is one of these (counted per event and
+run: 35 events in only one of the two views; among events with the same
+members, join links differ in 110, neighbours in 3,078, activity in 1, the
+`withdrawn` list in 13, the silence roster in 2; 7 events whose members the
+matcher chose differently). Anchors other than item anchors are official
+records matched by rule and stay as found (sticky, section 10).
 
 ### 17.5 Facts (section 9)
 
@@ -643,9 +699,10 @@ Measured on the history: 178 road atoms → 105, with every function word gone
   media-only `reporting_origin_count` is a view field, not sealed, so the
   record's shape is unchanged.
 - The registre re-applies an active takedown to the stored view before it
-  seals (`events.apply_takedowns`), so a seal minted from a view older than
-  the request never credits the withdrawn voice; a seal already recorded is
-  never rewritten.
+  seals (`events.apply_takedowns`, every derived field recomputed over the
+  members present: section 17.4), so a seal minted from a view older than
+  the request never credits the withdrawn voice nor carries a type or a
+  place it decided; a seal already recorded is never rewritten.
 - State growth is bounded: the newest 12 seals stay FULL (header, `dropped`
   diagnosis and record); every older seal is compacted to `{leaf, root}`. The
   chain stays verifiable from genesis by hash linkage alone (prev = the root
@@ -658,6 +715,7 @@ Measured on the history: 178 road atoms → 105, with every function word gone
 ### 17.7 Shadow fields
 
 Store and view: `place_votes`, `reporting_origin_count`, `declared_by`,
-`independence.keys`, `independence.origins`; item codes: `geo_place`,
-`credits`. View only: `withdrawn_count`, silence rows `scope`, top-level
-`rules`. Method string: `events-v1 rules r2`.
+`independence.keys`, `independence.origins`, `facts_reduced[].stated_by`;
+item codes: `geo_place`, `credits`. View only: `withdrawn_count`,
+`member_codes`, silence rows `scope`, top-level `rules`, `credits` and
+`credit_observations`. Method string: `events-v1 rules r2`.

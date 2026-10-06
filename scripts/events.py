@@ -52,11 +52,17 @@ House law carried here
     item anchors; its institution appears in the silence roster as
     `withdrawn` (scope `institution` when takedowns.yaml withdrew the whole
     voice, `article` when only its items here), never vanishing silently.
-    `apply_takedowns(view, rules)` re-applies the same rule to a stored view
-    at render time (the hourly roads lane re-renders from stored files and
-    never rebuilds this view). A URL is kept only while its source is
-    enabled. This holds in a run that does not rebuild the store too (see
-    below): the withdrawn URLs are removed from the store as it stands.
+    Type, places, votes, label, family, geo, tier, window, facts and their
+    reduced counts, and the agency-credit measurement are all computed over
+    the members present. The view carries each present member's stored
+    codes (`member_codes`) and the window's credit observations, so
+    `apply_takedowns(view, rules)` recomputes every one of those fields at
+    render time with the builder's own functions (the hourly roads lane
+    re-renders from stored files and never rebuilds this view): a stored
+    view under a takedown is the view a rebuild under it gives. A URL is
+    kept only while its source is enabled. This holds in a run that does
+    not rebuild the store too (see below): the withdrawn URLs are removed
+    from the store as it stands.
   * Places (EVENTS.md section 17.1): each member casts one vote, its best
     evidence (a specific place its headline names; else a strict city geo
     token; else a scope its headline names; else its other geo evidence).
@@ -94,7 +100,8 @@ House law carried here
     row, a pointer to a withdrawn item goes in the same run.
   * Retention (EVENTS.md section 13): the newest 400 editions; media fact
     values only while the event is in window, then reduced to counts per
-    slot (values stated by an official member are kept).
+    slot (values stated by an official member are kept; each count keeps
+    the ids that stated it, never the value, so a takedown can reach it).
 
 Shadow extensions beyond the event-v1 schema (EVENTS.md section 14), kept in
 the same object under EXT_KEYS: family, geo (plurality of member geos, for
@@ -104,8 +111,12 @@ facts_state, reporting_origin_count, declared_by; plus `lineage.merged_at`
 and `independence.declarations/reporting_count/keys/origins` (open objects in
 the schema). `to_v1()` projects an event onto the schema. The current-edition
 view adds member_count (members present), withdrawn_count, in_edition (member
-ids whose text is in this edition) and silence (the followed institutions
-without a member present, plus every withdrawn voice).
+ids whose text is in this edition), silence (the followed institutions
+without a member present, plus every withdrawn voice) and member_codes (each
+present member's stored codes: type scores, places, geo, credits, article
+domain, join link, fact atoms while in window); the view's top level adds
+credits and credit_observations (the window's agency-credit measurement and
+the ids it counts).
 
     python -X utf8 scripts/events.py                     # one edition (pipeline step)
     python -X utf8 scripts/events.py --replay DIR        # every DIR/*_candidates.json, from an empty store
@@ -173,7 +184,7 @@ V1_KEYS = ("event_id", "schema", "method", "type", "places", "label", "born_edit
            "independence", "facts", "anchors", "language_pairs", "lineage", "seals")
 EXT_KEYS = ("family", "geo", "place_basis", "place_votes", "tier", "neighbours", "withdrawn", "copies",
             "facts_reduced", "facts_state", "reporting_origin_count", "declared_by")
-VIEW_KEYS = ("member_count", "withdrawn_count", "in_edition", "silence")
+VIEW_KEYS = ("member_count", "withdrawn_count", "in_edition", "silence", "member_codes")
 MEMBER_KEYS = ("item_id", "institution", "source_id", "language", "published_at", "first_seen",
                "origin_class", "origin_rule", "ownership_class", "owner_group", "url", "date_suspect")
 
@@ -657,6 +668,73 @@ def event_geo(ids: list[str], items: dict) -> str:
     return "linked" if "linked" in seen else "unknown"
 
 
+def event_codes(ids: list[str], items: dict) -> dict:
+    """Vigie's own codes of an event over the members `ids`, from their stored
+    per-item codes (`items`): type, places, place_basis, place_votes, label,
+    family, geo. The builder and the render-time takedown (`strip_withdrawn`)
+    both call this one function, so a withdrawn headline can never decide a
+    type or a place on one path and not on the other (R10)."""
+    type_code = event_type(ids, items)
+    places, basis = event_places(ids, items)
+    return {"type": type_code, "places": places, "place_basis": basis,
+            "place_votes": {code: {"votes": v[0], "named": v[1]}
+                            for code, v in sorted(place_votes(ids, items).items())},
+            "label": event_label(type_code, places, basis),
+            "family": vocabulaire.family_of(type_code) or "",
+            "geo": event_geo(ids, items)}
+
+
+def event_tier(ids: list[str], items: dict, absorbed: bool) -> str | None:
+    """The weakest link that grouped the members `ids`: the lowest tier of
+    their recorded attachments, at best "probable" when the event absorbed
+    another or no attachment was recorded; None for a single member."""
+    if len(ids) <= 1:
+        return None
+    tier = None
+    for i in sorted(ids):
+        join = (items.get(i) or {}).get("join") or {}
+        if join.get("action") == "attached":
+            tier = _lower_tier(tier, _tier_of(int(join.get("link_e4") or 0)) or "probable")
+    if absorbed or tier is None:
+        tier = _lower_tier(tier, "probable")
+    return tier
+
+
+def window_state_at(rows: list[dict], clock: datetime) -> str:
+    """in_window while the newest member instant (`_member_instant`) is at
+    most EDITION_WINDOW_DAYS before the edition clock; in_window when no
+    member carries an instant."""
+    instants = [t for t in (_member_instant(r) for r in rows) if t is not None]
+    if not instants:
+        return "in_window"
+    return "in_window" if clock - max(instants) <= timedelta(days=em.EDITION_WINDOW_DAYS) else "out_of_window"
+
+
+# The per-member codes an event's derived fields are computed from. The view
+# carries them for its members present (`member_codes`), so a takedown applied to
+# a stored view at render time recomputes every field over the members left,
+# with the builder's own functions (codes, integers and typed atoms: no text).
+MEMBER_CODE_KEYS = ("type_scores", "places", "geo", "geo_place", "credits", "host", "join")
+
+
+def member_codes_of(codes: dict | None) -> dict:
+    """The member's stored codes as the view carries them: MEMBER_CODE_KEYS,
+    plus its fact atoms that can reach an event (`slots_from_atoms`: a place
+    atom only when it maps onto a vocabulary code) while the store keeps them."""
+    codes = codes if isinstance(codes, dict) else {}
+    out = {k: json.loads(json.dumps(codes[k])) for k in MEMBER_CODE_KEYS if k in codes}
+    if isinstance(out.get("join"), dict):
+        # What the tier reads; how many members the matcher compared at the
+        # time is its own measurement (withdrawn members included) and stays
+        # in the private store.
+        out["join"] = {k: out["join"][k] for k in ("action", "link_e4") if k in out["join"]}
+    if isinstance(codes.get("facts"), list):
+        out["facts"] = [json.loads(json.dumps(a)) for a in codes["facts"]
+                        if isinstance(a, dict) and a.get("kind") in facts.KINDS
+                        and (a["kind"] != "place" or place_atom_code(a) is not None)]
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Independence (docs/AUTONOMY.md): counted by rule, never judged
 # --------------------------------------------------------------------------- #
@@ -683,24 +761,48 @@ def credit_group(row: dict) -> str:
     return _str(row.get("owner_group")) or "institution:" + (_str(row.get("institution")) or _str(row.get("source_id")))
 
 
-def wire_credits(observed: list[tuple[dict, list[str]]]) -> dict[str, dict]:
-    """credit code -> {items, owner_groups, wire, basis} over the window's
-    member rows and their stored credits. Closed-list agencies are wires by
-    prior; any other credit is a wire when seen in WIRE_CREDIT_MIN_GROUPS or
-    more owner groups. Counts and codes only."""
-    groups: dict[str, set[str]] = {}
-    items: dict[str, int] = {}
+def credit_observations(observed: list[tuple[dict, list[str]]],
+                        hosts: dict[str, str] | None = None) -> dict[str, list[dict]]:
+    """credit code -> one row per window member carrying it: {item_id,
+    source_id, host, group} (ids, codes and a domain), sorted. This is what
+    `measure_credits` counts; the view keeps it so a takedown applied at
+    render time can take a withdrawn member out of the measurement (R10)."""
+    hosts = hosts or {}
+    out: dict[str, list[dict]] = {}
     for row, credits in observed:
+        iid = _str(row.get("item_id"))
         for code in sorted(set(c for c in credits or [] if isinstance(c, str) and c)):
-            groups.setdefault(code, set()).add(credit_group(row))
-            items[code] = items.get(code, 0) + 1
+            out.setdefault(code, []).append({"item_id": iid, "source_id": _str(row.get("source_id")),
+                                             "host": _str(hosts.get(iid)), "group": credit_group(row)})
+    return {code: sorted(rows, key=lambda r: (r["item_id"], r["group"], r["source_id"]))
+            for code, rows in sorted(out.items())}
+
+
+def measure_credits(observations: dict[str, list[dict]]) -> dict[str, dict]:
+    """credit code -> {items, owner_groups, wire, basis}. Closed-list
+    agencies are wires by prior; any other credit is a wire when seen in
+    WIRE_CREDIT_MIN_GROUPS or more owner groups. Counts and codes only."""
     out = {}
-    for code in sorted(groups):
+    for code in sorted(observations):
+        rows = [r for r in observations[code] or [] if isinstance(r, dict)]
+        if not rows:
+            continue
         prior = code in WIRE_PRIORS
-        out[code] = {"items": items[code], "owner_groups": len(groups[code]),
-                     "wire": prior or len(groups[code]) >= WIRE_CREDIT_MIN_GROUPS,
+        groups = {_str(r.get("group")) for r in rows}
+        out[code] = {"items": len(rows), "owner_groups": len(groups),
+                     "wire": prior or len(groups) >= WIRE_CREDIT_MIN_GROUPS,
                      "basis": "prior" if prior else "measured"}
     return out
+
+
+def wire_credits(observed: list[tuple[dict, list[str]]]) -> dict[str, dict]:
+    """`measure_credits` over the window's member rows and their stored credits."""
+    return measure_credits(credit_observations(observed))
+
+
+def measured_wires(credit_facts: dict[str, dict]) -> set[str]:
+    """The credits the measurement makes wires (priors included)."""
+    return {code for code, fact in credit_facts.items() if isinstance(fact, dict) and fact.get("wire")}
 
 
 def member_keys(ids: list[str], rows: dict[str, dict], credits: dict[str, list[str]] | None = None,
@@ -926,19 +1028,105 @@ def slots_from_atoms(rows: list[tuple[str, str, list[dict]]]) -> list[dict]:
     return out
 
 
+def _with_values(row: dict, values: list[dict]) -> dict:
+    """`row` showing `values`; its divergence describes the values it shows."""
+    fixed = {**row, "values": values}
+    if "divergent" in row:
+        stating = {i for v in values for i in v.get("stated_by") or []}
+        fixed["divergent"] = bool(row.get("comparable", True) and len(values) >= 2 and len(stating) >= 2)
+    return fixed
+
+
+def _slot_order(slot: object) -> tuple:
+    slot = slot if isinstance(slot, dict) else {}
+    kind = _str(slot.get("kind"))
+    return (facts.KINDS.index(kind) if kind in facts.KINDS else len(facts.KINDS), kind,
+            _str(slot.get("unit")), _str(slot.get("subject")))
+
+
 def reduce_facts(rows: list[dict], official_ids: set[str]) -> tuple[list[dict], list[dict]]:
     """Out of window (EVENTS.md section 13): values stated by an official
-    member are kept; media-only values become counts per slot."""
+    member are kept (the row's divergence then describes the values kept);
+    media-only values become counts per slot. Each count keeps, per dropped
+    value, the ids that stated it (never the value; sorted), so a later
+    takedown takes a withdrawn voice out of the counts (R10)."""
     kept, reduced = [], []
     for row in rows:
         values = [v for v in row.get("values") or [] if set(v.get("stated_by") or []) & official_ids]
         dropped = [v for v in row.get("values") or [] if not set(v.get("stated_by") or []) & official_ids]
         if values:
-            kept.append({**row, "values": values})
+            kept.append(_with_values(row, values))
         if dropped:
             reduced.append({"slot": row.get("slot"), "values": len(dropped),
-                            "statements": sum(len(v.get("stated_by") or []) for v in dropped)})
+                            "statements": sum(len(v.get("stated_by") or []) for v in dropped),
+                            "stated_by": sorted(sorted(v.get("stated_by") or []) for v in dropped)})
     return kept, reduced
+
+
+def _without_reduced(rows: list[dict], gone: set[str]) -> list[dict]:
+    """Reduced fact counts with withdrawn items taken out (R10): a dropped
+    value stated only by withdrawn items leaves the count, and so do their
+    statements. A row with no `stated_by` cannot be re-derived and stays."""
+    if not gone:
+        return rows
+    out = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        lists = row.get("stated_by")
+        if not isinstance(lists, list):
+            out.append(row)
+            continue
+        kept = sorted(ids for ids in ([i for i in ids if i not in gone] for ids in lists if isinstance(ids, list))
+                      if ids)
+        if kept:
+            out.append({**row, "values": len(kept), "statements": sum(len(ids) for ids in kept), "stated_by": kept})
+    return out
+
+
+def _merge_reduced(rows: list[dict], more: list[dict]) -> list[dict]:
+    """Reduced counts of `rows` and `more`, one row per slot, in slot order."""
+    if not more:
+        return rows
+    merged: dict[str, dict] = {}
+    for row in list(rows) + list(more):
+        key = json.dumps(row.get("slot"), sort_keys=True)
+        cur = merged.get(key)
+        if cur is None:
+            merged[key] = dict(row)
+            continue
+        out = {**cur, "values": int(cur.get("values") or 0) + int(row.get("values") or 0),
+               "statements": int(cur.get("statements") or 0) + int(row.get("statements") or 0)}
+        if isinstance(cur.get("stated_by"), list) and isinstance(row.get("stated_by"), list):
+            out["stated_by"] = sorted(cur["stated_by"] + row["stated_by"])
+        else:
+            out.pop("stated_by", None)
+        merged[key] = out
+    return sorted(merged.values(), key=lambda r: _slot_order(r.get("slot")))
+
+
+def event_facts(e: dict, live: list[str], atoms: dict[str, list] | None, inst_of: dict[str, str],
+                official: set[str], window: str, gone: set[str]) -> tuple[list[dict], list[dict], str]:
+    """(facts, facts_reduced, facts_state) of an event over its members
+    present `live`. The builder and `strip_withdrawn` both call this.
+
+    reduced  the kept rows with `gone` taken out of every attribution; a
+             kept value that no official member present states any more
+             joins the counts; the counts lose `gone` too (R10)
+    live     `slots_from_atoms` over the present members' atoms (`atoms`;
+             None when they are not at hand: the stored rows with `gone`
+             taken out), reduced to counts once the event is out of window"""
+    if e.get("facts_state") == "reduced":
+        kept, moved = reduce_facts(_without(e.get("facts") or [], gone, inst_of), official)
+        return kept, _merge_reduced(_without_reduced(e.get("facts_reduced") or [], gone), moved), "reduced"
+    if atoms is not None:
+        live_facts = slots_from_atoms([(i, inst_of.get(i, ""), atoms.get(i) or []) for i in live])
+    else:
+        live_facts = _without(e.get("facts") or [], gone, inst_of)
+    if window == "out_of_window":
+        kept, reduced = reduce_facts(live_facts, official)
+        return kept, reduced, "reduced"
+    return live_facts, list(e.get("facts_reduced") or []), "live"
 
 
 def _without(rows: list[dict], gone: set[str], inst_of: dict[str, str] | None = None) -> list[dict]:
@@ -964,11 +1152,7 @@ def _without(rows: list[dict], gone: set[str], inst_of: dict[str, str] | None = 
                 value["institutions"] = sorted({inst_of[i] for i in stated if i in inst_of})
             values.append(value)
         if values:
-            fixed = {**row, "values": values}
-            if "divergent" in row:
-                stating = {i for v in values for i in v["stated_by"]}
-                fixed["divergent"] = bool(row.get("comparable", True) and len(values) >= 2 and len(stating) >= 2)
-            out.append(fixed)
+            out.append(_with_values(row, values))
     return out
 
 
@@ -1446,16 +1630,15 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
     def ids_of(eid: str) -> list[str]:
         return eff[eid] if root[eid] == eid else sorted(r["item_id"] for r in by_id[eid]["members"])
 
-    newest: dict[str, datetime | None] = {}
+    # The window describes the coverage still present (R10): a withdrawn
+    # member's date never holds an event in window.
+    window_at: dict[str, str] = {}
     for r_id, ids in eff.items():
-        instants = [t for t in (_member_instant(rows[i]) for i in ids) if t is not None]
-        newest[r_id] = max(instants) if instants else None
+        present_ids = [i for i in ids if i not in withdrawn_ids] or ids
+        window_at[r_id] = window_state_at([rows[i] for i in present_ids], clock)
 
     def window_of(eid: str) -> str:
-        t = newest.get(root[eid])
-        if t is None:
-            return "in_window"
-        return "in_window" if clock - t <= timedelta(days=em.EDITION_WINDOW_DAYS) else "out_of_window"
+        return window_at.get(root[eid], "in_window")
 
     present = {r_id for r_id, ids in eff.items() if any(i in texts for i in ids)}
 
@@ -1470,8 +1653,9 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
             if r["item_id"] in withdrawn_ids or (t is not None and clock - t > timedelta(days=PUBLICATION_WINDOW_DAYS)):
                 continue
             observed.append((r, (items.get(r["item_id"]) or {}).get("credits") or []))
-    credit_facts = wire_credits(observed)
-    wire = {code for code, fact in credit_facts.items() if fact["wire"]}
+    credit_obs = credit_observations(observed, {k: _str(v.get("host")) for k, v in items.items()})
+    credit_facts = measure_credits(credit_obs)
+    wire = measured_wires(credit_facts)
     credits_of = {k: list(v.get("credits") or []) for k, v in items.items()}
     anchor_inputs = dict(anchor_inputs or {})
     if anchors_module() is not None:
@@ -1501,14 +1685,8 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
         base = live or ids
         e["schema"] = SCHEMA
         e["method"] = METHOD
-        e["type"] = event_type(base, items)
-        places, basis = event_places(base, items)
-        e["places"], e["place_basis"] = places, basis
-        e["place_votes"] = {code: {"votes": v[0], "named": v[1]}
-                            for code, v in sorted(place_votes(base, items).items())}
-        e["label"] = event_label(e["type"], places, basis)
-        e["family"] = vocabulaire.family_of(e["type"]) or ""
-        e["geo"] = event_geo(base, items)
+        e.update(event_codes(base, items))
+        places = e["places"]
         e["window_state"] = window_of(eid)
         e["activity"] = ("new" if e.get("born_edition") == edition
                          else "developed" if e.get("last_edition") == edition else "quiet")
@@ -1539,30 +1717,15 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
             e["lineage"]["merged_at"] = merged_at
         e["seals"] = sorted(int(s) for s in e.get("seals") or [] if isinstance(s, int) and s >= 1)
 
-        # Tier: the weakest link that grouped this event's members.
-        tier = None
-        if len(ids) > 1:
-            for i in ids:
-                join = (items.get(i) or {}).get("join") or {}
-                if join.get("action") == "attached":
-                    tier = _lower_tier(tier, _tier_of(int(join.get("link_e4") or 0)) or "probable")
-            if e["lineage"]["absorbed"] or tier is None:
-                tier = _lower_tier(tier, "probable")
-        e["tier"] = tier
+        # Tier: the weakest link that grouped the members present.
+        e["tier"] = event_tier(base, items, bool(e["lineage"]["absorbed"]))
 
-        # Facts: live while in window; reduced once out of it.
-        official = {i for i in ids if rows[i].get("origin_class") == origin.OFFICIAL}
-        if e.get("facts_state") == "reduced":
-            e["facts"] = _without(e.get("facts") or [], withdrawn_ids, {i: rows[i]["institution"] for i in live})
-        else:
-            live_facts = slots_from_atoms([(i, rows[i]["institution"], (items.get(i) or {}).get("facts") or [])
-                                           for i in live])
-            if e["window_state"] == "out_of_window":
-                e["facts"], e["facts_reduced"] = reduce_facts(live_facts, official)
-                e["facts_state"] = "reduced"
-            else:
-                e["facts"], e["facts_state"] = live_facts, "live"
-        e.setdefault("facts_reduced", [])
+        # Facts: live while in window; reduced once out of it (R10: over the
+        # members present, withdrawn ids out of every attribution and count).
+        official = {i for i in live if rows[i].get("origin_class") == origin.OFFICIAL}
+        e["facts"], e["facts_reduced"], e["facts_state"] = event_facts(
+            e, live, {i: (items.get(i) or {}).get("facts") or [] for i in live},
+            {i: rows[i]["institution"] for i in live}, official, e["window_state"], withdrawn_ids)
 
         # Language pairs (sticky: a pair found while both texts were current stays).
         pairs = {(p["fr"], p["en"]): p for p in e.get("language_pairs") or []
@@ -1620,7 +1783,7 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
     store = {"format": STORE_FORMAT, "schema": SCHEMA, "method": METHOD, "editions": editions,
              "events": [_ordered(e) for e in kept_events], "items": items}
 
-    view = _view(store, edition, texts, withdrawn_ids, reg, collection)
+    view = _view(store, edition, texts, withdrawn_ids, reg, collection, credit_obs)
     ops = _ops(store, view, edition, raw, eligible, excluded, decisions, issues, anchor_source, diagnosis,
                credit_facts)
     return store, view, ops
@@ -1693,20 +1856,36 @@ def silence_roster(institutions: list[str], reg: Registry, collection: dict | No
     return [rows[k] for k in sorted(rows)]
 
 
+def _applied_wires(v: dict) -> set[str]:
+    """The wire credits the builder applied to this event's members, read
+    back from their stored keys (`independence.keys`)."""
+    ind = v.get("independence") if isinstance(v.get("independence"), dict) else {}
+    keys = ind.get("keys") if isinstance(ind.get("keys"), dict) else {}
+    return {k.split(":", 1)[1] for ks in keys.values() if isinstance(ks, list)
+            for k in ks if isinstance(k, str) and k.startswith("wire:")}
+
+
 def strip_withdrawn(v: dict, gone: set[str], whole: dict[str, dict] | None = None,
-                    names: dict[str, str] | None = None) -> dict | None:
+                    names: dict[str, str] | None = None, *, clock: datetime | None = None,
+                    wire: set[str] | None = None) -> dict | None:
     """The view event `v` with every member in `gone` withdrawn (R10), or
     None when no member is left present, or none of this edition.
 
-    The members leave `members` and are listed by id under `withdrawn`;
-    institutions, languages, copies, language pairs, fact attributions and
-    item anchors are re-derived from the members present; independence is
-    recomputed from the stored member keys (`independence.keys`) and the
-    remaining copies, by the same function the builder uses, so
-    `reporting_origin_count` and `declared_by` never count a withdrawn voice.
-    A voice left with no member here is in the silence roster as
-    `withdrawn` (scope `article`, or `institution` when `whole` lists it).
-    Type, places and label are Vigie's own codes and stay as built.
+    The members leave `members` and are listed by id under `withdrawn`.
+    Every derived field is recomputed over the members present, with the
+    builder's own functions, from the per-member codes the view carries
+    (`member_codes`), so the result is what a rebuild under the takedown gives:
+    type, places, place_basis, place_votes, label, family and geo
+    (`event_codes`), tier (`event_tier`), independence with
+    `reporting_origin_count` and `declared_by` (`member_keys` under `wire`,
+    the wire credits: by default those the builder applied, read back from
+    `independence.keys`), facts and their reduced counts (`event_facts`)
+    and, given the edition `clock`, the window (`window_state_at`).
+    Institutions, languages, copies, language pairs and item anchors keep
+    the members present. A voice left with no member here is in the silence
+    roster as `withdrawn` (scope `article`, or `institution` when `whole`
+    lists it). A view without codes for every member present leaves the
+    fields that need it as built (and a member's keys as stored).
     Idempotent; `v` is not mutated."""
     whole = whole or {}
     names = names or {}
@@ -1720,6 +1899,7 @@ def strip_withdrawn(v: dict, gone: set[str], whole: dict[str, dict] | None = Non
     gone_all = set(withdrawn) | set(gone)
     ids = sorted(m["item_id"] for m in present)
     idset = set(ids)
+    by_id = {m["item_id"]: m for m in present}
     inst_of = {m["item_id"]: _str(m.get("institution")) or _str(m.get("source_id")) for m in present}
     out["members"] = json.loads(json.dumps(present))
     out["member_count"] = len(present)
@@ -1729,6 +1909,16 @@ def strip_withdrawn(v: dict, gone: set[str], whole: dict[str, dict] | None = Non
         out["in_edition"] = [i for i in v.get("in_edition") or [] if i in idset]
         if not out["in_edition"]:
             return None
+    stored_codes = v.get("member_codes") if isinstance(v.get("member_codes"), dict) else {}
+    codes = {i: stored_codes[i] for i in ids if isinstance(stored_codes.get(i), dict)}
+    complete = len(codes) == len(ids)
+    if "member_codes" in v:
+        out["member_codes"] = {i: json.loads(json.dumps(codes[i])) for i in sorted(codes)}
+    if complete:
+        out.update(event_codes(ids, codes))
+        out["tier"] = event_tier(ids, codes, bool((v.get("lineage") or {}).get("absorbed")))
+    if clock is not None:
+        out["window_state"] = window_state_at(present, clock)
     out["institutions"] = sorted(set(inst_of.values()))
     out["languages"] = sorted({m.get("language") for m in present if m.get("language") in ("fr", "en")})
     out["copies"] = [list(p) for p in v.get("copies") or []
@@ -1737,16 +1927,26 @@ def strip_withdrawn(v: dict, gone: set[str], whole: dict[str, dict] | None = Non
                              if isinstance(p, dict) and p.get("fr") in idset and p.get("en") in idset]
     ind = v.get("independence") if isinstance(v.get("independence"), dict) else {}
     stored = ind.get("keys") if isinstance(ind.get("keys"), dict) else {}
+    wires = _applied_wires(v) if wire is None else set(wire)
     keys: dict[str, list[str]] = {}
-    for m in present:
-        k = stored.get(m["item_id"])
-        keys[m["item_id"]] = ([str(x) for x in k] if isinstance(k, list) and k
-                              else member_keys([m["item_id"]], {m["item_id"]: m})[m["item_id"]])
-    official = {m["item_id"] for m in present if m.get("origin_class") == origin.OFFICIAL}
+    for i in ids:
+        k = stored.get(i)
+        if i in codes:
+            keys[i] = member_keys([i], by_id, {i: codes[i].get("credits") or []}, wires)[i]
+        elif isinstance(k, list) and k:
+            keys[i] = [str(x) for x in k]
+        else:
+            keys[i] = member_keys([i], by_id)[i]
+    official = {i for i in ids if by_id[i].get("origin_class") == origin.OFFICIAL}
     out["independence"] = independence_from_keys(ids, keys, out["copies"], official)
     out["reporting_origin_count"] = out["independence"]["reporting_count"]
     out["declared_by"] = sorted({inst_of[i] for i in out["independence"]["declarations"]})
-    out["facts"] = _without(json.loads(json.dumps(v.get("facts") or [])), gone_all, inst_of)
+    atoms = {i: codes[i].get("facts") or [] for i in ids} if complete else None
+    out["facts"], out["facts_reduced"], out["facts_state"] = event_facts(
+        out, ids, atoms, inst_of, official, _str(out.get("window_state")), gone_all)
+    if out.get("window_state") == "out_of_window":
+        for member in (out.get("member_codes") or {}).values():
+            member.pop("facts", None)  # as the store's retention drops them out of window
     out["anchors"] = [dict(a) for a in v.get("anchors") or []
                       if isinstance(a, dict) and not (a.get("type") in ITEM_ANCHORS and a.get("ref") in gone_all)]
     roster: dict[str, dict] = {}
@@ -1767,11 +1967,15 @@ def strip_withdrawn(v: dict, gone: set[str], whole: dict[str, dict] | None = Non
 
 
 def _view(store: dict, edition: str, texts: dict, withdrawn_ids: set[str], reg: Registry,
-          collection: dict | None) -> dict:
+          collection: dict | None, credit_obs: dict[str, list[dict]] | None = None) -> dict:
     """Surviving events with at least one member present in this edition.
-    Effective membership; withdrawn members stripped (`strip_withdrawn`, the
-    function `apply_takedowns` re-applies at render time)."""
+    Effective membership; each member present carries its stored codes
+    (`member_codes`, `member_codes_of`); withdrawn members stripped
+    (`strip_withdrawn`, the function `apply_takedowns` re-applies at render
+    time). The window's agency-credit measurement is printed with the
+    observations it counts (`credits`, `credit_observations`)."""
     events = store["events"]
+    items = store.get("items") or {}
     root = _roots(events)
     eff: dict[str, list[dict]] = {}
     for e in events:
@@ -1780,6 +1984,7 @@ def _view(store: dict, edition: str, texts: dict, withdrawn_ids: set[str], reg: 
     names = {iid: reg.institution_name(iid)
              for iid in sorted({_str(r.get("institution")) for e in events for r in e["members"]
                                 if r["item_id"] in withdrawn_ids})}
+    clock = em._clock(edition)
     out = []
     for e in events:
         eid = e["event_id"]
@@ -1795,50 +2000,48 @@ def _view(store: dict, edition: str, texts: dict, withdrawn_ids: set[str], reg: 
         v["withdrawn_count"] = len(e.get("withdrawn") or [])
         v["in_edition"] = in_edition
         v["silence"] = silence_roster(e["institutions"], reg, collection)
-        v = strip_withdrawn(v, withdrawn_ids, whole, names)
+        v["member_codes"] = {r["item_id"]: member_codes_of(items.get(r["item_id"]))
+                         for r in members if r["item_id"] not in withdrawn_ids}
+        v = strip_withdrawn(v, withdrawn_ids, whole, names, clock=clock)
         if v is not None:
             out.append(v)
+    credit_obs = credit_obs or {}
     return {"format": "events-latest-v1", "schema": SCHEMA, "method": METHOD, "edition": edition,
-            "status": "ok", "rules": INDEPENDENCE_RULES, "event_count": len(out), "events": out}
-
-
-def _mark_withdrawn_voices(v: dict, whole: dict[str, dict]) -> dict:
-    """`v` (a copy) with every voice withdrawn whole marked `withdrawn` in its
-    silence roster; nothing else changes."""
-    out = json.loads(json.dumps(v))
-    if not whole:
-        return out
-    present = set(out.get("institutions") or [])
-    roster = {r["institution"]: r for r in out.get("silence") or [] if isinstance(r, dict) and _str(r.get("institution"))}
-    for iid, info in sorted(whole.items()):
-        if iid not in present:
-            name = _str((roster.get(iid) or {}).get("institution_name")) or _str(info.get("institution_name"))
-            roster[iid] = _withdrawn_row(iid, name, "institution")
-    out["silence"] = [roster[k] for k in sorted(roster)]
-    return out
+            "status": "ok", "rules": INDEPENDENCE_RULES, "credits": measure_credits(credit_obs),
+            "credit_observations": credit_obs, "event_count": len(out), "events": out}
 
 
 def apply_takedowns(view: dict, rules: takedown.Rules | None = None, *, sources_path: Path | None = SOURCES_PATH,
                     hosts: dict[str, str] | None = None) -> dict:
-    """R10 at render time: `view` (a stored latest_events.json) with every
-    member the active takedowns withdraw stripped exactly as `build` strips
-    it (`strip_withdrawn`), and every withdrawn voice marked in the silence
-    rosters. The hourly roads lane re-renders from stored files without
-    rebuilding the view, so whoever renders or seals it calls this first.
+    """R10 at render time: `view` (a stored latest_events.json) as a rebuild
+    of its edition under the active takedowns would give it. The hourly
+    roads lane re-renders from stored files without rebuilding the view, so
+    whoever renders or seals it calls this first.
+
+    The window's credit observations lose every withdrawn member and the
+    measurement is redone (`credits`, the wire credits); then every event
+    goes through `strip_withdrawn` with that measurement and the view's
+    edition clock: a withdrawn member leaves it, every derived field is
+    recomputed over the members present from the view's own member codes, and
+    every voice withdrawn whole is marked in the silence rosters. An event
+    nothing touched comes out as it went in.
 
     rules         takedown.Rules (None: takedowns.yaml as it stands)
     sources_path  sources.yaml, for feed-domain rules and withdrawn voices
                   (unreadable: source-id, URL and article-domain rules still apply)
-    hosts         item id -> article domain (the store's `host` codes), for
-                  a domain rule on a member whose URL is already gone
+    hosts         item id -> article domain, for a domain rule on a member
+                  whose URL and member codes are gone (the store's `host` codes)
 
     Pure apart from reading those two files; never mutates `view`; idempotent.
-    A view that is not an "ok" events view is returned as it is (a copy)."""
+    A view that is not an "ok" events view, or no active takedown, returns
+    the view as it is (a copy)."""
     doc = json.loads(json.dumps(view)) if isinstance(view, (dict, list)) else view
     if not isinstance(doc, dict) or not isinstance(doc.get("events"), list) or doc.get("status", "ok") != "ok":
         return doc
     if rules is None:
         rules = takedown.load_rules()
+    if not rules:
+        return doc
     try:
         reg = Registry(ingest_rss.load_sources(Path(sources_path)), rules, Path(sources_path)) \
             if sources_path is not None else Registry([], rules)
@@ -1846,21 +2049,37 @@ def apply_takedowns(view: dict, rules: takedown.Rules | None = None, *, sources_
         reg = Registry([], rules)
     hosts = hosts or {}
     whole = reg.withdrawn_institutions()
+    clock = em._clock(doc.get("edition")) if isinstance(doc.get("edition"), str) else None
+
+    def withdrawn(item_id: str, source_id: str, host: str, url: object = None) -> bool:
+        row = {"item_id": item_id, "source_id": source_id}
+        if isinstance(url, str) and url:
+            row["url"] = url
+        return reg.withdrawn(row, host or hosts.get(item_id) or article_host(url))
+
+    wire = None
+    if isinstance(doc.get("credit_observations"), dict):
+        observations = {}
+        for code, rows in sorted(doc["credit_observations"].items()):
+            kept = [dict(r) for r in rows or [] if isinstance(r, dict)
+                    and not withdrawn(_str(r.get("item_id")), _str(r.get("source_id")), _str(r.get("host")))]
+            if kept:
+                observations[code] = kept
+        doc["credit_observations"] = observations
+        doc["credits"] = measure_credits(observations)
+        wire = measured_wires(doc["credits"])
     events = []
     for v in doc["events"]:
         if not isinstance(v, dict):
             continue
-        gone = {m["item_id"] for m in v.get("members") or []
-                if isinstance(m, dict) and _str(m.get("item_id"))
-                and reg.withdrawn(m, hosts.get(m["item_id"]) or article_host(m.get("url")))}
-        if not gone:
-            # Nothing of this event is withdrawn: it stays as built, except
-            # that a voice withdrawn whole is marked in its silence roster.
-            events.append(_mark_withdrawn_voices(v, whole))
-            continue
+        codes = v.get("member_codes") if isinstance(v.get("member_codes"), dict) else {}
+        members = [m for m in v.get("members") or [] if isinstance(m, dict) and _str(m.get("item_id"))]
+        gone = {m["item_id"] for m in members
+                if withdrawn(m["item_id"], _str(m.get("source_id")),
+                             _str((codes.get(m["item_id"]) or {}).get("host")), m.get("url"))}
         names = {_str(m.get("institution")): reg.institution_name(_str(m.get("institution")))
-                 for m in v.get("members") or [] if isinstance(m, dict) and m.get("item_id") in gone}
-        stripped = strip_withdrawn(v, gone, whole, names)
+                 for m in members if m["item_id"] in gone}
+        stripped = strip_withdrawn(v, gone, whole, names, clock=clock, wire=wire)
         if stripped is not None:
             events.append(stripped)
     doc["events"] = events
