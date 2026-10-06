@@ -53,8 +53,9 @@ docs/AUTONOMY.md):
             flag (at most CARDS_MAX = 12), its explanation. Without the module
             (or when it faults): newest first, by the newest declared
             publication time (else collection time) of the event's articles,
-            then event id; the first 12 are shown and each card says it is
-            the fallback order.
+            then event id; the first 12 are shown, each card says it is the
+            fallback order and so does the edition's lede (it never claims the
+            published rule it could not apply).
   Chip      ranking_events.tier_chip(tier, quality): the grouping chip follows
             the measured quality; without the module a grouped event reads
             "Regroupé automatiquement" and never "certain".
@@ -66,8 +67,12 @@ docs/AUTONOMY.md):
             event id). A record merged into another keeps a page that links to
             the survivor while the survivor has one. Pages outside the rule
             are removed on the next render.
-  Official  the collection's official releases that no card shown contains,
-            newest first (declared time, then id); at most OFFICIAL_MAX = 6.
+  Official  the collection's official releases that no card shown contains or
+            cites as an official record (item anchors); the method's proposed
+            geography first (Québec City, then Quebec, then everything else as
+            one group), newest first within each group (declared time, then
+            id); at most OFFICIAL_MAX = 6. When capped, the block prints that
+            order (never "the most recent") and the count in each group.
   Roster    the institutions followed this collection (enabled feeds, minus
             withdrawn ones), in the registry's order, each with the state the
             registre's own measurement gives (registre.institution_collection
@@ -974,7 +979,12 @@ def _matcher(r: Render, current_events: list[tuple[dict, list[dict]]]) -> dict:
 # --------------------------------------------------------------------------- #
 # Front door blocks
 # --------------------------------------------------------------------------- #
-GEO_RANK = {"quebec-city": 0, "quebec": 1, "linked": 2}   # enrich's proposed geo, as events.py ranks it
+# enrich's proposed geography, in the three groups the published rule names
+# (rule.official / off.cap): Québec City, then Quebec, then everything else
+# (linked or not placed) as ONE group, so "within each group, newest first"
+# is exactly what the sort does.
+GEO_GROUPS = ("city", "province", "other")
+GEO_RANK = {"quebec-city": 0, "quebec": 1}
 
 
 def _geo_of(c: dict) -> str:
@@ -984,7 +994,24 @@ def _geo_of(c: dict) -> str:
     return _str(geo.get("geo")) or _str(c.get("geo"))
 
 
-def official_items(r: Render, card_items: set[str]) -> tuple[list[dict], int]:
+def _geo_rank(c: dict) -> int:
+    return GEO_RANK.get(_geo_of(c), len(GEO_GROUPS) - 1)
+
+
+def card_records(cards: list[dict]) -> set[str]:
+    """Every item a card shown contains or cites as an official record (its
+    members and its item anchors): none of them may be listed again under
+    "declared by the authorities", whose heading says none is linked above."""
+    out = {_str(m.get("item_id")) for v in cards for m in v.get("members") or []}
+    out |= {_str(a.get("ref")) for v in cards for a in v.get("anchors") or []
+            if a.get("type") in ("official_item", "outage")}
+    out.discard("")
+    return out
+
+
+def official_items(r: Render, card_items: set[str]) -> tuple[list[dict], int, dict]:
+    """(rows shown, how many qualify, how many of those per geography group):
+    the published rule.official, with the real values the cap line prints."""
     rows = []
     for iid in sorted(r.texts):
         c = r.texts[iid]
@@ -995,8 +1022,10 @@ def official_items(r: Render, card_items: set[str]) -> tuple[list[dict], int]:
         if not title:
             continue
         rows.append(c)
-    rows.sort(key=lambda c: (GEO_RANK.get(_geo_of(c), len(GEO_RANK)), -(_epoch(c.get("published_at")) or 0.0),
-                             _str(c.get("id"))))
+    rows.sort(key=lambda c: (_geo_rank(c), -(_epoch(c.get("published_at")) or 0.0), _str(c.get("id"))))
+    groups = {g: 0 for g in GEO_GROUPS}
+    for c in rows:
+        groups[GEO_GROUPS[_geo_rank(c)]] += 1
     out = []
     for c in rows[:OFFICIAL_MAX]:
         sid = _str(c.get("source_id"))
@@ -1005,7 +1034,7 @@ def official_items(r: Render, card_items: set[str]) -> tuple[list[dict], int]:
                     "published_at": _str(c.get("published_at")), "title": plain(c.get("title"), TITLE_CAP),
                     "url": _str(c.get("url")) if ck.safe_url(c.get("url")) else "",
                     "language": _str(c.get("language")) or _str((r.law.by_id.get(sid) or {}).get("language")) or "fr"})
-    return out, len(rows)
+    return out, len(rows), groups
 
 
 def roster(r: Render, cards: list[dict]) -> list[dict]:
@@ -1304,12 +1333,11 @@ def build_site(r: Render) -> tuple[dict[str, str], dict]:
             if v is not None:
                 views[eid] = v
     cards = [views[row["event_id"]] for row in rows if row.get("shown") and row["event_id"] in views][:CARDS_MAX]
-    card_items = {m["item_id"] for v in cards for m in v["members"]}
 
     # ---- files -----------------------------------------------------------------
     files: dict[str, str] = {}
     pages: dict[str, str] = {}
-    official, official_total = official_items(r, card_items)
+    official, official_total, official_groups = official_items(r, card_records(cards))
     seal = r.seal_of(r.clock)
     edition = {
         "clock": r.clock, "period": "", "next_collection": None,
@@ -1317,9 +1345,11 @@ def build_site(r: Render) -> tuple[dict[str, str], dict]:
         "events_total": len(current_raw) if len(current_raw) > len(cards) else None,
         "roster": roster(r, cards),
         "seal": {"seq": seal["seq"], "root": seal["root"]} if seal else None,
-        "official": official, "official_total": official_total,
+        "official": official, "official_total": official_total, "official_groups": official_groups,
         "suggestions": suggestions(cards),
         "status": "" if r.view_ok else "not_built",
+        # the lede says the published ranking was not applied when it was not
+        "ranking": "fallback" if cards and ranking_name == FALLBACK_RANKING else "",
     }
     for lang in LANGS:
         base = "" if lang == "fr" else "en/"

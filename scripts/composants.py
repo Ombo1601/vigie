@@ -118,8 +118,16 @@ EditionView (the front door)::
                                              when more than the cards shown
   official_total      int | None             declared items of the collection
                                              linked to no card (prints the cap)
+  official_groups     {"city": int, "province": int, "other": int} | None
+                                             how many of official_total the
+                                             method places in Québec City, in
+                                             Quebec, elsewhere: the real values
+                                             of the order the cap line states
   status              "not_built" | absent   the builder did not establish this
                                              collection: never printed as "no event"
+  ranking             "fallback" | absent    the published ranking rule could not
+                                             be applied: the lede says the cards
+                                             follow the fallback order instead
 
 RoadworksView (its own view model: the official lane is refreshed hourly and
 may be newer than the edition; it is never derived from the EditionView)::
@@ -1621,9 +1629,13 @@ def roadworks_block(rw: dict | None, lang: str) -> str:
     )
 
 
-def official_block(items: list[dict] | None, lang: str, total: int | None = None) -> str:
+def official_block(items: list[dict] | None, lang: str, total: int | None = None,
+                   groups: dict | None = None) -> str:
     """Official releases, as published, none linked to an event above. `total`
-    (all such releases of the collection) prints the cap when more exist."""
+    (all such releases of the collection) prints the cap when more exist, with
+    the order the builder applied (geography first, then date: never "the most
+    recent", which it is not) and, when `groups` gives them, the real counts
+    per geography behind that order."""
     rows = []
     for o in _dicts(items):
         if not o.get("title"):
@@ -1640,7 +1652,13 @@ def official_block(items: list[dict] | None, lang: str, total: int | None = None
             else f'<p class="small m0 mt-s">{esc(t("off.empty", lang))}</p>')
     sub = f'<p class="small muted">{esc(t("off.sub", lang))}</p>' if rows else ""
     if rows and _int(total) > len(rows):
-        body += f'<p class="small muted mt-s">{esc(t("off.cap", lang, n=i18n.fmt_int(len(rows), lang), total=i18n.fmt_int(_int(total), lang)))}</p>'
+        cap = tn("off.cap", len(rows), lang, total=i18n.fmt_int(_int(total), lang))
+        g = groups if isinstance(groups, dict) else {}
+        if all(isinstance(g.get(k), int) and not isinstance(g.get(k), bool) for k in ("city", "province", "other")):
+            cap += " " + t("off.groups", lang, total=i18n.fmt_int(_int(total), lang),
+                           city=i18n.fmt_int(g["city"], lang), province=i18n.fmt_int(g["province"], lang),
+                           other=i18n.fmt_int(g["other"], lang))
+        body += f'<p class="small muted mt-s" data-off-cap>{esc(cap)}</p>'
     return (f'<section class="card panel" aria-labelledby="off-h"><h2 class="h-panel" id="off-h">{esc(t("off.h", lang))}</h2>'
             f'{sub}{body}</section>')
 
@@ -1737,7 +1755,10 @@ def edition_page(ed: dict, lang: str, *, roadworks: dict | None = None, fr_path:
     followed = _int(ed.get("institutions_followed"))
     clock = ed.get("clock")
     eyebrow = t("ed.line", lang, period=t(f"ed.title.{period}", lang), date=i18n.fmt_date(clock, lang, weekday=True))
-    lede = t("ed.lede", lang, events=_events_count(ed, len(events), lang),
+    # the lede never claims the published ranking rule when the builder could
+    # not apply it (each card then says so too): ranking "fallback"
+    lede_key = "ed.lede.fallback" if ed.get("ranking") == "fallback" else "ed.lede"
+    lede = t(lede_key, lang, events=_events_count(ed, len(events), lang),
              institutions=tn("n.institutions", followed, lang), tm=i18n.fmt_time(clock, lang))
     rules = "".join(f"<li><b>{esc(t(f'rules.{i}.h', lang))}</b>{esc(t(f'rules.{i}.p', lang))}</li>" for i in (1, 2, 3))
     pledge = "".join(chip(t(f"pledge.{i}", lang)) for i in (1, 2, 3))
@@ -1758,7 +1779,7 @@ def edition_page(ed: dict, lang: str, *, roadworks: dict | None = None, fr_path:
     suggestions = [str(s) for s in (ed.get("suggestions") if isinstance(ed.get("suggestions"), (list, tuple)) else [])][:6]
     aside = (f'<aside class="aside stack" aria-label="{esc(t("roads.h", lang))}">'
              f'{mine_panel(lang, suggestions)}{roadworks_block(roadworks, lang)}'
-             f'{official_block(ed.get("official"), lang, ed.get("official_total"))}</aside>')
+             f'{official_block(ed.get("official"), lang, ed.get("official_total"), ed.get("official_groups"))}</aside>')
     main = (f'{head}<div class="grid"><div class="stack" id="cards">{cards}</div>{aside}</div>{end_card(ed, lang)}')
     return document(lang=lang, fr_path=fr_path, title=t("ed.h1", lang), description=t("meta.desc.home", lang),
                     main=main, robots=robots, home=home, footer_note=footer_note, view="current")

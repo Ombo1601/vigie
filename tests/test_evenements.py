@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import html
 import json
 import os
 import re
@@ -133,6 +134,18 @@ G2 = item("g2", "ville-x", "Avis de collecte des encombrants dans le quartier Va
           "La collecte des encombrants aura lieu mardi dans le secteur Vanier-Plumetis.")
 H1 = item("h1", "beta-qc", "Titre piégé " + HOSTILE, iso(22, 11), "Résumé piégé " + HOSTILE, author="Auteur " + HOSTILE)
 
+# Official releases of the current collection outside every event (the
+# "declared by the authorities" block), with enrich's proposed geography.
+O_CITY = item("o1", "ville-x", "Avis de fermeture du parc Mirlitouche pour entretien", iso(21, 8),
+              "Le parc Mirlitouche sera fermé deux jours pour entretien.")
+O_PROV = item("o2", "ville-x", "Programme d'aide aux bibliothèques zorbanes de la province", iso(22, 11, 30),
+              "Un programme soutient les bibliothèques zorbanes.")
+O_LINK = item("o3", "ville-x", "Entente de jumelage avec la ville de Plimbourg-sur-Mer", iso(21, 6))
+O_ELSE = item("o4", "ville-x", "Délégation xénonienne au congrès de Farnouille", iso(22, 6))
+for _row, _geo in ((O_PROV, "quebec"), (O_LINK, "linked"), (O_ELSE, "outside")):
+    _row["enrich"] = {"geo": {"geo": _geo}}
+OFFICIALS = (O_CITY, O_PROV, O_LINK, O_ELSE)
+
 E1_CLOCK = "2026-09-20T12:00:00+00:00"
 MID_CLOCK = "2026-09-22T09:30:00+00:00"   # the strike develops while its first article is still collected
 E2_CLOCK = "2026-09-22T12:00:00+00:00"    # the current edition: the first strike article has left the feeds
@@ -254,6 +267,19 @@ def tags_of(page: str) -> list[tuple[str, dict]]:
     p.feed(page)
     p.close()
     return p.tags
+
+
+def view_with_anchor(fx: "Fixture", event_id: str, anchor: dict) -> dict:
+    """The fixture's current view with one more anchor on one event."""
+    view = json.loads((fx.data / "events" / "latest_events.json").read_text(encoding="utf-8"))
+    for e in view["events"]:
+        if e["event_id"] == event_id:
+            e["anchors"] = list(e.get("anchors") or []) + [dict(anchor)]
+    return view
+
+
+def official_block_of(page: str) -> str:
+    return html.unescape(page.split('aria-labelledby="off-h"', 1)[1].split("</section>", 1)[0])
 
 
 # --------------------------------------------------------------------------- #
@@ -560,6 +586,12 @@ class FrontDoor(unittest.TestCase):
         cards = re.findall(r'id="c-(ev-[0-9a-f]+)"', page)
         # the fallback order: newest first (H1 11:00, S3 10:00, G2 7:00)
         self.assertEqual(cards, [TRAP, STRIKE, NOTICE])
+        # ...and the lede says so: it never claims the published rule it could not apply
+        for lang, name in (("fr", "evenements.html"), ("en", "en/evenements.html")):
+            lede = html.unescape(re.search(r'<p class="lede">(.*?)</p>', FILES[name]).group(1))
+            self.assertNotIn(i18n.t("ed.lede", lang, events="", institutions="", tm="").split(".", 1)[1].strip(), lede)
+            self.assertTrue(lede.endswith(i18n.t("ed.lede.fallback", lang, events="", institutions="", tm="")
+                                          .split(".", 1)[1].strip()), lede)
         self.assertIn(i18n.t("rank.fallback", "fr", t=i18n.fmt_datetime(H1["published_at"], "fr", short=True)).replace("’", "’"),
                       page.replace("&#x27;", "'"))
 
@@ -829,6 +861,8 @@ class RankingContract(unittest.TestCase):
         self.assertEqual(cards, sorted([STRIKE, NOTICE, TRAP], reverse=True)[:2])
         self.assertIn("origines : 1", front)
         self.assertIn("rank.unknown-key : origins = 2", front, "an unknown key is printed as its code and values")
+        self.assertIn(i18n.t("ed.lede", "fr", events="", institutions="", tm="").split(".", 1)[1].strip(),
+                      html.unescape(front), "the published rule was applied: the lede says so")
         self.assertEqual(seen["ctx"]["edition_clock"], E2_CLOCK)
         self.assertEqual(seen["ctx"]["now"], "2026-09-22T13:30:00+00:00", "the later of edition and roadworks clocks")
         self.assertIn("collected_at", seen["ctx"]["roadworks_view"])
@@ -864,6 +898,59 @@ class RankingContract(unittest.TestCase):
         rows = evenements.fallback_rank(evs)
         self.assertEqual([r["event_id"] for r in rows], ["ev-c", "ev-a", "ev-b"])
         self.assertTrue(all(r["shown"] for r in rows))
+
+
+class OfficialBlock(unittest.TestCase):
+    """"Declared by the authorities" says the rule it applies, with the real
+    values: geography first, then date. It never claims "the most recent"."""
+
+    def render(self, out: str, cap: int, ctx: dict | None = None) -> tuple[Path, dict[str, str]]:
+        enriched = json.loads((FX.data / "normalized" / "latest_enriched.json").read_text(encoding="utf-8"))
+        enriched["candidates"] = enriched["candidates"] + [dict(o) for o in OFFICIALS]
+        with mock.patch.object(evenements, "OFFICIAL_MAX", cap):
+            public, result = FX.emit(out, {"enriched": enriched, **(ctx or {})})
+        self.assertEqual(result["status"], "ok", result)
+        return public, {lang: (public / name).read_text(encoding="utf-8")
+                        for lang, name in (("fr", "evenements.html"), ("en", "en/evenements.html"))}
+
+    def test_the_cap_line_states_geography_then_date_and_never_claims_recency(self):
+        self.assertLess(O_CITY["published_at"], O_PROV["published_at"], "the fixture: the city release is older")
+        _public, pages = self.render("off-cap", 1)
+        for lang, page in pages.items():
+            block = official_block_of(page)
+            self.assertIn(O_CITY["title"], block, "the older release the method places in Québec City comes first")
+            self.assertNotIn(O_PROV["title"], block, "a newer release placed in Quebec waits for its group")
+            cap = re.search(r"<p [^>]*data-off-cap>(.*?)</p>", block, re.S).group(1)
+            self.assertNotRegex(cap, r"(?i)most recent|plus récent")
+            expected = (i18n.tn("off.cap", 1, lang, total=i18n.fmt_int(4, lang)) + " "
+                        + i18n.t("off.groups", lang, total="4", city="1", province="1", other="2"))
+            self.assertEqual(cap, expected, "the order and the count of each group, as applied")
+            self.assertIn(i18n.t("rule.official", lang, n="1"), html.unescape(page), "the footer says the same rule")
+
+    def test_linked_and_unplaced_releases_are_one_group_newest_first(self):
+        _public, pages = self.render("off-groups", 3)
+        block = official_block_of(pages["fr"])
+        shown = sorted((block.index(o["title"]), o["title"]) for o in OFFICIALS if o["title"] in block)
+        self.assertEqual([title for _at, title in shown], [O_CITY["title"], O_PROV["title"], O_ELSE["title"]])
+        self.assertNotIn(O_LINK["title"], block, "older than the unplaced release of the same group")
+
+    def test_a_release_a_card_cites_as_an_official_record_is_not_listed_again(self):
+        anchor = {"type": "outage", "ref": O_PROV["id"], "rule": "outage-v1", "status": "linked_by_rule"}
+        public, pages = self.render("off-anchor", 6, {"events_view": view_with_anchor(FX, STRIKE, anchor)})
+        self.assertIn(f'id="c-{STRIKE}"', pages["fr"], "the citing event is a card")
+        strike = html.unescape((public / "evenements" / f"{STRIKE}.html").read_text(encoding="utf-8"))
+        self.assertIn(O_PROV["title"], strike, "the card's record shows the release it cites")
+        for lang, page in pages.items():
+            block = official_block_of(page)
+            self.assertNotIn(O_PROV["title"], block, f"{lang}: the block says none is linked above")
+            self.assertIn(O_CITY["title"], block)
+
+    def test_the_kit_prints_the_order_and_its_counts(self):
+        rows = [{"title": "Avis zorblaxien", "institution_name": "Ville Xénon", "published_at": "2026-09-22T10:00:00Z"}]
+        block = html.unescape(ck.official_block(rows, "en", 9, {"city": 2, "province": 5, "other": 2}))
+        self.assertIn(i18n.tn("off.cap", 1, "en", total="9"), block)
+        self.assertIn(i18n.t("off.groups", "en", total="9", city="2", province="5", other="2"), block)
+        self.assertNotIn("most recent", block)
 
 
 if __name__ == "__main__":
