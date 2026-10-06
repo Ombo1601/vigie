@@ -114,6 +114,71 @@ class Metrics(unittest.TestCase):
         self.assertEqual(groups, [["a1", "a2", "a3"], ["b1"]])
 
 
+class Thresholds(unittest.TestCase):
+    # Three thresholds tie for the best F1 (0.1, 0.4 and 0.7 each give 2/3).
+    TIED = [(1.0, "same_event"), (0.9, "different"), (0.8, "same_event"), (0.7, "same_event"),
+            (0.6, "different"), (0.5, "different"), (0.4, "same_event"), (0.3, "different"),
+            (0.2, "different"), (0.1, "same_event")]
+
+    def test_plateau_median_is_not_the_arg_max(self):
+        self.assertEqual(run_eval.argmax_threshold(self.TIED), 0.1)
+        self.assertEqual(run_eval.tune_threshold(self.TIED), 0.4, "median of the plateau 0.1 / 0.4 / 0.7")
+        best = run_eval.confusion(self.TIED, 0.1)["f1"]
+        for t in (0.1, 0.4, 0.7):
+            self.assertAlmostEqual(run_eval.confusion(self.TIED, t)["f1"], best)
+
+    def test_plateau_includes_thresholds_within_one_point_of_f1(self):
+        rows = [(0.9, "same_event"), (0.7, "same_event"), (0.4, "different"), (0.1, "different")]
+        self.assertEqual(run_eval.confusion(rows, run_eval.tune_threshold(rows))["f1"], 1.0)
+        self.assertEqual(run_eval.argmax_threshold([]), 0.5)
+
+    def test_certain_floor_ignores_a_lucky_pocket(self):
+        rows = [(0.9, True), (0.8, True), (0.7, False), (0.6, True), (0.5, True), (0.4, True),
+                (0.3, True), (0.2, True), (0.1, False)]
+        # precision >= 0.8 holds again from 0.5 down to 0.2, but dips at 0.7
+        # and 0.6: the tier starts where it holds at every higher threshold.
+        self.assertEqual(run_eval.stable_floor(rows, 0.8), 0.8)
+        self.assertIsNone(run_eval.stable_floor([(0.9, False)], 0.95))
+
+    def test_choose_tiers_orders_and_never_groups_a_failed_guard(self):
+        rows = [(0.0, 0.99, "same_event"), (0.97, 0.97, "same_event"), (0.95, 0.95, "same_event"),
+                (0.9, 0.9, "same_event"), (0.6, 0.6, "related"), (0.5, 0.5, "same_event"),
+                (0.3, 0.3, "related"), (0.2, 0.2, "different"), (0.1, 0.1, "different")]
+        t = run_eval.choose_tiers(rows)
+        self.assertGreaterEqual(t["certain"], t["probable"])
+        self.assertGreaterEqual(t["probable"], t["possible"])
+        self.assertEqual(t["certain"], 0.9)
+        failed = {"raw": 0.99, "guard_ok": False}
+        self.assertEqual(run_eval.row_tier(failed, t), "possible")
+
+    def test_wilson_interval(self):
+        self.assertEqual(run_eval.wilson(0, 0), (0.0, 1.0))
+        lo, hi = run_eval.wilson(10, 10)
+        self.assertAlmostEqual(lo, 0.7225, places=3)
+        self.assertAlmostEqual(hi, 1.0, places=12)
+        lo, hi = run_eval.wilson(33, 34)
+        self.assertLess(lo, 0.95)
+        self.assertGreater(hi, 0.97)
+
+
+class ComponentSplit(unittest.TestCase):
+    PAIRS = [{"pair_id": "p%d" % k, "a_id": a, "b_id": b, "label": "same_event", "split": "dev"}
+             for k, (a, b) in enumerate([("a", "b"), ("b", "c"), ("d", "e"), ("f", "g"), ("g", "h"),
+                                         ("i", "j"), ("k", "l"), ("m", "n"), ("o", "p"), ("q", "r")])]
+
+    def test_no_item_on_both_sides_and_deterministic(self):
+        side = run_eval.component_split(self.PAIRS)
+        self.assertEqual(side, run_eval.component_split(list(reversed(self.PAIRS))))
+        seen: dict[str, set] = {}
+        for p in self.PAIRS:
+            for i in (p["a_id"], p["b_id"]):
+                seen.setdefault(i, set()).add(side[p["pair_id"]])
+        self.assertTrue(all(len(s) == 1 for s in seen.values()))
+        self.assertEqual(side["p0"], side["p1"], "a component moves as a whole")
+        comps = run_eval.pair_components(self.PAIRS)
+        self.assertEqual(len(comps), 8)
+
+
 class Protocol(unittest.TestCase):
     def test_run_tunes_on_dev_and_reports_test_and_missing(self):
         items = {c["id"]: c for c in ITEMS}
@@ -135,13 +200,52 @@ class Protocol(unittest.TestCase):
     def test_report_and_json_never_carry_publisher_text(self):
         items = {c["id"]: c for c in ITEMS}
         gold = run_eval.load_gold_from_doc(gold_doc())
-        scorers = run_eval.build_scorers(["baseline", "graded"], [])
+        scorers = run_eval.build_scorers(["baseline", "graded", "graded-guard", "shipped"], [])
         res = run_eval.run(gold, items, scorers, log=lambda *a: None)
+        res["component_split"] = run_eval.run_component_split(gold, items, log=lambda *a: None)
         block = run_eval.render(res, "0" * 64)
         blob = block + json.dumps(res, ensure_ascii=False)
-        for marker in ("Zorblax", "zorblax", "Quillimet", "quillimet", "entrepôt", "warehouse"):
+        for marker in ("Zorblax", "zorblax", "Quillimet", "quillimet", "entrepôt", "warehouse", "Limoilou"):
             self.assertNotIn(marker, blob)
         self.assertTrue(block.startswith(run_eval.BEGIN) and block.endswith(run_eval.END))
+
+    def test_shipped_scorer_uses_the_frozen_constants(self):
+        import event_match
+
+        items = {c["id"]: c for c in ITEMS}
+        gold = run_eval.load_gold_from_doc(gold_doc())
+        res = run_eval.run(gold, items, run_eval.build_scorers(["shipped"], []), log=lambda *a: None)
+        e = res["scorers"]["shipped"]
+        self.assertEqual(e["tiers"], event_match.THRESHOLDS)
+        self.assertTrue(e["tiers_fixed"])
+        self.assertEqual(e["weights"], event_match.WEIGHTS)
+        self.assertEqual(e["threshold"], event_match.THRESHOLDS["probable"])
+        self.assertIn("certain", e["test"]["tiers"]["all"]["bands"])
+        self.assertIn("blocking", e)
+
+    def test_provenance_travels_with_every_report(self):
+        items = {c["id"]: c for c in ITEMS}
+        doc = gold_doc()
+        doc["labelers_provenance"] = "invented test labeller, three passes"
+        res = run_eval.run(run_eval.load_gold_from_doc(doc), items, [FixedScorer({})], do_clusters=False,
+                           log=lambda *a: None)
+        self.assertEqual(res["gold"]["provenance"], "invented test labeller, three passes")
+        self.assertIn("invented test labeller, three passes", run_eval.render(res, "0" * 64))
+        bare = run_eval.run(run_eval.load_gold_from_doc(gold_doc()), items, [FixedScorer({})], do_clusters=False,
+                            log=lambda *a: None)
+        self.assertIn("NOT RECORDED", run_eval.render(bare, "0" * 64))
+
+    def test_cluster_table_carries_the_all_singletons_reference(self):
+        items = {c["id"]: c for c in ITEMS}
+        gold = run_eval.load_gold_from_doc(gold_doc())
+        res = run_eval.run(gold, items, [FixedScorer({("a1", "a2"): 0.9})], log=lambda *a: None)
+        c = res["scorers"]["fixed"]["test"]["clusters"]
+        ids = c["items"]
+        self.assertEqual(c["bcubed_all_singletons"]["precision"], 1.0)
+        self.assertLessEqual(c["gold_singleton_items"], ids)
+        block = run_eval.render(res, "0" * 64)
+        self.assertIn("all-singletons (reference)", block)
+        self.assertIn("Induced pairwise F1 is the cluster-level figure", block)
 
     def test_fill_report_replaces_only_the_marked_block(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -167,6 +271,22 @@ class GracefulSkip(unittest.TestCase):
         with redirect_stdout(out), redirect_stderr(io.StringIO()):
             code = run_eval.main(list(argv))
         return code, out.getvalue()
+
+    def test_main_prints_the_labeller_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            doc = gold_doc()
+            doc["labelers_provenance"] = "invented: one model, three passes"
+            gold = tmp / "gold.json"
+            gold.write_text(json.dumps(doc), encoding="utf-8")
+            store = tmp / "normalized"
+            store.mkdir()
+            (store / "20260920T000000Z_candidates.json").write_text(json.dumps({"candidates": ITEMS}), encoding="utf-8")
+            code, out = self._main("--gold", str(gold), "--data-dir", str(store), "--scorers", "baseline",
+                                   "--no-component-split", "--no-clusters")
+        self.assertEqual(code, 0)
+        self.assertIn("gold labels by: invented: one model, three passes", out)
+        self.assertIn("model-labelled and relative", out)
 
     def test_missing_gold_exits_zero_with_reason(self):
         with tempfile.TemporaryDirectory() as tmp:
