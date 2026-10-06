@@ -1,0 +1,826 @@
+{
+ "version": 1,
+ "note": "Controlled vocabulary of docs/I18N.md section 5. Codes are ASCII, stable forever and the only thing ever sealed; labels are Vigie's own words and may be reworded without changing a code.",
+ "families": [
+  {
+   "code": "security",
+   "fr": "Sécurité et urgences",
+   "en": "Safety and emergencies"
+  },
+  {
+   "code": "justice",
+   "fr": "Justice",
+   "en": "Justice"
+  },
+  {
+   "code": "politics",
+   "fr": "Politique et gouvernance",
+   "en": "Politics and government"
+  },
+  {
+   "code": "mobility",
+   "fr": "Mobilité et infrastructures",
+   "en": "Mobility and infrastructure"
+  },
+  {
+   "code": "utilities",
+   "fr": "Services publics",
+   "en": "Public services"
+  },
+  {
+   "code": "environment",
+   "fr": "Environnement et météo",
+   "en": "Environment and weather"
+  },
+  {
+   "code": "health",
+   "fr": "Santé",
+   "en": "Health"
+  },
+  {
+   "code": "education",
+   "fr": "Éducation",
+   "en": "Education"
+  },
+  {
+   "code": "housing",
+   "fr": "Logement et immobilier",
+   "en": "Housing and property"
+  },
+  {
+   "code": "economy",
+   "fr": "Économie et travail",
+   "en": "Economy and labour"
+  },
+  {
+   "code": "culture-sport",
+   "fr": "Culture et sports",
+   "en": "Culture and sports"
+  },
+  {
+   "code": "society",
+   "fr": "Société",
+   "en": "Society"
+  }
+ ],
+ "types": [
+  {
+   "code": "fire-building",
+   "family": "security",
+   "fr": "Incendie de bâtiment",
+   "en": "Building fire"
+  },
+  {
+   "code": "fire-forest",
+   "family": "security",
+   "fr": "Feu de forêt",
+   "en": "Wildfire"
+  },
+  {
+   "code": "road-collision",
+   "family": "security",
+   "fr": "Collision routière",
+   "en": "Road collision"
+  },
+  {
+   "code": "pedestrian-cyclist-struck",
+   "family": "security",
+   "fr": "Piéton ou cycliste heurté",
+   "en": "Pedestrian or cyclist struck"
+  },
+  {
+   "code": "water-rescue",
+   "family": "security",
+   "fr": "Noyade ou sauvetage nautique",
+   "en": "Drowning or water rescue"
+  },
+  {
+   "code": "missing-person",
+   "family": "security",
+   "fr": "Disparition",
+   "en": "Missing person"
+  },
+  {
+   "code": "homicide",
+   "family": "security",
+   "fr": "Homicide",
+   "en": "Homicide"
+  },
+  {
+   "code": "assault",
+   "family": "security",
+   "fr": "Agression",
+   "en": "Assault"
+  },
+  {
+   "code": "shooting-stabbing",
+   "family": "security",
+   "fr": "Fusillade ou attaque à l'arme blanche",
+   "en": "Shooting or stabbing"
+  },
+  {
+   "code": "arrest",
+   "family": "security",
+   "fr": "Arrestation",
+   "en": "Arrest"
+  },
+  {
+   "code": "police-operation",
+   "family": "security",
+   "fr": "Opération policière",
+   "en": "Police operation"
+  },
+  {
+   "code": "evacuation",
+   "family": "security",
+   "fr": "Évacuation",
+   "en": "Evacuation"
+  },
+  {
+   "code": "hazmat-leak",
+   "family": "security",
+   "fr": "Fuite de matières dangereuses",
+   "en": "Hazardous materials leak"
+  },
+  {
+   "code": "coroner-report",
+   "family": "justice",
+   "fr": "Rapport du coroner",
+   "en": "Coroner's report"
+  },
+  {
+   "code": "court-charges",
+   "family": "justice",
+   "fr": "Accusations déposées",
+   "en": "Charges laid"
+  },
+  {
+   "code": "court-trial",
+   "family": "justice",
+   "fr": "Procès",
+   "en": "Trial"
+  },
+  {
+   "code": "court-sentence",
+   "family": "justice",
+   "fr": "Peine prononcée",
+   "en": "Sentence handed down"
+  },
+  {
+   "code": "court-ruling",
+   "family": "justice",
+   "fr": "Décision de tribunal",
+   "en": "Court ruling"
+  },
+  {
+   "code": "class-action",
+   "family": "justice",
+   "fr": "Action collective",
+   "en": "Class action"
+  },
+  {
+   "code": "council-meeting",
+   "family": "politics",
+   "fr": "Séance du conseil municipal",
+   "en": "City council meeting"
+  },
+  {
+   "code": "municipal-bylaw",
+   "family": "politics",
+   "fr": "Règlement municipal",
+   "en": "Municipal bylaw"
+  },
+  {
+   "code": "municipal-budget",
+   "family": "politics",
+   "fr": "Budget municipal",
+   "en": "Municipal budget"
+  },
+  {
+   "code": "municipal-tax",
+   "family": "politics",
+   "fr": "Taxes municipales",
+   "en": "Municipal taxes"
+  },
+  {
+   "code": "public-consultation",
+   "family": "politics",
+   "fr": "Consultation publique",
+   "en": "Public consultation"
+  },
+  {
+   "code": "municipal-election",
+   "family": "politics",
+   "fr": "Élection municipale",
+   "en": "Municipal election"
+  },
+  {
+   "code": "zoning-permit",
+   "family": "politics",
+   "fr": "Zonage ou permis",
+   "en": "Zoning or permit"
+  },
+  {
+   "code": "national-assembly",
+   "family": "politics",
+   "fr": "Travaux de l'Assemblée nationale",
+   "en": "National Assembly proceedings"
+  },
+  {
+   "code": "provincial-bill",
+   "family": "politics",
+   "fr": "Projet de loi québécois",
+   "en": "Quebec bill"
+  },
+  {
+   "code": "provincial-budget",
+   "family": "politics",
+   "fr": "Budget du Québec",
+   "en": "Quebec budget"
+  },
+  {
+   "code": "provincial-election",
+   "family": "politics",
+   "fr": "Élection provinciale",
+   "en": "Provincial election"
+  },
+  {
+   "code": "federal-decision",
+   "family": "politics",
+   "fr": "Décision fédérale",
+   "en": "Federal decision"
+  },
+  {
+   "code": "public-funding",
+   "family": "politics",
+   "fr": "Financement public annoncé",
+   "en": "Public funding announced"
+  },
+  {
+   "code": "public-inquiry",
+   "family": "politics",
+   "fr": "Enquête publique ou rapport officiel",
+   "en": "Public inquiry or official report"
+  },
+  {
+   "code": "appointment-resignation",
+   "family": "politics",
+   "fr": "Nomination ou démission",
+   "en": "Appointment or resignation"
+  },
+  {
+   "code": "tramway-project",
+   "family": "mobility",
+   "fr": "Projet de tramway",
+   "en": "Tramway project"
+  },
+  {
+   "code": "third-link-project",
+   "family": "mobility",
+   "fr": "Projet de troisième lien",
+   "en": "Third link project"
+  },
+  {
+   "code": "roadworks",
+   "family": "mobility",
+   "fr": "Travaux routiers",
+   "en": "Roadworks"
+  },
+  {
+   "code": "road-closure",
+   "family": "mobility",
+   "fr": "Fermeture de route",
+   "en": "Road closure"
+  },
+  {
+   "code": "bridge-status",
+   "family": "mobility",
+   "fr": "État d'un pont",
+   "en": "Bridge condition"
+  },
+  {
+   "code": "public-transit",
+   "family": "mobility",
+   "fr": "Transport en commun",
+   "en": "Public transit"
+  },
+  {
+   "code": "airport",
+   "family": "mobility",
+   "fr": "Aéroport",
+   "en": "Airport"
+  },
+  {
+   "code": "port-shipping",
+   "family": "mobility",
+   "fr": "Port et navigation",
+   "en": "Port and shipping"
+  },
+  {
+   "code": "ferry-service",
+   "family": "mobility",
+   "fr": "Traverse",
+   "en": "Ferry service"
+  },
+  {
+   "code": "power-outage",
+   "family": "utilities",
+   "fr": "Panne d'électricité",
+   "en": "Power outage"
+  },
+  {
+   "code": "water-advisory",
+   "family": "utilities",
+   "fr": "Avis sur l'eau potable",
+   "en": "Drinking-water advisory"
+  },
+  {
+   "code": "snow-removal",
+   "family": "utilities",
+   "fr": "Déneigement",
+   "en": "Snow removal"
+  },
+  {
+   "code": "waste-collection",
+   "family": "utilities",
+   "fr": "Collecte des matières résiduelles",
+   "en": "Waste collection"
+  },
+  {
+   "code": "weather-warning",
+   "family": "environment",
+   "fr": "Alerte météo",
+   "en": "Weather warning"
+  },
+  {
+   "code": "flooding",
+   "family": "environment",
+   "fr": "Inondation",
+   "en": "Flooding"
+  },
+  {
+   "code": "heat-cold-wave",
+   "family": "environment",
+   "fr": "Vague de chaleur ou de froid",
+   "en": "Heat or cold wave"
+  },
+  {
+   "code": "pollution",
+   "family": "environment",
+   "fr": "Pollution de l'air ou de l'eau",
+   "en": "Air or water pollution"
+  },
+  {
+   "code": "soil-contamination",
+   "family": "environment",
+   "fr": "Contamination des sols",
+   "en": "Soil contamination"
+  },
+  {
+   "code": "hospital-services",
+   "family": "health",
+   "fr": "Services hospitaliers",
+   "en": "Hospital services"
+  },
+  {
+   "code": "emergency-room",
+   "family": "health",
+   "fr": "Urgences hospitalières",
+   "en": "Emergency rooms"
+  },
+  {
+   "code": "public-health-advisory",
+   "family": "health",
+   "fr": "Avis de santé publique",
+   "en": "Public health advisory"
+  },
+  {
+   "code": "outbreak",
+   "family": "health",
+   "fr": "Éclosion",
+   "en": "Outbreak"
+  },
+  {
+   "code": "school-services",
+   "family": "education",
+   "fr": "Services scolaires",
+   "en": "School services"
+  },
+  {
+   "code": "higher-education",
+   "family": "education",
+   "fr": "Université et cégep",
+   "en": "University and college"
+  },
+  {
+   "code": "housing-construction",
+   "family": "housing",
+   "fr": "Construction de logements",
+   "en": "Housing construction"
+  },
+  {
+   "code": "rent-eviction",
+   "family": "housing",
+   "fr": "Loyers et évictions",
+   "en": "Rents and evictions"
+  },
+  {
+   "code": "homelessness",
+   "family": "housing",
+   "fr": "Itinérance",
+   "en": "Homelessness"
+  },
+  {
+   "code": "property-transaction",
+   "family": "housing",
+   "fr": "Vente ou acquisition immobilière",
+   "en": "Property sale or acquisition"
+  },
+  {
+   "code": "business-open-close",
+   "family": "economy",
+   "fr": "Ouverture ou fermeture d'entreprise",
+   "en": "Business opening or closing"
+  },
+  {
+   "code": "layoffs",
+   "family": "economy",
+   "fr": "Mises à pied",
+   "en": "Layoffs"
+  },
+  {
+   "code": "strike-lockout",
+   "family": "economy",
+   "fr": "Grève ou lock-out",
+   "en": "Strike or lockout"
+  },
+  {
+   "code": "collective-agreement",
+   "family": "economy",
+   "fr": "Convention collective",
+   "en": "Collective agreement"
+  },
+  {
+   "code": "price-change",
+   "family": "economy",
+   "fr": "Hausse ou baisse de prix",
+   "en": "Price change"
+  },
+  {
+   "code": "investment-project",
+   "family": "economy",
+   "fr": "Projet d'investissement",
+   "en": "Investment project"
+  },
+  {
+   "code": "festival-event",
+   "family": "culture-sport",
+   "fr": "Festival ou grand événement",
+   "en": "Festival or major event"
+  },
+  {
+   "code": "sports-event",
+   "family": "culture-sport",
+   "fr": "Événement sportif",
+   "en": "Sporting event"
+  },
+  {
+   "code": "built-heritage",
+   "family": "culture-sport",
+   "fr": "Patrimoine bâti",
+   "en": "Built heritage"
+  },
+  {
+   "code": "protest",
+   "family": "society",
+   "fr": "Manifestation",
+   "en": "Protest"
+  },
+  {
+   "code": "death-public-figure",
+   "family": "society",
+   "fr": "Décès d'une personnalité publique",
+   "en": "Death of a public figure"
+  },
+  {
+   "code": "unclassified",
+   "family": "society",
+   "fr": "Événement non classé",
+   "en": "Unclassified event"
+  }
+ ],
+ "places": [
+  {
+   "code": "quebec-city",
+   "kind": "scope",
+   "fr": "Québec",
+   "en": "Québec City"
+  },
+  {
+   "code": "greater-quebec",
+   "kind": "scope",
+   "fr": "Région de Québec",
+   "en": "Québec City region"
+  },
+  {
+   "code": "province",
+   "kind": "scope",
+   "fr": "Québec (province)",
+   "en": "Province of Quebec"
+  },
+  {
+   "code": "ottawa",
+   "kind": "scope",
+   "fr": "Ottawa (fédéral)",
+   "en": "Ottawa (federal)"
+  },
+  {
+   "code": "la-cite-limoilou",
+   "kind": "arrondissement",
+   "fr": "La Cité-Limoilou",
+   "en": "La Cité-Limoilou"
+  },
+  {
+   "code": "les-rivieres",
+   "kind": "arrondissement",
+   "fr": "Les Rivières",
+   "en": "Les Rivières"
+  },
+  {
+   "code": "sainte-foy-sillery-cap-rouge",
+   "kind": "arrondissement",
+   "fr": "Sainte-Foy–Sillery–Cap-Rouge",
+   "en": "Sainte-Foy–Sillery–Cap-Rouge"
+  },
+  {
+   "code": "charlesbourg",
+   "kind": "arrondissement",
+   "fr": "Charlesbourg",
+   "en": "Charlesbourg"
+  },
+  {
+   "code": "beauport",
+   "kind": "arrondissement",
+   "fr": "Beauport",
+   "en": "Beauport"
+  },
+  {
+   "code": "la-haute-saint-charles",
+   "kind": "arrondissement",
+   "fr": "La Haute-Saint-Charles",
+   "en": "La Haute-Saint-Charles"
+  },
+  {
+   "code": "vieux-quebec",
+   "kind": "quartier",
+   "fr": "Vieux-Québec",
+   "en": "Old Québec"
+  },
+  {
+   "code": "saint-roch",
+   "kind": "quartier",
+   "fr": "Saint-Roch",
+   "en": "Saint-Roch"
+  },
+  {
+   "code": "saint-sauveur",
+   "kind": "quartier",
+   "fr": "Saint-Sauveur",
+   "en": "Saint-Sauveur"
+  },
+  {
+   "code": "saint-jean-baptiste",
+   "kind": "quartier",
+   "fr": "Saint-Jean-Baptiste",
+   "en": "Saint-Jean-Baptiste"
+  },
+  {
+   "code": "montcalm",
+   "kind": "quartier",
+   "fr": "Montcalm",
+   "en": "Montcalm"
+  },
+  {
+   "code": "limoilou",
+   "kind": "quartier",
+   "fr": "Limoilou",
+   "en": "Limoilou"
+  },
+  {
+   "code": "maizerets",
+   "kind": "quartier",
+   "fr": "Maizerets",
+   "en": "Maizerets"
+  },
+  {
+   "code": "lairet",
+   "kind": "quartier",
+   "fr": "Lairet",
+   "en": "Lairet"
+  },
+  {
+   "code": "vanier",
+   "kind": "quartier",
+   "fr": "Vanier",
+   "en": "Vanier"
+  },
+  {
+   "code": "duberger-les-saules",
+   "kind": "quartier",
+   "fr": "Duberger–Les Saules",
+   "en": "Duberger–Les Saules"
+  },
+  {
+   "code": "lebourgneuf",
+   "kind": "quartier",
+   "fr": "Lebourgneuf",
+   "en": "Lebourgneuf"
+  },
+  {
+   "code": "neufchatel",
+   "kind": "quartier",
+   "fr": "Neufchâtel",
+   "en": "Neufchâtel"
+  },
+  {
+   "code": "loretteville",
+   "kind": "quartier",
+   "fr": "Loretteville",
+   "en": "Loretteville"
+  },
+  {
+   "code": "val-belair",
+   "kind": "quartier",
+   "fr": "Val-Bélair",
+   "en": "Val-Bélair"
+  },
+  {
+   "code": "cap-rouge",
+   "kind": "quartier",
+   "fr": "Cap-Rouge",
+   "en": "Cap-Rouge"
+  },
+  {
+   "code": "sillery",
+   "kind": "quartier",
+   "fr": "Sillery",
+   "en": "Sillery"
+  },
+  {
+   "code": "sainte-foy",
+   "kind": "quartier",
+   "fr": "Sainte-Foy",
+   "en": "Sainte-Foy"
+  },
+  {
+   "code": "saint-emile",
+   "kind": "quartier",
+   "fr": "Saint-Émile",
+   "en": "Saint-Émile"
+  },
+  {
+   "code": "lac-saint-charles",
+   "kind": "quartier",
+   "fr": "Lac-Saint-Charles",
+   "en": "Lac-Saint-Charles"
+  },
+  {
+   "code": "parliament-hill",
+   "kind": "site",
+   "fr": "Colline Parlementaire",
+   "en": "Parliament Hill"
+  },
+  {
+   "code": "vieux-port",
+   "kind": "site",
+   "fr": "Vieux-Port",
+   "en": "Old Port"
+  },
+  {
+   "code": "pointe-aux-lievres",
+   "kind": "site",
+   "fr": "Pointe-aux-Lièvres",
+   "en": "Pointe-aux-Lièvres"
+  },
+  {
+   "code": "port-of-quebec",
+   "kind": "site",
+   "fr": "Port de Québec",
+   "en": "Port of Québec"
+  },
+  {
+   "code": "jean-lesage-airport",
+   "kind": "site",
+   "fr": "Aéroport Jean-Lesage",
+   "en": "Jean Lesage Airport"
+  },
+  {
+   "code": "universite-laval",
+   "kind": "site",
+   "fr": "Université Laval",
+   "en": "Université Laval"
+  },
+  {
+   "code": "expocite",
+   "kind": "site",
+   "fr": "ExpoCité",
+   "en": "ExpoCité"
+  },
+  {
+   "code": "plains-of-abraham",
+   "kind": "site",
+   "fr": "Plaines d'Abraham",
+   "en": "Plains of Abraham"
+  },
+  {
+   "code": "pierre-laporte-bridge",
+   "kind": "corridor",
+   "fr": "Pont Pierre-Laporte",
+   "en": "Pierre Laporte Bridge"
+  },
+  {
+   "code": "quebec-bridge",
+   "kind": "corridor",
+   "fr": "Pont de Québec",
+   "en": "Quebec Bridge"
+  },
+  {
+   "code": "henri-iv",
+   "kind": "corridor",
+   "fr": "Autoroute Henri-IV",
+   "en": "Henri-IV Highway"
+  },
+  {
+   "code": "laurentienne",
+   "kind": "corridor",
+   "fr": "Autoroute Laurentienne",
+   "en": "Laurentian Highway"
+  },
+  {
+   "code": "dufferin-montmorency",
+   "kind": "corridor",
+   "fr": "Autoroute Dufferin-Montmorency",
+   "en": "Dufferin-Montmorency Highway"
+  },
+  {
+   "code": "boulevard-laurier",
+   "kind": "corridor",
+   "fr": "Boulevard Laurier",
+   "en": "Boulevard Laurier"
+  },
+  {
+   "code": "riviere-saint-charles",
+   "kind": "corridor",
+   "fr": "Rivière Saint-Charles",
+   "en": "Saint-Charles River"
+  },
+  {
+   "code": "saint-lawrence",
+   "kind": "corridor",
+   "fr": "Fleuve Saint-Laurent",
+   "en": "St. Lawrence River"
+  },
+  {
+   "code": "levis",
+   "kind": "neighbour",
+   "fr": "Lévis",
+   "en": "Lévis"
+  },
+  {
+   "code": "wendake",
+   "kind": "neighbour",
+   "fr": "Wendake",
+   "en": "Wendake"
+  },
+  {
+   "code": "l-ancienne-lorette",
+   "kind": "neighbour",
+   "fr": "L'Ancienne-Lorette",
+   "en": "L'Ancienne-Lorette"
+  },
+  {
+   "code": "saint-augustin",
+   "kind": "neighbour",
+   "fr": "Saint-Augustin-de-Desmaures",
+   "en": "Saint-Augustin-de-Desmaures"
+  },
+  {
+   "code": "ile-d-orleans",
+   "kind": "neighbour",
+   "fr": "Île d'Orléans",
+   "en": "Île d'Orléans"
+  }
+ ],
+ "place_aliases": {
+  "duberger": "duberger-les-saules",
+  "haute-saint-charles": "la-haute-saint-charles"
+ },
+ "place_specificity": [
+  "quartier",
+  "arrondissement",
+  "site",
+  "corridor",
+  "neighbour",
+  "scope"
+ ]
+}

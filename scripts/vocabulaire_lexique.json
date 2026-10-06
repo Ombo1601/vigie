@@ -1,0 +1,1052 @@
+{
+ "version": 1,
+ "status": "proposed",
+ "note": "Rule lexicon for scripts/vocabulaire.py. Keywords are written readable; matching folds accents, case and punctuation (every non-alphanumeric run is one space) and is word-bounded. A trailing * means word-prefix; # means 1-3 digits. Per type: fr/en = weak keywords (1 point per distinct keyword, at most 2 per title); fr_strong/en_strong = strong keywords (strong_weight points, default 3; institution-context types use 2 so that an action word such as a resignation outranks the institution it happens in; legal-stage types use 4 so a trial outranks the offence it is about). A type is proposed only at 2 points or more; unless = a title containing any of these never scores the type. A title scores a type once (strong beats weak); scores are summed over member titles; ties go to table order (docs/I18N.md table A); zero hits is unclassified. Places: fr/en keyword lists per place code, needs_context = counts only when the same text also names Quebec. All of it is a proposal, never a verdict: an honest unclassified beats a wrong type.",
+ "types": {
+  "fire-building": {
+   "fr": ["pompiers", "flammes", "brasier", "incendiaire", "feu de cuisine", "feu majeur", "sinistre"],
+   "fr_strong": ["incendie", "incendies", "incendie criminel", "en flammes", "feu a logements", "feu dans un"],
+   "en": ["firefighters", "fire crews", "fire damage", "fire at"],
+   "en_strong": ["house fire", "building fire", "apartment fire", "structure fire", "blaze", "fire destroys",
+    "fire engulfs"],
+   "unless": ["foret", "forets", "forestier*", "wildfire*", "sopfeu", "vehicule*", "voiture", "camion",
+    "autobus", "vehicle*", "car fire", "truck fire", "bateau", "corps incendie", "corps calcine",
+    "body burned", "burned body"]
+  },
+  "fire-forest": {
+   "fr": ["feux actifs", "feu de friche", "feux de friches"],
+   "fr_strong": ["feu de foret", "feux de foret", "incendie de foret", "incendies de foret",
+    "feux de vegetation", "feu de broussailles", "feux de broussailles", "sopfeu",
+    "incendie forestier", "incendies forestiers"],
+   "en_strong": ["wildfire", "wildfires", "forest fire", "forest fires", "bushfire", "bushfires", "brush fire",
+    "brush fires"]
+  },
+  "road-collision": {
+   "fr": ["accident", "capote"],
+   "fr_strong": ["collision", "collisions", "accident routier", "accident de la route", "accident de voiture",
+    "accident mortel", "carambolage", "embardee", "delit de fuite", "vehicule renverse",
+    "collision frontale", "accident de moto", "accident de motocyclette", "accident de vtt",
+    "accident de la circulation", "grave accident", "accident grave", "accident impliquant",
+    "accident de camion", "accident d autobus", "sortie de route", "perd la vie sur la route"],
+   "en": ["crash", "crashes", "rollover"],
+   "en_strong": ["collision", "collisions", "car crash", "highway crash", "head on crash", "multi vehicle",
+    "hit and run", "fatal crash", "road crash", "traffic accident", "motorcycle crash",
+    "bus crash", "truck crash"],
+   "unless": ["travail", "chantier", "avion", "avions", "helicoptere", "ferroviaire", "train", "bateau",
+    "aerien*", "plane", "aircraft", "helicopter", "hockey", "goalie", "nhl", "stock", "market",
+    "bitcoin", "website", "server", "cyber"]
+  },
+  "pedestrian-cyclist-struck": {
+   "fr_strong": ["pieton blesse", "pieton grievement", "pieton happe", "pieton heurte", "pieton meurt",
+    "pieton mort", "pieton tue", "pietons blesses", "pietonne blessee", "pietonne grievement",
+    "pietonne happee", "pietonne heurtee", "pietonne meurt", "pietonne morte", "pietonne tuee",
+    "cycliste blesse", "cycliste grievement", "cycliste happe", "cycliste heurte",
+    "cycliste meurt", "cycliste mort", "cycliste tue", "cycliste renverse", "motocycliste",
+    "happe par un", "happe par une", "heurte par un", "heurte par une", "heurtee par un",
+    "heurtee par une", "renverse par un", "renversee par un", "pieton decede", "pietonne decedee",
+    "pieton perd la vie", "pietonne perd la vie", "cycliste decede", "cycliste decedee",
+    "cycliste perd la vie", "pieton fauche", "cycliste fauche", "pietons fauches"],
+   "en_strong": ["pedestrian struck", "pedestrian hit", "pedestrian killed", "pedestrian dies",
+    "pedestrian injured", "cyclist struck", "cyclist killed", "cyclist hit", "cyclist injured",
+    "cyclist dies", "motorcyclist", "hit by a car", "struck by a car", "struck by a vehicle",
+    "hit by a vehicle"],
+   "strong_weight": 4
+  },
+  "water-rescue": {
+   "fr": ["garde cotiere", "embarcation", "kayakiste", "baigneur", "baigneurs", "naufrage", "naufrages"],
+   "fr_strong": ["noyade", "noyades", "noye", "noyee", "noyes", "se noie", "se noyer", "sauvetage nautique",
+    "chavire*", "plongeur secouru"],
+   "en": ["coast guard", "capsized", "shipwreck", "swimmer", "swimmers"],
+   "en_strong": ["drowning", "drowned", "drowns", "water rescue", "boat rescue", "rescued from the river",
+    "rescued from the water"]
+  },
+  "missing-person": {
+   "fr": ["disparu", "disparue", "disparus", "disparition", "disparitions", "recherches pour retrouver"],
+   "fr_strong": ["porte disparu", "portee disparue", "portes disparus", "personne disparue",
+    "personnes disparues", "avis de recherche", "alerte amber", "alerte enlevement",
+    "disparition inquietante", "manque a l appel", "adolescent disparu", "adolescente disparue",
+    "enfant disparu", "enfant disparue"],
+   "en": ["missing", "last seen"],
+   "en_strong": ["missing person", "missing persons", "reported missing", "amber alert", "search for missing"],
+   "unless": ["espece*", "species", "missing out", "missing link", "missing the", "murdered indigenous"]
+  },
+  "homicide": {
+   "fr_strong": ["homicide", "homicides", "meurtre", "meurtres", "double meurtre", "assassinat", "assassinats",
+    "assassine", "assassinee", "infanticide", "feminicide", "feminicides"],
+   "en_strong": ["homicide", "homicides", "murder", "murders", "murdered", "slaying", "manslaughter",
+    "femicide"]
+  },
+  "assault": {
+   "fr": ["bagarre", "bagarres", "passage a tabac", "coups de poing", "violence conjugale",
+    "violences conjugales", "sequestre", "sequestration", "harcelement criminel"],
+   "fr_strong": ["agression", "agressions", "agresse", "agressee", "agresses", "agresseur", "voies de fait",
+    "agression sexuelle", "agressions sexuelles", "attentat a la pudeur", "inconduite sexuelle",
+    "agressees", "attaque a l arme blanche"],
+   "en": ["brawl", "bar fight", "domestic violence"],
+   "en_strong": ["assault", "assaulted", "assaults", "sexual assault", "sexually assaulted",
+    "aggravated assault"]
+  },
+  "shooting-stabbing": {
+   "fr": ["arme a feu", "armes a feu", "par balle"],
+   "fr_strong": ["fusillade", "fusillades", "coups de feu", "coup de feu", "tireur", "tireurs", "poignarde",
+    "poignardee", "poignardes", "arme blanche", "coups de couteau", "attaque au couteau",
+    "crible de balles", "criblee de balles", "criblees de balles", "victime de balle perdue",
+    "balle perdue", "blessee par balle", "tue par balle", "touche par balle", "blesse par balle"],
+   "en": ["gunfire", "gun violence", "knife attack"],
+   "en_strong": ["shooting", "shootings", "shooter", "gunman", "stabbing", "stabbings", "stabbed",
+    "shots fired", "shot dead", "opened fire"]
+  },
+  "arrest": {
+   "fr": ["suspect arrete", "suspect interpelle", "mandat d arrestation", "appréhendé", "menottes"],
+   "fr_strong": ["arrestation", "arrestations", "arrete pour", "arretes apres", "arrete par la police",
+    "arrete a", "arretee", "interpelle", "interpelles", "interpellation", "interpellations",
+    "mis en etat d arrestation"],
+   "en": ["taken into custody", "apprehended", "detained"],
+   "en_strong": ["arrest", "arrests", "arrested", "arrest warrant"],
+   "unless": ["arrete ministeriel", "arrete municipal", "house arrest", "assignation a domicile"]
+  },
+  "police-operation": {
+   "fr": ["chasse a l homme", "enqueteurs", "escouade", "poursuite policiere", "enquete policiere",
+    "suspect recherche", "recherche par la police", "recherche par les policiers",
+    "surete du quebec"],
+   "fr_strong": ["operation policiere", "intervention policiere", "perquisition", "perquisitions",
+    "descente policiere", "barricade", "barricades", "confinement", "confinements", "spvq"],
+   "en": ["manhunt", "swat", "police investigate*", "police search", "suspect sought",
+    "police are looking for"],
+   "en_strong": ["police operation", "police raid", "standoff", "lockdown", "police shooting"]
+  },
+  "evacuation": {
+   "fr_strong": ["evacuation", "evacuations", "evacue", "evacuee", "evacues", "evacuees", "evacuer",
+    "ordre d evacuation", "mise a l abri", "mises a l abri"],
+   "en_strong": ["evacuat*", "evacuation order", "shelter in place", "evacuees"]
+  },
+  "hazmat-leak": {
+   "fr": ["produit chimique", "produits chimiques", "gaz toxique", "emanations", "ammoniac"],
+   "fr_strong": ["fuite de gaz", "fuite d ammoniac", "fuite de produits chimiques",
+    "fuite de produit chimique", "matieres dangereuses", "deversement", "deversements",
+    "monoxyde de carbone"],
+   "en": ["toxic", "spill", "ammonia", "carbon monoxide"],
+   "en_strong": ["gas leak", "chemical spill", "hazmat", "hazardous materials", "hazardous material"]
+  },
+  "coroner-report": {
+   "fr_strong": ["coroner", "coroners", "rapport du coroner", "enquete du coroner", "coroner*"],
+   "en_strong": ["coroner", "coroner's inquest", "coroners", "inquest"],
+   "strong_weight": 4
+  },
+  "court-charges": {
+   "fr": ["mise en accusation", "accusee", "acte d accusation", "plainte criminelle"],
+   "fr_strong": ["accusations", "accusation", "chefs d accusation", "porte des accusations", "inculpe",
+    "inculpee", "inculpes", "comparait", "comparaitra", "comparution", "est accuse de",
+    "sont accuses de", "est accusee de", "des accusations"],
+   "en": ["charges", "accused of"],
+   "en_strong": ["charged with", "charged in", "faces charges", "criminal charges", "charges laid", "indicted",
+    "arraigned", "charged"],
+   "strong_weight": 4
+  },
+  "court-trial": {
+   "fr": ["audience", "audiences", "temoin", "temoins", "temoignage", "temoignages", "temoigne",
+    "procureur", "procureure", "juge", "juges"],
+   "fr_strong": ["proces", "jury", "verdict", "plaide non coupable", "plaident non coupable",
+    "enquete preliminaire", "voir dire", "devant le tribunal", "devant la cour"],
+   "en": ["hearing", "judge", "courtroom", "testimony", "testify", "testifies", "testified", "witness"],
+   "en_strong": ["trial", "trials", "jury", "verdict", "pleads not guilty", "pleaded not guilty",
+    "preliminary inquiry", "court hears"],
+   "strong_weight": 4,
+   "unless": ["time trial", "time trials", "contre la montre", "trial run", "trial period", "free trial"]
+  },
+  "court-sentence": {
+   "fr": ["emprisonne", "emprisonnee", "penitencier", "detention", "liberation conditionnelle",
+    "peines", "peine de", "peine d", "peine maximale", "peine minimale", "peine en collectivite",
+    "sentences"],
+   "fr_strong": ["condamne", "condamnee", "condamnes", "condamnees", "ecope", "ecopent", "ecoper",
+    "peine de prison", "ans de prison", "mois de prison", "ans de penitencier", "plaide coupable",
+    "plaident coupables", "plaident coupable", "reconnu coupable", "reconnue coupable",
+    "declare coupable", "declaree coupable", "evitera la prison", "coupable"],
+   "en": ["jailed", "prison term", "parole", "behind bars"],
+   "en_strong": ["sentenced", "sentencing", "sentence", "life sentence", "years in prison", "months in jail",
+    "years in jail", "pleads guilty", "pleaded guilty", "found guilty", "convicted", "guilty plea"],
+   "strong_weight": 4
+  },
+  "court-ruling": {
+   "strong_weight": 4,
+   "fr": ["cour superieure", "cour d appel", "cour supreme", "cour federale", "cour du quebec",
+    "la cour", "tribunal", "tribunaux", "tribunal administratif", "jugement", "injonction",
+    "contestation judiciaire", "rejette", "rejetee", "ordonne", "statue", "tranche", "invalide",
+    "annule la decision", "requete"],
+   "fr_strong": ["decision de la cour", "decision du tribunal", "jugement rendu", "acquitte", "acquittee",
+    "acquittement", "deboute", "deboutee", "la cour refuse", "la cour rejette", "la cour ordonne",
+    "la cour autorise", "la cour accueille", "la cour tranche", "tmf",
+    "tribunal des marches financiers", "rejette la requete", "rejette l appel",
+    "accueille l appel", "accueille la requete", "casse la decision"],
+   "en": ["supreme court", "court of appeal", "federal court", "appeal court", "superior court",
+    "top court", "tribunal", "injunction", "dismisses", "upholds", "overturns", "strikes down",
+    "rules that"],
+   "en_strong": ["court rules", "judge rules", "court decision", "ruling", "rulings", "acquitted", "acquittal",
+    "dismisses appeal", "court orders", "judge orders", "judge dismisses", "court dismisses",
+    "court strikes down", "court upholds"]
+  },
+  "class-action": {
+   "fr_strong": ["action collective", "actions collectives", "recours collectif", "recours collectifs"],
+   "en_strong": ["class action", "class actions", "class action lawsuit"],
+   "strong_weight": 4
+  },
+  "council-meeting": {
+   "fr": ["elus municipaux", "conseillers municipaux", "conseillere municipale", "opposition municipale"],
+   "fr_strong": ["conseil municipal", "conseil de ville", "conseil d arrondissement",
+    "conseil d agglomeration", "seance du conseil", "comite executif", "agenda democratique"],
+   "en": ["city hall", "councillors", "councillor"],
+   "en_strong": ["city council", "council meeting", "council votes", "executive committee", "council approves"],
+   "strong_weight": 2
+  },
+  "municipal-bylaw": {
+   "fr": ["reglement", "reglements", "ordonnance"],
+   "fr_strong": ["reglement municipal", "reglement sur", "reglement d urbanisme", "reglement d emprunt",
+    "projet de reglement", "adopte un reglement", "nouveau reglement", "modification reglementaire"],
+   "en_strong": ["bylaw", "bylaws", "by law", "by laws", "municipal bylaw"],
+   "unless": ["reglement de comptes", "reglement hors cour", "reglement du conflit",
+    "reglement de differend"]
+  },
+  "municipal-budget": {
+   "fr": ["dette de la ville", "deficit de la ville", "pti"],
+   "fr_strong": ["budget municipal", "budget de la ville", "budget de la municipalite",
+    "programme triennal d immobilisations", "budget de l arrondissement"],
+   "en_strong": ["municipal budget", "city budget", "capital plan", "city's budget"]
+  },
+  "municipal-tax": {
+   "fr": ["taxes", "taxe", "hausse de taxes"],
+   "fr_strong": ["taxe fonciere", "taxes foncieres", "compte de taxes", "comptes de taxes",
+    "taxes municipales", "taxe municipale", "taxation fonciere"],
+   "en_strong": ["property tax", "property taxes", "tax bill", "tax hike", "tax increase"],
+   "unless": ["carbone", "douane*", "tarif*", "americain*", "consommation", "tps", "tvq", "trump",
+    "tariff*", "carbon", "sales tax", "taxe sur les", "taxes sur les", "tax cut", "tax credit",
+    "tax return", "income tax", "taxe de vente", "impot*"]
+  },
+  "public-consultation": {
+   "fr": ["consultation", "consultations", "assemblee publique", "participation publique",
+    "seance d information"],
+   "fr_strong": ["consultation publique", "consultations publiques", "audience publique",
+    "audiences publiques", "bape"],
+   "en": ["consultation", "consultations", "public meeting", "town hall", "open house", "public input"],
+   "en_strong": ["public consultation", "public hearing", "public hearings"],
+   "unless": ["medical*", "medecin", "psychologue", "telemedecine"]
+  },
+  "municipal-election": {
+   "fr": ["la mairie", "mairesse", "maire sortant", "candidate a la mairie", "campagne municipale",
+    "les municipales"],
+   "fr_strong": ["elections municipales", "election municipale", "scrutin municipal", "candidat a la mairie",
+    "course a la mairie"],
+   "en": ["mayoral", "mayoral race", "mayoral candidate"],
+   "en_strong": ["municipal election", "municipal elections", "mayoral election"]
+  },
+  "zoning-permit": {
+   "fr": ["permis", "demolition", "usage conditionnel", "plan d urbanisme"],
+   "fr_strong": ["zonage", "dezonage", "permis de construction", "permis de demolition", "derogation mineure",
+    "derogations mineures", "ppu", "changement de zonage"],
+   "en": ["permit", "permits", "demolition", "land use"],
+   "en_strong": ["zoning", "rezoning", "building permit", "demolition permit", "variance", "official plan"],
+   "unless": ["permis de conduire", "permis de sejour", "permis de travail", "permis d etudes",
+    "work permit", "study permit", "driver's licence", "driving licence", "drivers licence"]
+  },
+  "national-assembly": {
+   "fr": ["periode de questions", "deputes", "salon bleu"],
+   "fr_strong": ["assemblee nationale", "commission parlementaire", "dissolution de l assemblee",
+    "session parlementaire", "travaux parlementaires", "deputes caquistes", "deputes pequistes",
+    "deputes liberaux"],
+   "en": ["mna", "mnas"],
+   "en_strong": ["national assembly", "quebec legislature", "quebec legislature's"],
+   "strong_weight": 2
+  },
+  "provincial-bill": {
+   "fr": ["loi 2", "loi 21", "loi 96", "baillon"],
+   "en": ["legislation"],
+   "unless": ["federal*", "federaux", "ottawa", "carney", "liberals", "conservatives", "parliament",
+    "senate", "senat", "chambre des communes", "congress", "trump", "etats unis", "c #", "u s",
+    "american", "britain", "uk", "ontario", "alberta", "b c"],
+   "fr_strong": ["projet de loi", "loi speciale", "adopte une loi", "adoption de la loi", "loi #", "baillon"],
+   "en_strong": ["bill #", "table bill", "tables bill", "passes bill", "tabled a bill"]
+  },
+  "provincial-budget": {
+   "fr": ["deficit du quebec", "finances publiques du quebec", "mise a jour economique",
+    "depot du budget"],
+   "fr_strong": ["budget du quebec", "budget provincial", "budget quebecois",
+    "mise a jour economique du quebec"],
+   "en": ["fall economic update", "quebec deficit"],
+   "en_strong": ["quebec budget", "provincial budget", "quebec's budget"]
+  },
+  "provincial-election": {
+   "fr": ["chefs en campagne", "vote par anticipation", "vote anticipe", "circonscription",
+    "circonscriptions", "caquiste", "caquistes", "pequiste", "pequistes", "scrutin", "electeurs",
+    "candidats", "elections generales", "debat electoral", "debats", "premier debat",
+    "dernier debat", "vote", "voter", "voteront", "votez", "votent", "election", "elections",
+    "electorale", "caq", "pcq", "plq", "pq", "quebec solidaire", "parti quebecois",
+    "parti conservateur du quebec", "le vote", "sondage", "sondages", "campagne"],
+   "fr_strong": ["elections au quebec", "election provinciale", "elections provinciales",
+    "election quebecoise", "elections quebecoises", "course electorale", "elections 2026",
+    "bureaux de vote", "bureau de vote", "soiree electorale", "journee electorale",
+    "journee d election", "vote strategique", "soiree des elections", "jour du scrutin",
+    "le jour du vote", "debat des chefs", "debats des chefs", "campagne electorale",
+    "face a face tva"],
+   "en": ["voter guide", "voter guides", "ballot", "ballots", "election campaign", "leaders debate",
+    "leaders' debate", "election", "elections", "vote", "voters", "voting", "caq", "pcq", "plq",
+    "parti quebecois", "quebec solidaire", "campaign"],
+   "en_strong": ["quebec election", "quebec elections", "provincial election", "quebec election campaign"],
+   "unless": ["russie", "russia", "etats unis", "midterm*", "americain*", "alberta", "referendum",
+    "us election", "u s election", "mairie", "federal*", "elections canada", "cheerleader",
+    "municipales", "municipale", "municipal election", "municipal elections", "mayoral",
+    "scrutin municipal"]
+  },
+  "federal-decision": {
+   "fr": ["ottawa annonce", "ottawa decide", "ottawa debloque", "ottawa verse", "ottawa impose",
+    "ottawa exige", "ottawa confirme", "ottawa accorde", "ottawa abandonne", "ottawa lance",
+    "ottawa propose", "ottawa veut", "ottawa met fin", "ottawa refuse", "ottawa ouvre", "decret",
+    "ministre federal", "ministre federale", "conseil des ministres"],
+   "fr_strong": ["gouvernement federal", "chambre des communes", "senat", "banque du canada", "budget federal",
+    "gouvernement du canada", "cabinet federal", "crtc", "elections canada"],
+   "en": ["ottawa announces", "ottawa says", "ottawa will", "ottawa to"],
+   "en_strong": ["federal government", "house of commons", "federal budget", "bank of canada",
+    "federal cabinet", "federal minister", "liberal government", "crtc", "senate",
+    "federal decision"],
+   "unless": ["etats unis"],
+   "strong_weight": 2
+  },
+  "public-funding": {
+   "fr": ["financement", "subvention", "subventions", "enveloppe", "debloque", "aide financiere",
+    "fonds supplementaires", "octroie", "octroi", "contribution financiere"],
+   "fr_strong": ["financement annonce", "annonce un financement", "annonce une aide", "subvention de",
+    "annonce des investissements"],
+   "en": ["funding", "grant", "grants", "subsidy", "subsidies", "bailout"],
+   "en_strong": ["funding announced", "announces funding", "federal funding", "provincial funding",
+    "government funding"],
+   "strong_weight": 2
+  },
+  "public-inquiry": {
+   "fr": ["rapport accablant", "rapport d enquete", "commissaire", "ombudsman", "auditeur general",
+    "verificateur general", "protecteur du citoyen", "audit"],
+   "fr_strong": ["enquete publique", "commission d enquete", "rapport du verificateur",
+    "rapport du verificateur general", "rapport de la verificatrice",
+    "rapport du protecteur du citoyen", "commission charbonneau", "rapport du commissaire"],
+   "en": ["inquiry", "ombudsman", "auditor general", "audit", "watchdog", "report finds", "report says"],
+   "en_strong": ["public inquiry", "commission of inquiry", "auditor general's report", "royal commission",
+    "official report"],
+   "strong_weight": 2
+  },
+  "appointment-resignation": {
+   "fr": ["nomination", "nominations", "nomme", "nommee", "nommes", "quitte ses fonctions",
+    "successeur", "succede", "sera remplace", "sera remplacee", "nouveau directeur",
+    "nouvelle directrice", "nouveau president", "nouvelle presidente", "congedie", "limoge",
+    "demis de ses fonctions"],
+   "fr_strong": ["demission", "demissions", "demissionne", "demissionnent", "demissionner",
+    "tire sa reverence", "cede sa place", "se retire de la vie politique", "annonce son depart",
+    "annonce son retrait"],
+   "en": ["appointed", "named new", "named as", "steps aside", "retire as", "fired as", "succeeds"],
+   "en_strong": ["resigns", "resign", "resigned", "resignation", "steps down", "stepping down", "stepped down",
+    "signals his intent to resign", "intent to resign", "to step down"]
+  },
+  "tramway-project": {
+   "fr_strong": ["tramway", "tramways", "tramcite", "reseau structurant", "trambus"],
+   "en_strong": ["tramway", "tram", "trams", "streetcar", "streetcars", "light rail", "quebec city tram"]
+  },
+  "third-link-project": {
+   "fr_strong": ["troisieme lien", "3e lien", "3 e lien", "tunnel quebec levis",
+    "tunnel entre quebec et levis", "troisieme lien routier", "lien interrives"],
+   "en_strong": ["third link", "third crossing", "third bridge", "quebec levis tunnel", "third link tunnel"]
+  },
+  "roadworks": {
+   "fr": ["travaux", "deviation", "deviations", "detour", "detours", "chaussee"],
+   "fr_strong": ["entrave", "entraves", "travaux routiers", "travaux de voirie", "travaux d asphaltage",
+    "travaux majeurs", "refection", "refections", "asphaltage", "resurfacage",
+    "reseau autoroutier", "entraves a la circulation", "entraves majeures", "chantier",
+    "chantiers", "reamenagement", "reamenagement de la rue", "refection de la rue"],
+   "en": ["detour", "detours", "construction work", "paving", "resurfacing"],
+   "en_strong": ["road construction", "road work", "road works", "road repairs", "construction season",
+    "highway construction", "roadwork", "roadworks"],
+   "unless": ["parlementaires", "parlementaire", "assemblee", "comite", "recherche", "commission",
+    "parliamentary", "committee", "research", "construction de logements", "logements",
+    "mises en chantier", "mise en chantier", "chantier naval", "chantiers navals",
+    "chantier de construction navale", "chantier davie"]
+  },
+  "road-closure": {
+   "fr_strong": ["fermeture de la route", "fermeture de l autoroute", "fermetures de nuit",
+    "fermeture de nuit", "fermeture complete", "fermeture partielle", "fermeture de rue",
+    "fermeture de voie", "fermeture de pont", "fermeture du pont", "route fermee",
+    "routes fermees", "rues fermees", "rue fermee", "voie fermee", "voies fermees", "pont ferme",
+    "autoroute fermee", "fermee a la circulation", "ferme a la circulation",
+    "fermes a la circulation", "fermees a la circulation", "circulation interrompue",
+    "interdit a la circulation"],
+   "en_strong": ["closed to traffic", "road closure", "road closures", "highway closure", "highway closed",
+    "road closed", "roads closed", "lane closure", "lane closures", "bridge closed",
+    "bridge closure", "street closure", "streets closed"]
+  },
+  "bridge-status": {
+   "fr": ["pont", "ponts", "viaduc", "viaducs", "passerelle"],
+   "fr_strong": ["etat du pont", "etat des ponts", "inspection du pont", "inspection des ponts",
+    "pont de quebec", "pont pierre laporte", "pont laporte", "effondrement du pont",
+    "structure du pont", "pont de l ile d orleans", "pont du quebec"],
+   "en": ["bridge", "bridges", "viaduct", "overpass"],
+   "en_strong": ["bridge inspection", "bridge collapse", "quebec bridge", "pierre laporte bridge",
+    "bridge condition", "bridge repairs"],
+   "unless": ["pont aerien", "pont de glace", "faire le pont", "ponts de mai", "pont de la",
+    "bridge the gap", "bridging", "bridge loan", "bridge to", "peace bridge", "pont rouge",
+    "pont viau"]
+  },
+  "public-transit": {
+   "fr": ["autobus", "bus", "metro", "transport adapte", "train de banlieue", "service d autobus"],
+   "fr_strong": ["reseau de transport de la capitale", "transport en commun", "transports en commun",
+    "transport collectif", "societe de transport", "carte opus", "usagers du rtc",
+    "chauffeurs d autobus", "rtc", "stm", "metrobus", "via rail", "exo", "appli nomade",
+    "reseau de transport"],
+   "en": ["bus", "buses", "metro", "transit", "subway", "commuter"],
+   "en_strong": ["public transit", "public transportation", "bus service", "bus drivers", "transit service",
+    "rtc", "via rail", "oc transpo", "ttc", "stm"],
+   "unless": ["metro inc", "metro epicerie", "epicerie metro", "grocer", "metro grocery", "bus stop at",
+    "autobus scolaire*", "autobus scolaires", "school bus"]
+  },
+  "airport": {
+   "fr": ["air transat", "westjet", "pascan", "transporteur aerien", "vols annules", "retards de vols",
+    "controleurs aeriens", "piste d atterrissage"],
+   "fr_strong": ["aeroport", "aeroports", "aeroport jean lesage", "air canada", "privatisation des aeroports",
+    "privatiser les aeroports"],
+   "en": ["airline", "airlines", "air traffic", "flights cancelled", "flight cancellations", "westjet",
+    "porter airlines"],
+   "en_strong": ["airport", "airports", "jean lesage airport", "privatize airports",
+    "privatization of airports"]
+  },
+  "port-shipping": {
+   "fr": ["navire", "navires", "cargo", "cargos", "croisiere", "croisieres", "paquebot", "paquebots",
+    "brise glace", "debardeurs", "conteneur", "conteneurs", "armateur", "navigation"],
+   "fr_strong": ["port de quebec", "port de montreal", "administration portuaire", "terminal maritime",
+    "croisieres internationales", "securite maritime"],
+   "en": ["vessel", "vessels", "cargo ship", "cruise ship", "cruise ships", "shipping", "icebreaker",
+    "dockworkers", "longshore", "longshoremen", "container ship", "maritime"],
+   "en_strong": ["port of quebec", "port of montreal", "port authority", "port of montreal strike"]
+  },
+  "ferry-service": {
+   "fr_strong": ["traversier", "traversiers", "societe des traversiers", "traverse quebec levis",
+    "traverse levis", "traverse de levis", "traverse lauzon", "ferry", "ferries", "stq"],
+   "en_strong": ["ferry", "ferries", "quebec levis ferry", "ferry service"]
+  },
+  "power-outage": {
+   "fr_strong": ["panne de courant", "pannes de courant", "panne d electricite", "pannes d electricite",
+    "panne electrique", "pannes electriques", "interruption de courant",
+    "interruption planifiee de courant", "interruptions de courant", "coupure de courant",
+    "coupures de courant", "sans electricite", "sans courant", "prives de courant",
+    "prives d electricite", "clients sans courant", "interruption planifiee",
+    "interruption majeure", "interruption de service d electricite", "interruption d electricite"],
+   "en_strong": ["power outage", "power outages", "blackout", "blackouts", "without power", "lost power",
+    "lose power", "power cut", "power cuts", "hydro outage"]
+  },
+  "water-advisory": {
+   "fr": ["qualite de l eau", "eau contaminee", "conduite d eau", "eau potable"],
+   "fr_strong": ["avis d ebullition", "avis de faire bouillir", "ebullition de l eau", "faire bouillir l eau",
+    "avis de non consommation", "avis preventif d ebullition", "avis de qualite de l eau"],
+   "en": ["water quality"],
+   "en_strong": ["boil water", "boil water advisory", "drinking water", "water advisory", "do not consume"]
+  },
+  "snow-removal": {
+   "fr": ["souffleuses", "epandage de sel", "abrasifs", "interdiction de stationnement hivernale",
+    "stationnement de nuit"],
+   "fr_strong": ["deneigement", "deneiger", "deneigee", "chargement de neige", "chargement de la neige",
+    "operation de chargement", "chasse neige", "chasse neiges", "operations de deneigement"],
+   "en": ["snow towing", "parking ban", "plow", "plows", "plowing", "snowplow", "snowplows"],
+   "en_strong": ["snow removal", "snow clearing", "snow clearance", "snow plow", "snow plows",
+    "snow clearing operations"]
+  },
+  "waste-collection": {
+   "fr": ["ordures", "recyclage", "bac brun", "bacs bruns", "bac bleu", "bacs bleus",
+    "matieres organiques", "ecocentre", "ecocentres", "eco centre", "incinerateur", "dechets",
+    "compostage"],
+   "fr_strong": ["collecte des matieres residuelles", "collecte des ordures", "collecte des dechets",
+    "collecte selective", "collecte du recyclage", "matieres residuelles",
+    "collecte des matieres organiques", "collecte des feuilles", "collecte de feuilles",
+    "residus verts", "collecte des residus", "collecte des sapins", "collecte des encombrants",
+    "encombrants", "depots illegaux", "depot illegal de dechets", "depots illegaux de dechets"],
+   "en": ["garbage", "recycling", "compost", "composting", "landfill", "trash pickup", "organic waste"],
+   "en_strong": ["waste collection", "garbage collection", "trash collection", "recycling collection",
+    "organics collection"]
+  },
+  "weather-warning": {
+   "fr": ["tempete", "tempetes", "verglas", "pluie verglacante", "blizzard", "tornade", "tornades",
+    "orage", "orages", "ouragan", "poudrerie", "bourrasques", "rafales", "grele", "meteo",
+    "veille de tempete", "tempete tropicale", "environnement canada"],
+   "fr_strong": ["alerte meteo", "avertissement meteorologique", "avertissement de tempete",
+    "avertissement de pluie", "avertissement d orage", "avertissement de vent",
+    "avertissement de neige", "avertissement de pluie verglacante", "alerte de tempete",
+    "avertissement de verglas", "avis de tempete"],
+   "en": ["storm", "storms", "tornado", "tornadoes", "thunderstorm", "thunderstorms", "blizzard",
+    "ice storm", "freezing rain", "severe weather", "hurricane", "tropical storm", "wind warning"],
+   "en_strong": ["weather warning", "weather warnings", "weather alert", "special weather statement",
+    "snowfall warning", "rainfall warning", "storm warning", "severe thunderstorm warning",
+    "tornado warning", "winter storm warning"],
+   "unless": ["tempete politique", "perfect storm", "firestorm", "twitter storm", "brainstorm*",
+    "storm the", "stormont"]
+  },
+  "flooding": {
+   "fr": ["crue", "crues", "debordement", "debordements", "montee des eaux", "niveau d eau",
+    "refoulement d egout", "embacle", "embacles", "submerge", "submergee", "pluies diluviennes"],
+   "fr_strong": ["inondation", "inondations", "inonde", "inondee", "inondes", "inondees", "inondable",
+    "inondables", "zones inondables", "zone inondable"],
+   "en": ["rising water", "water levels", "overflow", "overflowing", "river overflow"],
+   "en_strong": ["flood", "floods", "flooding", "flooded", "flash flood", "flash flooding", "flood warning",
+    "flood zone", "floodwaters"],
+   "unless": ["inondes de", "inondees de", "inonde de", "inondee de", "flooded with", "flood of",
+    "flooding of", "floods of"]
+  },
+  "heat-cold-wave": {
+   "fr": ["humidex", "chaleur accablante", "froid intense", "grand froid"],
+   "fr_strong": ["canicule", "canicules", "vague de chaleur", "vagues de chaleur", "chaleur extreme",
+    "froid extreme", "vague de froid", "froid polaire", "avertissement de chaleur",
+    "avertissement de froid", "alerte de chaleur", "froid mordant"],
+   "en": ["wind chill", "frigid"],
+   "en_strong": ["heat wave", "heat warning", "heat warnings", "cold snap", "extreme heat", "extreme cold",
+    "polar vortex", "cold wave", "cold weather alert", "heat dome", "extreme cold warning"],
+   "unless": ["chaleur humaine", "froid dans le dos", "sang froid", "guerre froide", "cold war",
+    "cold case", "cold open", "heat check", "miami heat", "calgary", "heat pump", "thermopompe*",
+    "gel des", "gel de", "gel du", "gel d", "froid canadien"]
+  },
+  "pollution": {
+   "fr": ["pollue", "polluee", "polluants", "emissions polluantes", "eaux usees", "algues bleu vert",
+    "cyanobacteries", "pfas"],
+   "fr_strong": ["pollution", "qualite de l air", "smog", "debordement d eaux usees", "bacterie dans l eau",
+    "contamination de l air", "contamination de l eau"],
+   "en": ["wastewater", "sewage", "toxic algae", "blue green algae"],
+   "en_strong": ["pollution", "air quality", "smog", "air quality warning", "water pollution", "air pollution"],
+   "unless": ["pollution lumineuse", "pollution sonore"]
+  },
+  "soil-contamination": {
+   "fr_strong": ["contamination des sols", "sols contamines", "sol contamine", "terrain contamine",
+    "terrains contamines", "decontamination", "decontamination des sols",
+    "rehabilitation de terrain", "rehabilitation des sols", "site contamine", "sites contamines",
+    "terres contaminees", "contamination du sol"],
+   "en_strong": ["soil contamination", "contaminated soil", "contaminated land", "contaminated site",
+    "brownfield", "soil remediation", "contaminated sites", "polluted soil"]
+  },
+  "hospital-services": {
+   "fr": ["soins de sante", "personnel soignant", "soins intensifs", "liste d attente",
+    "listes d attente", "medecin de famille", "medecins de famille", "infirmiere", "infirmieres",
+    "infirmier", "infirmiers"],
+   "fr_strong": ["hopital", "hopitaux", "ciusss", "cisss", "chu de quebec", "chul", "sante quebec",
+    "chirurgie", "chirurgies", "salle d operation", "salles d operation", "hotel dieu",
+    "enfant jesus", "iucpq", "lits d hopital", "centre hospitalier", "ressources infirmieres"],
+   "en": ["health care", "health care workers", "nurses", "nurse", "surgery", "surgeries", "wait list",
+    "wait lists", "wait times", "family doctor"],
+   "en_strong": ["hospital", "hospitals", "health care system", "hospital beds", "operating room",
+    "nursing shortage", "surgical wait"],
+   "unless": ["emergency room", "urgences"]
+  },
+  "emergency-room": {
+   "fr": ["ambulance", "ambulances", "ambulanciers", "urgences sante", "civiere", "civieres"],
+   "fr_strong": ["salle d urgence", "salles d urgence", "aux urgences", "a l urgence",
+    "debordement des urgences", "urgences de", "temps d attente aux urgences",
+    "attente a l urgence", "attente aux urgences", "urgences"],
+   "en": ["ambulance", "ambulances", "paramedics", "er wait"],
+   "en_strong": ["emergency room", "emergency rooms", "emergency department", "emergency departments",
+    "er wait times", "er closures"],
+   "unless": ["climatique*", "urgences sociales", "urgence climatique", "urgences climatiques",
+    "urgences sante", "droits"]
+  },
+  "public-health-advisory": {
+   "fr": ["sante publique", "vaccin", "vaccins", "vaccination", "rappel de", "listeria", "salmonelle",
+    "salmonellose", "e coli", "sante canada", "acia", "covid", "covid 19", "grippe", "influenza",
+    "rappel d aliments", "rappel de produit"],
+   "fr_strong": ["avis de sante publique", "campagne de vaccination", "directeur de sante publique",
+    "rappel de produits", "rappel alimentaire", "allergene", "allergenes", "presence non declaree",
+    "mise en garde a la population"],
+   "en": ["public health", "vaccine", "vaccines", "vaccination", "recall", "recalled", "listeria",
+    "salmonella", "e coli", "health canada", "cfia", "covid", "flu", "health warning"],
+   "en_strong": ["public health advisory", "health advisory", "food recall", "product recall",
+    "vaccination campaign", "public health warning"],
+   "unless": ["vaccin contre la polemique", "recall election", "recall petition"]
+  },
+  "outbreak": {
+   "fr": ["propagation", "cas confirmes", "foyer d infection", "cas de covid", "cas de rougeole",
+    "flambee de cas", "coqueluche"],
+   "fr_strong": ["eclosion", "eclosions", "epidemie", "epidemies", "flambee", "flambees", "rougeole",
+    "flambee de rougeole", "eclosion de"],
+   "en": ["measles", "whooping cough", "cases rise", "epidemic", "epidemics"],
+   "en_strong": ["outbreak", "outbreaks", "measles outbreak", "outbreak of", "outbreak declared"],
+   "unless": ["flambee des prix", "flambee de violence", "flambee de colere", "flambee de violences",
+    "flambee du"]
+  },
+  "school-services": {
+   "fr": ["ecole", "ecoles", "eleve", "eleves", "enseignant", "enseignants", "enseignante",
+    "enseignantes", "garderie", "garderies", "cpe", "service de garde", "services de garde",
+    "manuels scolaires", "directeur d ecole", "directrice d ecole", "parents d eleves",
+    "ecole primaire", "ecole secondaire", "commission scolaire"],
+   "fr_strong": ["centre de services scolaire", "centres de services scolaires", "rentree scolaire",
+    "transport scolaire", "autobus scolaire", "autobus scolaires", "css de",
+    "ministre de l education", "reseau scolaire", "ecoles primaires", "ecoles secondaires"],
+   "en": ["school", "schools", "teachers", "teacher", "students", "student", "pupils", "daycare",
+    "daycares", "kindergarten", "classroom", "classrooms"],
+   "en_strong": ["school bus", "school boards", "school year", "school services", "school closure",
+    "back to school", "school board"],
+   "unless": ["ecole de hockey", "ecole de cirque", "cole de musique", "ecole de conduite",
+    "ecole de police", "hockey school", "school of rock", "old school"]
+  },
+  "higher-education": {
+   "fr": ["universite", "universites", "universitaire", "universitaires", "cegep", "cegeps", "college",
+    "colleges", "etudiant", "etudiants", "etudiante", "etudiantes", "recteur", "rectrice",
+    "doctorat", "campus", "uqam", "mcgill", "bourses d etudes", "professeurs d universite"],
+   "fr_strong": ["frais de scolarite", "enseignement superieur", "ministre de l enseignement superieur",
+    "universite laval", "ulaval", "federation etudiante", "cegep de", "associations etudiantes",
+    "communaute universitaire"],
+   "en": ["university", "universities", "college", "colleges", "campus", "tuition", "professors",
+    "professor", "post secondary", "postsecondary"],
+   "en_strong": ["tuition fees", "higher education", "post secondary education", "university of",
+    "laval university", "mcgill university", "student unions"],
+   "unless": ["college of cardinals", "electoral college", "ecole", "ecoles", "college hockey",
+    "college football", "college basketball", "ncaa", "navy college"]
+  },
+  "housing-construction": {
+   "fr": ["logements", "condo", "condos", "habitations", "tours d habitation", "hlm",
+    "residence pour aines", "rpa", "projet immobilier", "developpement residentiel",
+    "developpement immobilier", "promoteur", "promoteurs"],
+   "fr_strong": ["construction de logements", "logements sociaux", "logement social", "logements abordables",
+    "logement abordable", "mises en chantier", "nouveaux logements", "en logements",
+    "projet residentiel", "construction residentielle", "cooperative d habitation",
+    "cooperatives d habitation"],
+   "en": ["condo", "condos", "apartment building", "apartment buildings", "housing projects"],
+   "en_strong": ["housing construction", "social housing", "affordable housing", "housing project",
+    "new homes", "new housing", "residential project", "housing development", "housing starts",
+    "housing units", "housing supply"]
+  },
+  "rent-eviction": {
+   "fr": ["loyer", "loyers", "locataire", "locataires", "bail", "baux", "tal", "logement",
+    "taux d inoccupation", "taux de vacance"],
+   "fr_strong": ["eviction", "evictions", "evince", "evincee", "evinces", "reprise de logement", "renoviction",
+    "renovictions", "hausse de loyer", "hausse des loyers", "tribunal administratif du logement",
+    "loyer abordable", "locataires evinces", "augmentation de loyer"],
+   "en": ["rent", "rents", "renters", "tenants", "tenant", "landlord", "landlords", "vacancy rate",
+    "rental"],
+   "en_strong": ["eviction", "evictions", "rent increase", "rent increases", "rental housing",
+    "housing crisis", "rental crisis", "rent hikes", "rent hike", "rental market"],
+   "unless": ["rent a ", "rent cars", "rent car"]
+  },
+  "homelessness": {
+   "fr": ["campement", "campements", "hebergement d urgence", "itinerant", "itinerants", "itinerante",
+    "itinerantes", "sans domicile fixe", "sdf", "refuge pour sans abri"],
+   "fr_strong": ["itinerance", "sans abri", "sans abris", "personnes en situation d itinerance",
+    "situation d itinerance", "lutte contre l itinerance", "campement de sans abri",
+    "campements de sans abri"],
+   "en": ["encampment", "encampments", "street people", "unhoused", "homeless shelters",
+    "emergency shelter", "emergency shelters"],
+   "en_strong": ["homeless", "homelessness", "homeless shelter", "homeless people", "homeless encampment",
+    "people experiencing homelessness"],
+   "unless": ["animal shelter", "shelter in place", "refuge faunique", "refuge d oiseaux",
+    "refuge pour animaux"]
+  },
+  "property-transaction": {
+   "fr": ["mise en vente", "mis en vente", "a vendre", "transaction immobiliere", "se departit de",
+    "acquisition de l", "acquisition du", "acquiert l", "acquiert le", "vendu a", "vend le",
+    "vend l"],
+   "fr_strong": ["vente de l immeuble", "vente de l edifice", "vente du terrain", "vente du batiment",
+    "vente de terrain", "acquisition de l immeuble", "acquiert l edifice", "achete l immeuble",
+    "achete l edifice", "achete le terrain", "achete le batiment", "achat de l immeuble",
+    "achat de l edifice", "vente de l ancien", "vente du site"],
+   "en": ["property sale", "property purchase", "buys building", "sells building",
+    "bought the building", "sold the building", "land sale"],
+   "en_strong": ["real estate deal", "acquires building", "buys property", "sells property", "building sold",
+    "property acquisition", "building sale"]
+  },
+  "business-open-close": {
+   "fr": ["ouvre ses portes", "ouverture d un", "ouverture d une", "ferme ses portes",
+    "fermeture de l usine", "fermeture de l entreprise", "fermeture du magasin",
+    "cesse ses activites", "liquidation", "creanciers", "nouveau commerce", "nouveau restaurant",
+    "ouvrira ses portes", "fermera ses portes", "fermeture du restaurant", "ferme definitivement"],
+   "fr_strong": ["faillite", "faillites", "protection contre les creanciers", "insolvabilite", "lacc",
+    "fait faillite", "cesse ses operations", "fermeture definitive"],
+   "en": ["closing its doors", "closes its doors", "closing down", "store closures", "shutting down",
+    "plant closure", "store closing", "new restaurant", "new store"],
+   "en_strong": ["bankruptcy", "files for bankruptcy", "bankruptcy protection", "insolvency",
+    "creditor protection", "ceases operations", "going out of business"],
+   "unless": ["opens up", "opens doors for", "opens a", "opens the", "opens his", "opens her", "opens fire",
+    "opens new"]
+  },
+  "layoffs": {
+   "fr": ["perte d emplois", "pertes d emplois", "emplois menaces", "postes abolis",
+    "abolition de postes", "suppression de postes", "licencie", "licencies"],
+   "fr_strong": ["mises a pied", "mise a pied", "licenciement", "licenciements", "suppressions d emplois",
+    "suppression d emplois", "suppressions de postes", "congediements massifs",
+    "compressions de personnel", "licenciements massifs"],
+   "en": ["job losses", "jobs lost", "cut jobs", "cutting jobs", "workforce reduction", "redundancies"],
+   "en_strong": ["layoff", "layoffs", "laid off", "lays off", "job cuts", "jobs cut", "cuts jobs",
+    "mass layoffs"]
+  },
+  "strike-lockout": {
+   "fr": ["debrayage", "debrayages", "arret de travail", "arrets de travail", "moyens de pression",
+    "piquetage", "piquet de greve", "syndiques", "cols bleus", "cols blancs",
+    "services essentiels", "greviste"],
+   "fr_strong": ["greve", "greves", "grevistes", "lock out", "lockout", "vote de greve", "mandat de greve",
+    "ligne de piquetage", "greve generale", "greve des", "greve de"],
+   "en": ["strike", "strikes", "walkout", "work stoppage", "picket", "picketing", "job action"],
+   "en_strong": ["on strike", "strike vote", "strike action", "strike notice", "labour strike",
+    "workers strike", "lockout", "lock out", "picket line", "strike mandate", "general strike"],
+   "unless": ["air strike", "airstrike*", "missile", "drone", "israel*", "gaza", "russia*", "ukrain*",
+    "iran*", "lightning", "military", "us strikes", "u s strikes", "strike a deal", "strike back",
+    "strikes back", "strike out", "strikeout", "bowling", "strike zone", "ceasefire", "hamas",
+    "yemen", "greve de la faim", "hunger strike", "frappe", "frappes", "israel", "russie",
+    "ukraine", "iran"]
+  },
+  "collective-agreement": {
+   "fr": ["negociation", "negociations", "negociations syndicales", "contrat de travail",
+    "table de negociation", "offre patronale", "offres patronales", "syndicat", "syndicats",
+    "syndical", "syndicale", "ratifie", "ratification"],
+   "fr_strong": ["convention collective", "conventions collectives", "entente de principe",
+    "tentative d entente", "renouvellement de la convention", "entente de principe conclue",
+    "renouvellement des conventions", "negociation de la convention"],
+   "en": ["union", "unions", "bargaining", "ratify", "ratified", "ratification", "labour deal",
+    "contract talks", "contract negotiations", "collective bargaining"],
+   "en_strong": ["collective agreement", "collective agreements", "tentative agreement", "tentative deal",
+    "new contract", "agreement in principle", "collective bargaining agreement"],
+   "unless": ["union europeenne", "european union", "union sovietique", "soviet union", "union station",
+    "credit union", "union de", "union des municipalites", "union jack", "commerciales",
+    "commerciale", "tarifs", "trade", "paix", "peace", "ceasefire", "cessez le feu",
+    "accord commercial", "ukraine", "gaza", "iran", "tariff*"]
+  },
+  "price-change": {
+   "fr": ["inflation", "panier d epicerie", "prix des aliments", "taux d interet", "hausse du cout"],
+   "fr_strong": ["hausse de prix", "hausse des prix", "hausse du prix", "baisse du prix", "baisse des prix",
+    "prix a la pompe", "prix de l essence", "prix du panier", "cout de la vie",
+    "augmentation des prix", "hausse des tarifs", "hausse de tarifs", "hausse de tarif",
+    "tarifs d electricite", "prix de l electricite", "prix du carburant", "flambee des prix",
+    "prix a la consommation", "indice des prix", "prix du petrole", "prix du diesel",
+    "prix du lait", "prix des maisons", "prix des loyers", "prix du bois", "prix de la viande",
+    "prix du gaz", "prix du cafe", "hausse du diesel", "hausse de l essence",
+    "baisse de l essence", "prix de l epicerie"],
+   "en": ["inflation", "cost of living", "fare increase", "rate hike"],
+   "en_strong": ["price increase", "price increases", "price hike", "price hikes", "prices rise",
+    "prices fall", "prices drop", "price cuts", "price cut", "gas prices", "grocery prices",
+    "consumer prices", "fare hike"],
+   "unless": ["prix nobel", "grand prix", "prix litteraire", "prix de consolation", "prix d excellence",
+    "prix citoyen", "prix hommage", "price collision", "prix goncourt", "prix de reconnaissance",
+    "prix de cinema", "prix du public", "grand prize", "tarifs douaniers", "droits de douane",
+    "tariff*", "tarifs americains", "tarifs de trump"]
+  },
+  "investment-project": {
+   "fr": ["usine", "agrandissement", "projet industriel", "projet d envergure", "implantation",
+    "annonce un projet"],
+   "fr_strong": ["projet d investissement", "annonce un investissement", "annonce des investissements",
+    "investit", "investissent", "agrandissement de l usine", "nouvelle usine",
+    "projet de construction d une usine", "construction d une usine", "implantation d une usine",
+    "megaprojet"],
+   "en": ["invests", "investing", "factory"],
+   "en_strong": ["investment project", "announces investment", "billion investment", "new plant",
+    "new factory", "expansion project"],
+   "unless": ["plant based", "power plant", "plant manager"]
+  },
+  "festival-event": {
+   "fr": ["carnaval", "carnavals", "defile", "defiles", "parade", "parades", "feux d artifice",
+    "feu d artifice", "foire", "foires", "festivites", "fete nationale", "halloween",
+    "marche de noel"],
+   "fr_strong": ["festival", "festivals", "festivalier", "festivaliers", "carnaval de quebec",
+    "fetes de la nouvelle france", "festival d ete", "feq", "grand evenement", "grands evenements",
+    "grands feux", "expo quebec", "foires agricoles", "foire agricole"],
+   "en": ["parade", "parades", "fireworks", "carnival", "christmas market"],
+   "en_strong": ["festival", "festivals", "summer festival", "winter carnival", "major event", "grand event",
+    "street festival", "music festival", "film festival", "folk festival"],
+   "unless": ["fair play", "fair share", "fair trade", "fair value", "fairness", "fair price", "fair wage",
+    "fair game", "unfair", "festival offensif", "festival de buts", "festival de points"]
+  },
+  "sports-event": {
+   "fr": ["gardien de but", "tournois", "demi marathon", "course a pied", "cyclisme", "entraineur",
+    "entraineuse", "joueur", "joueurs", "joueuse", "joueuses", "athlete", "athletes", "medaille",
+    "medailles", "tennis", "hockey", "football", "soccer", "volleyball", "baseball", "olympique",
+    "olympiques", "le canadien", "du canadien", "au canadien"],
+   "fr_strong": ["coupe davis", "mondiaux", "championnat", "championnats", "championnat du monde",
+    "championnats du monde", "lnh", "nhl", "coupe du monde", "jeux olympiques", "coupe stanley",
+    "marathon", "camp d entrainement", "canadien de montreal", "remparts", "nordiques",
+    "mondiaux de cyclisme", "ligue canadienne de football", "alouettes", "tournoi", "grand prix",
+    "course de l armee", "jeux paralympiques", "coupe grey", "match", "matchs", "raptors",
+    "hurricanes", "nba", "lhjmq", "match de preparation", "match prepatoire"],
+   "en": ["playoff", "goalie", "athlete", "athletes", "medal", "medals", "tennis", "hockey", "football",
+    "soccer", "volleyball", "baseball", "cycling"],
+   "en_strong": ["world cup", "olympic", "olympics", "olympian", "stanley cup", "championship",
+    "championships", "tournament", "davis cup", "nhl", "cfl", "mlb", "nfl", "nba",
+    "world championships", "world championship", "grey cup", "playoffs", "raptors"],
+   "unless": ["video game", "game changer", "game plan", "board game", "games of power", "fair game",
+    "blame game", "waiting game", "numbers game", "jeu video", "jeux video", "jeu de societe",
+    "team up", "team of experts", "task force"]
+  },
+  "built-heritage": {
+   "fr": ["unesco", "eglise", "eglises", "monument", "monuments", "vieux quebec", "chateau frontenac"],
+   "fr_strong": ["patrimoine", "patrimoine bati", "patrimonial", "patrimoniale", "patrimoniaux",
+    "patrimoniales", "monument historique", "monuments historiques", "immeuble patrimonial",
+    "batiment patrimonial", "edifice patrimonial", "site patrimonial", "arrondissement historique",
+    "bien patrimonial", "biens patrimoniaux"],
+   "en": ["heritage", "historic buildings", "historic site", "historic sites", "landmark", "landmarks",
+    "unesco"],
+   "en_strong": ["heritage building", "heritage buildings", "heritage site", "historic building",
+    "heritage designation", "built heritage", "heritage property", "heritage district"],
+   "unless": ["heritage foundation", "heritage fund", "classe moyenne", "classe politique",
+    "classe de maitre", "classe ouvriere", "classe affaires", "heritage minute", "heritage party",
+    "heritage classic", "heritage minutes"]
+  },
+  "protest": {
+   "fr": ["rassemblement", "rassemblements", "boycottage", "contestation", "revendications",
+    "mobilisation"],
+   "fr_strong": ["manifestation", "manifestations", "manifestant", "manifestante", "manifestants",
+    "manifestantes", "manif", "manifs", "manifestation contre", "manifestation pour", "sit in",
+    "petition", "petitions", "boycott", "marche contre"],
+   "en": ["rally", "rallies", "demonstration"],
+   "en_strong": ["protest", "protests", "protesters", "protester", "protesting", "demonstrators",
+    "demonstrations", "rally against", "rally for", "march against", "sit in", "blockade",
+    "boycott"],
+   "unless": ["manifeste", "rally car", "rally cars", "stock rally", "market rally", "rallye",
+    "rally driver", "rally racing", "party rally", "campaign rally", "rallies for", "protest vote",
+    "demonstration project", "demonstration of", "demonstrations of", "march madness", "dancing",
+    "vote de protestation"]
+  },
+  "death-public-figure": {
+   "fr": ["est mort", "est morte", "meurt", "decede", "decedee", "deces de"],
+   "fr_strong": ["est mort a #", "est morte a #", "decede a #", "decedee a #", "meurt a #", "est decede",
+    "est decedee", "mort a # ans", "morte a # ans", "tire sa reverence a #", "s est eteint a #",
+    "s est eteinte a #", "dies at #"],
+   "en": ["dead at", "died at"],
+   "en_strong": ["dies at #", "dead at #", "died at #", "has died", "passes away", "passed away",
+    "dies at age", "dies aged", "dead at age"],
+   "unless": ["homme", "femme", "conducteur", "motocycliste", "enfant", "bebe", "travailleur", "ouvrier",
+    "adolescent*", "jeune", "victime", "patient", "pieton", "pietonne", "cycliste", "suspect",
+    "detenu", "prisonnier", "soldat", "migrant", "man dies", "woman dies", "driver dies",
+    "worker dies", "child dies", "boy dies", "girl dies", "teen dies", "suspect dies",
+    "inmate dies", "died after being", "dies after being"],
+   "strong_weight": 4
+  }
+ },
+ "places": {
+  "quebec-city": {
+   "fr": ["ville de quebec", "a quebec", "dans la ville de quebec", "maire de quebec",
+    "mairesse de quebec", "bruno marchand", "conseil municipal de quebec",
+    "hotel de ville de quebec", "chu de quebec", "spvq", "rtc",
+    "reseau de transport de la capitale", "tramway de quebec", "centre videotron",
+    "gare du palais", "quebec city"],
+   "en": ["quebec city", "city of quebec", "mayor bruno marchand", "bruno marchand", "in quebec city",
+    "rtc"]
+  },
+  "greater-quebec": {
+   "fr": ["region de quebec", "capitale nationale", "grand quebec", "agglomeration de quebec",
+    "region de la capitale nationale", "chaudiere appalaches",
+    "communaute metropolitaine de quebec", "rive sud de quebec", "rive nord de quebec"],
+   "en": ["quebec city region", "greater quebec", "capitale nationale", "quebec region",
+    "quebec city area"]
+  },
+  "province": {
+   "fr": ["au quebec", "du quebec", "quebecois", "quebecoise", "quebecoises", "assemblee nationale",
+    "gouvernement du quebec", "caq", "caquiste", "pequiste", "plq", "quebec solidaire",
+    "provincial", "provinciale", "provinciaux", "legault", "en quebec", "partout au quebec",
+    "parti quebecois", "premier ministre du quebec", "gouvernement quebecois", "regions du quebec",
+    "dans la province"],
+   "en": ["in quebec", "quebec government", "quebec's", "quebecers", "quebecer", "national assembly",
+    "provincial", "parti quebecois", "quebec premier", "quebec election", "quebec legislature",
+    "province of quebec", "across quebec", "caq", "quebec liberals", "quebec liberal",
+    "quebec solidaire", "quebec ministry"]
+  },
+  "ottawa": {
+   "fr": ["ottawa", "federal", "federale", "federaux", "federales", "gouvernement du canada",
+    "chambre des communes", "senat", "canada", "gouvernement federal", "banque du canada",
+    "ministre federal", "fonction publique federale"],
+   "en": ["ottawa", "federal", "federal government", "house of commons", "senate", "canada", "canada's",
+    "bank of canada", "feds", "liberal government", "prime minister"]
+  },
+  "la-cite-limoilou": {
+   "fr": ["la cite limoilou", "arrondissement de la cite limoilou"],
+   "en": ["la cite limoilou"]
+  },
+  "les-rivieres": {
+   "fr": ["arrondissement des rivieres", "arrondissement les rivieres", "quartier des rivieres",
+    "arrondissement de les rivieres"],
+   "en": ["les rivieres borough", "les rivieres district"]
+  },
+  "sainte-foy-sillery-cap-rouge": {
+   "fr": ["sainte foy sillery cap rouge", "arrondissement de sainte foy"],
+   "en": ["sainte foy sillery cap rouge"]
+  },
+  "charlesbourg": {
+   "fr": ["charlesbourg"],
+   "en": ["charlesbourg"]
+  },
+  "beauport": {
+   "fr": ["beauport"],
+   "en": ["beauport"]
+  },
+  "la-haute-saint-charles": {
+   "fr": ["haute saint charles", "la haute saint charles"],
+   "en": ["haute saint charles", "la haute saint charles"]
+  },
+  "vieux-quebec": {
+   "fr": ["vieux quebec", "haute ville", "basse ville", "petit champlain", "chateau frontenac",
+    "place royale", "vieille capitale"],
+   "en": ["old quebec", "vieux quebec", "upper town", "lower town", "petit champlain",
+    "chateau frontenac", "place royale", "old quebec city"]
+  },
+  "saint-roch": {
+   "fr": ["saint roch"],
+   "en": ["saint roch"],
+   "needs_context": true
+  },
+  "saint-sauveur": {
+   "fr": ["saint sauveur"],
+   "en": ["saint sauveur"],
+   "needs_context": true
+  },
+  "saint-jean-baptiste": {
+   "fr": ["saint jean baptiste"],
+   "en": ["saint jean baptiste"],
+   "needs_context": true
+  },
+  "montcalm": {
+   "fr": ["montcalm"],
+   "en": ["montcalm"],
+   "needs_context": true
+  },
+  "limoilou": {
+   "fr": ["limoilou"],
+   "en": ["limoilou"]
+  },
+  "maizerets": {
+   "fr": ["maizerets"],
+   "en": ["maizerets"]
+  },
+  "lairet": {
+   "fr": ["lairet"],
+   "en": ["lairet"]
+  },
+  "vanier": {
+   "fr": ["vanier"],
+   "en": ["vanier"],
+   "needs_context": true
+  },
+  "duberger-les-saules": {
+   "fr": ["duberger", "les saules", "duberger les saules"],
+   "en": ["duberger", "les saules", "duberger les saules"]
+  },
+  "lebourgneuf": {
+   "fr": ["lebourgneuf"],
+   "en": ["lebourgneuf"]
+  },
+  "neufchatel": {
+   "fr": ["neufchatel"],
+   "en": ["neufchatel"],
+   "needs_context": true
+  },
+  "loretteville": {
+   "fr": ["loretteville"],
+   "en": ["loretteville"]
+  },
+  "val-belair": {
+   "fr": ["val belair"],
+   "en": ["val belair"]
+  },
+  "cap-rouge": {
+   "fr": ["cap rouge"],
+   "en": ["cap rouge"]
+  },
+  "sillery": {
+   "fr": ["sillery"],
+   "en": ["sillery"]
+  },
+  "sainte-foy": {
+   "fr": ["sainte foy"],
+   "en": ["sainte foy"]
+  },
+  "saint-emile": {
+   "fr": ["saint emile"],
+   "en": ["saint emile"],
+   "needs_context": true
+  },
+  "lac-saint-charles": {
+   "fr": ["lac saint charles"],
+   "en": ["lac saint charles"]
+  },
+  "parliament-hill": {
+   "fr": ["colline parlementaire", "parliament hill"],
+   "en": ["parliament hill", "colline parlementaire"]
+  },
+  "vieux-port": {
+   "fr": ["vieux port"],
+   "en": ["old port", "vieux port"],
+   "needs_context": true
+  },
+  "pointe-aux-lievres": {
+   "fr": ["pointe aux lievres"],
+   "en": ["pointe aux lievres"]
+  },
+  "port-of-quebec": {
+   "fr": ["port de quebec", "administration portuaire de quebec"],
+   "en": ["port of quebec", "quebec port authority"]
+  },
+  "jean-lesage-airport": {
+   "fr": ["aeroport jean lesage", "aeroport de quebec", "aeroport international jean lesage"],
+   "en": ["jean lesage airport", "quebec city airport", "quebec city jean lesage airport",
+    "quebec city's airport", "quebec airport"]
+  },
+  "universite-laval": {
+   "fr": ["universite laval", "ulaval"],
+   "en": ["universite laval", "laval university", "ulaval"]
+  },
+  "expocite": {
+   "fr": ["expocite", "expo cite", "centre de foires", "expo quebec"],
+   "en": ["expocite", "expo cite", "expo quebec"]
+  },
+  "plains-of-abraham": {
+   "fr": ["plaines d abraham", "parc des champs de bataille"],
+   "en": ["plains of abraham", "battlefields park"]
+  },
+  "pierre-laporte-bridge": {
+   "fr": ["pont pierre laporte", "pont laporte", "ponts pierre laporte", "ponts laporte"],
+   "en": ["pierre laporte bridge", "laporte bridge"]
+  },
+  "quebec-bridge": {
+   "fr": ["pont de quebec", "ponts pierre laporte et de quebec", "ponts de quebec"],
+   "en": ["quebec bridge"]
+  },
+  "henri-iv": {
+   "fr": ["autoroute henri iv", "henri iv"],
+   "en": ["henri iv highway", "henri iv"]
+  },
+  "laurentienne": {
+   "fr": ["autoroute laurentienne", "laurentienne"],
+   "en": ["laurentian highway", "autoroute laurentienne"]
+  },
+  "dufferin-montmorency": {
+   "fr": ["autoroute dufferin montmorency", "dufferin montmorency"],
+   "en": ["dufferin montmorency", "dufferin montmorency highway"]
+  },
+  "boulevard-laurier": {
+   "fr": ["boulevard laurier", "boul laurier"],
+   "en": ["laurier boulevard", "boulevard laurier"]
+  },
+  "riviere-saint-charles": {
+   "fr": ["riviere saint charles"],
+   "en": ["saint charles river", "st charles river"]
+  },
+  "saint-lawrence": {
+   "fr": ["fleuve saint laurent"],
+   "en": ["saint lawrence river", "st lawrence river", "saint lawrence"]
+  },
+  "levis": {
+   "fr": ["levis", "ville de levis", "maire de levis"],
+   "en": ["levis"]
+  },
+  "wendake": {
+   "fr": ["wendake"],
+   "en": ["wendake"]
+  },
+  "l-ancienne-lorette": {
+   "fr": ["ancienne lorette", "l ancienne lorette"],
+   "en": ["ancienne lorette", "l ancienne lorette"]
+  },
+  "saint-augustin": {
+   "fr": ["saint augustin de desmaures"],
+   "en": ["saint augustin de desmaures"]
+  },
+  "ile-d-orleans": {
+   "fr": ["ile d orleans"],
+   "en": ["ile d orleans", "orleans island"]
+  }
+ },
+ "place_context": ["quebec", "limoilou", "levis", "capitale nationale"],
+ "place_mask": ["surete du quebec", "universite du quebec", "hydro quebec", "loto quebec", "radio canada",
+  "air canada", "postes canada", "vieux port de montreal", "old port of montreal",
+  "tire canadien", "canadien de montreal", "le canadien", "du canadien", "au canadien",
+  "bureau du quebec", "cinema du quebec", "banque nationale du canada",
+  "agence du revenu du canada", "pont de quebec levis"]
+}
