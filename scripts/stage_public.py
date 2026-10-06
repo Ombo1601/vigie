@@ -9,6 +9,7 @@ import argparse
 import contextlib
 import errno
 import hashlib
+import html
 import json
 import os
 import re
@@ -140,6 +141,74 @@ def validate_site(directory: Path) -> list[str]:
             elif link.fragment and target in pages and unquote(link.fragment) not in pages[target].ids:
                 errors.append(f"{path.relative_to(base)}: missing anchor {raw}")
     return sorted(set(errors))
+
+
+_URL_IN_TEXT = re.compile(r"https?://[^\s\"'<>`)\]\\]+")
+_TEXT_SUFFIXES = {".html", ".md", ".json", ".txt", ".xml", ".yaml"}
+
+
+def takedown_violations(directory: Path, root: Path = ROOT) -> list[str]:
+    """R10 release gate: what in a staged tree still matches an active takedown.
+
+    Refuses an unreadable or invalid takedowns.yaml (an entry nobody can
+    interpret is a request nobody enforces), any media file matching an image
+    takedown by sha256, file name or manifest URL, and any page that still
+    links or embeds a withdrawn article or image, or an article of a withdrawn
+    source still present in the stores. Domain takedowns apply to every page
+    except the method pages, which name sources by their homepage.
+    Missing or empty takedowns.yaml: nothing to check.
+    """
+    import takedown  # noqa: PLC0415 - lazy: staging stays importable alone
+
+    entries, errors = takedown.load(Path(root) / "takedowns.yaml")
+    problems = [f"takedowns.yaml invalid: {err}" for err in errors]
+    rules = takedown.Rules(entries)
+    if not rules:
+        return problems
+    base = Path(directory)
+    # A withdrawn source's articles, as the stores behind these pages know them.
+    stores = tuple(Path(root) / "data" / name for name in takedown.STORE_NAMES)
+    source_urls: dict[str, dict] = {}
+    for sid, entry in sorted(rules.sources.items()):
+        for url in takedown.source_article_urls(sid, stores):
+            source_urls[takedown._canon(url) or url] = entry
+    manifest: dict = {}
+    try:
+        doc = json.loads((Path(root) / "data" / "media" / "brief_manifest.json").read_text(encoding="utf-8"))
+        media = doc.get("media") if isinstance(doc, dict) else None
+        for entry in (media or {}).values() if isinstance(media, dict) else []:
+            if isinstance(entry, dict) and isinstance(entry.get("file"), str):
+                manifest[entry["file"]] = entry
+    except (OSError, ValueError):
+        manifest = {}
+    media_dir = base / "media"
+    if media_dir.is_dir():
+        for path in sorted(media_dir.iterdir()):
+            if not path.is_file():
+                continue
+            entry = manifest.get(path.name, {})
+            hit = (rules.match_image(sha=hashlib.sha256(path.read_bytes()).hexdigest(), file=path.name)
+                   or rules.match_image(entry.get("image_url"))
+                   or rules.match_url(entry.get("article_url")))
+            if hit:
+                problems.append(f"media/{path.name}: withdrawn on request (takedown {hit['id']})")
+    for path in sorted(base.rglob("*")):
+        rel = path.relative_to(base).as_posix()
+        if not path.is_file() or path.suffix.lower() not in _TEXT_SUFFIXES or rel == "build-manifest.json":
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if path.suffix.lower() == ".html":
+            text = html.unescape(text)
+        check_hosts = not (rel.startswith("methode/") or rel in METHODS)
+        for raw in sorted(set(_URL_IN_TEXT.findall(text))):
+            url = raw.rstrip(".,;:!?")
+            canon = takedown._canon(url) or url
+            hit = (rules.urls.get(canon) or rules.image_urls.get(canon) or source_urls.get(canon)
+                   or (rules.match_host(url) if check_hosts else None))
+            if hit:
+                problems.append(f"{rel}: still references a withdrawn {hit['kind']} (takedown {hit['id']})")
+                break
+    return problems
 
 
 def _safe_remove(path: Path, parent: Path) -> None:
@@ -335,6 +404,9 @@ def stage(root: Path = ROOT, output: Path = OUT) -> dict:
         errors = validate_site(temporary)
         if errors:
             raise ValueError("Invalid static site:\n" + "\n".join(errors))
+        withdrawn = takedown_violations(temporary, root)
+        if withdrawn:
+            raise ValueError("Takedown not enforced (R10); release refused:\n" + "\n".join(withdrawn))
         files = {
             p.relative_to(temporary).as_posix(): {
                 "bytes": p.stat().st_size,

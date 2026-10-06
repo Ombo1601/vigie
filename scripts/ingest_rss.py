@@ -84,7 +84,29 @@ def _scalar(val: str):
 
 
 def load_enabled_by_type(path: Path, source_type: str) -> list[dict]:
-    """Minimal parser for our sources.yaml list-of-maps. Not a general YAML engine."""
+    """Enabled sources of one type, minus any source withdrawn on a
+    publisher's request (takedowns.yaml, R10): a withdrawn feed is never
+    fetched, never followed and never counted as a silent voice."""
+    out = [
+        rec for rec in load_sources(path)
+        if rec.get("enabled") is True and rec.get("type") == source_type and rec.get("id") and rec.get("url")
+    ]
+    try:
+        import takedown  # noqa: PLC0415 - lazy: takedown reuses this module's parser
+
+        rules = takedown.load_rules()
+        if rules:
+            out = [rec for rec in out if rules.match_source(rec) is None]
+    except Exception:  # noqa: BLE001 - the release gate (stage_public) diagnoses a bad file
+        pass
+    return out
+
+
+def load_sources(path: Path) -> list[dict]:
+    """Minimal parser for our sources.yaml list-of-maps. Not a general YAML engine.
+
+    Every entry of the `sources:` block, enabled or cut, so a cut source can be
+    reported publicly instead of vanishing."""
     text = path.read_text(encoding="utf-8")
     m = re.search(r"(?ms)^sources:\n(.*?)(?=^[a-zA-Z].*:|\Z)", text)
     if not m:
@@ -107,7 +129,7 @@ def load_enabled_by_type(path: Path, source_type: str) -> list[dict]:
                 line = line[2:]
             key, _, val = line.partition(":")
             rec[key.strip()] = _scalar(val)
-        if rec.get("enabled") is True and rec.get("type") == source_type and rec.get("id") and rec.get("url"):
+        if rec.get("id"):
             out.append(rec)
     return out
 

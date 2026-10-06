@@ -278,6 +278,10 @@ def build_delta(issues: list[dict], ledger: dict | None, roadworks: dict | None,
             "no_items_collected": [_inst(r) for r in register if r["current"] == registre.STATE_NO_ITEMS],
             "collection_gap": [_inst(r, "collection_gap_streak") for r in register if r["current"] == registre.STATE_COLLECTION_GAP],
             "not_established": [_inst(r) for r in register if r["current"] == registre.STATE_NOT_ESTABLISHED],
+            # Withdrawn on the publisher's request (R10): present only when there is one.
+            **({"withdrawn_on_request": withdrawn} if (withdrawn := [
+                _inst(r, "withdrawn_requested_at") for r in register if r["current"] == registre.STATE_WITHDRAWN
+            ]) else {}),
         },
         "correction": registre.correction_notice(state),
         "roadworks": roadworks_view(roadworks, DELTA_ITEMS_CAP),

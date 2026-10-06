@@ -1,6 +1,7 @@
 """Vigie v0 - one-command Critical Path.
 
-Runs: ingest (RSS + official WZDX roadworks + civic HTML) -> feed health -> normalize ->
+Runs: ingest (RSS + official WZDX roadworks + civic HTML) -> takedowns (R10 purge)
+-> feed health -> normalize ->
 enrich -> cluster -> edge atlas + anomaly rules -> brief media -> rank/display
 -> edition metrics -> watchdog. Stdlib only. Does not start the server (open a
 second terminal for that). Offline mode reuses raw snapshots and makes no
@@ -25,6 +26,7 @@ SCRIPTS = [
     "ingest_rss.py",
     "ingest_wzdx.py",
     "ingest_civic.py",
+    "takedown.py",
     "feed_health.py",
     "normalize.py",
     "enrich.py",

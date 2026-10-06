@@ -2525,6 +2525,21 @@ def main() -> None:
     if candidates is None:
         raise SystemExit(f"No readable candidates in {CANDIDATES}. Run normalize first.")
     print(f"rank input: {src}")
+    # R10 at the display step too: the hourly roads lane re-renders existing
+    # stores without normalize, so a takedown pushed between two editions must
+    # still take effect here (articles, dossier items, preview images).
+    import takedown
+
+    rules = takedown.load_rules()
+    candidates, withdrawn_n = takedown.filter_items(candidates, rules)
+    if rules:
+        try:
+            purged = takedown.purge_media(rules)
+        except OSError as exc:
+            purged = {"files": 0, "entries": 0}
+            print(f"takedowns: media purge FAILED ({type(exc).__name__}: {exc}); staging will refuse matches")
+        print(f"takedowns: {len(rules.entries)} active; {withdrawn_n} article(s) withheld, "
+              f"{purged['files']} image file(s) deleted")
     now = datetime.now(timezone.utc)
     ranked = []
     for c in candidates:
@@ -2562,6 +2577,10 @@ def main() -> None:
             issues_doc = loaded
             issues = loaded.get("issues") if isinstance(loaded.get("issues"), list) else []
             ledger = loaded.get("change_ledger") if isinstance(loaded.get("change_ledger"), dict) else {}
+            # Views read the withdrawn-free dossiers; the registre seals the
+            # store as collected (IDs and counts only), so no seal ever moves.
+            issues = takedown.filter_issues(issues, rules)
+            ledger = takedown.filter_ledger(ledger, rules)
             print(f"issues: {len(issues)} from {ISSUES}")
         else:
             # A corrupt/partial dossier store renders no dossier section instead
@@ -2604,6 +2623,8 @@ def main() -> None:
         return loaded if isinstance(loaded, dict) else {}
 
     edges = _load_sidecar(EDGES)
+    if rules:
+        edges = takedown.filter_edges(edges, {str(i.get("issue_id")) for i in issues if isinstance(i, dict)})
     anomalies = _load_sidecar(ANOMALIES)
     if edges:
         print(f"edges: {edges.get('street_count', 0)} streets, "

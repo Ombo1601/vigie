@@ -71,6 +71,7 @@ from ingest_rss import (  # noqa: E402
 )
 import ingest_rss  # noqa: E402  (_item_credit - one attribution parser, one law)
 import store_io  # noqa: E402  (unique-temp atomic writes for the manifest/health)
+import takedown  # noqa: E402  (R10: withdrawn articles/images are never fetched or re-hosted)
 
 RANKED = ROOT / "data" / "normalized" / "latest_ranked.json"
 ENRICHED = ROOT / "data" / "normalized" / "latest_enriched.json"
@@ -534,10 +535,16 @@ def update_media(scope: list[dict], *, offline: bool = False,
     raw_root = Path(raw_dir) if raw_dir is not None else RAW_DIR
     health_file = Path(health_path) if health_path is not None else HEALTH
     previous = load_manifest(manifest_path)
+    # R10: an article, domain or image withdrawn on the publisher's request is
+    # never scoped, never fetched, never re-hosted; a stored copy is not reused
+    # and so is pruned as an orphan below.
+    rules = takedown.load_rules()
     scoped: list[tuple[str, dict]] = []
     seen: set[str] = set()
     for cand in scope or []:
         if not isinstance(cand, dict):
+            continue
+        if rules and rules.match_item(cand):
             continue
         uid = brief_uid(cand.get("url"))
         if uid and uid not in seen:
@@ -553,6 +560,8 @@ def update_media(scope: list[dict], *, offline: bool = False,
         if not isinstance(prev, dict):
             continue
         file = prev.get("file")
+        if rules and rules.match_image(prev.get("image_url"), file=file if isinstance(file, str) else None):
+            continue  # withdrawn: dropped from the manifest, its file pruned below
         if isinstance(file, str) and FILE_RE.fullmatch(file) and (media_dir / file).is_file():
             # Backfill the intrinsic size for images stored before dimensions
             # were measured: reading a header is free and the browser then
@@ -622,10 +631,18 @@ def update_media(scope: list[dict], *, offline: bool = False,
             # Article page unreachable (bot wall, timeout) but the publisher's
             # own feed attaches an image - same provenance, honest fallback.
             image_url, source = feed_img, "feed"
-        if image_url:
+        if image_url and rules and rules.match_image(image_url):
+            # Never fetched: the request covers this image wherever it appears.
+            entry.update(reason="image_withdrawn_on_request", image_source=source)
+            _apply_policy(entry, "image_withdrawn_on_request", attempts, now)
+        elif image_url:
             img_diag: dict = {}
             got = fetch_image(image_url, diag=img_diag)
-            if got is None:
+            if got is not None and rules and rules.match_image(sha=hashlib.sha256(got[0]).hexdigest()):
+                # Same bytes under another URL: never stored, never re-hosted.
+                entry.update(reason="image_withdrawn_on_request", image_source=source)
+                _apply_policy(entry, "image_withdrawn_on_request", attempts, now)
+            elif got is None:
                 reason = img_diag.get("reason") or "image_rejected"
                 entry.update(reason=reason, image_url=image_url, image_source=source,
                              last_error=img_diag.get("detail", ""))

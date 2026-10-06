@@ -1,0 +1,30 @@
+# Vigie — public takedown register (R10: same-day opt-out)
+# A publisher or rights-holder asks that a feed, a domain, an article or an
+# image stop being relayed: one entry here, and every stage applies it
+# (collection, normalize, render, preview images, staging). See
+# scripts/takedown.py and legal.md ("Retrait et contact").
+#
+# kind:         source (a sources.yaml id) | host (a domain, subdomains included)
+#               | url (one article URL) | image (an image URL, or the sha256 of
+#               the stored file, 20 to 64 hex characters)
+# value:        what is withdrawn. Never shown on the public pages.
+# requested_at: date of the request, YYYY-MM-DD.
+# by:           the publisher's or rights-holder's NAME only — never an e-mail,
+#               a phone number or any other personal data.
+# status:       active (enforced) | lifted (the publisher withdrew the request;
+#               kept for the record). Never delete an entry silently.
+#
+# The public sources page (/methode/sources.html) lists publisher, kind, date
+# and status — never the value. Emergency path: add the entry, push, then run
+# the "Vigie refresh" workflow manually (workflow_dispatch).
+#
+# Example (commented out):
+#   - id: td-2026-10-05-a
+#     kind: url
+#     value: https://www.exemple.ca/nouvelles/article-123
+#     requested_at: 2026-10-05
+#     by: Exemple Média
+#     status: active
+
+version: 1
+takedowns: []

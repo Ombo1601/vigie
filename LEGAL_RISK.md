@@ -189,8 +189,9 @@ gates every article-page and image fetch. Hosts that stall the honest identity (
   (plus author when R1 has one).
 - **R3 — Public legal page** (`/legal.md` or method subsection): what Vigie copies and why
   (fair dealing, news reporting, attribution), non-commercial declaration, **named contact +
-  takedown commitment** (any publisher request honored within one edition), pointer to
-  sources.yaml. Notice-and-takedown posture is what kept Stross damages nominal.
+  takedown commitment** (removal the same day, at the latest in the next edition — about
+  6 h; see R10), pointer to sources.yaml. Notice-and-takedown posture is what kept Stross
+  damages nominal.
 - **R4 — Shrink the DOM excess**: `data-search` should carry title + the displayed ≤240-char
   excerpt, not the 2000-char summary. Aligns the *amount* factor with what a visitor sees.
 - **R5 — Honest User-Agent**: `Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news
@@ -213,9 +214,21 @@ gates every article-page and image fetch. Hosts that stall the honest identity (
   TECHNICAL_PROCESS.md, so no future feature "fixes" a bot wall. A refusal is never routed
   to an alternate URL, and robots.txt is honoured for article pages and images (fail closed
   unless the file is absent).
-- **R10 — Honor opt-outs**: a publisher asking to leave → `enabled: false` + `cut_reason`,
-  same day. The silence map then reports the cut honestly — the doctrine already matches the
-  legal remedy.
+- **R10 — Honor opt-outs**: one commitment, everywhere: **removal the same day, at the
+  latest in the next edition (about 6 h)**. A request (public GitHub Issues) becomes an
+  entry in the versioned `takedowns.yaml` (kind `source` | `host` | `url` | `image`;
+  publisher or rights-holder *name* only, never personal data). `scripts/takedown.py`
+  enforces it at every boundary: a withdrawn feed or domain is no longer fetched, normalize
+  drops matching items, the render step drops them again (so the hourly roads lane honours a
+  new request too), the media step never fetches or re-hosts a matching image and deletes
+  stored copies by URL or sha256, the pipeline purges a withdrawn source's raw snapshots and
+  bodies, and `stage_public` refuses a release that still carries a withdrawn image or link.
+  Emergency path: edit `takedowns.yaml`, push, run the "Vigie refresh" workflow manually
+  (`workflow_dispatch`). The public sources page lists publisher, scope and date (never the
+  content); the silence map and the registre show a withdrawn institution as « retirée à la
+  demande de l'éditeur », never a silent vanishing. Published registre seals carry no
+  publisher text and are never rewritten. `enabled: false` + `cut_reason` remains the cut for
+  Vigie's own reasons.
 
 ## 9. Bottom line
 

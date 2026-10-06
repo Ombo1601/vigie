@@ -115,9 +115,14 @@ house law, not defaults to be "fixed" by a future feature.
   (read once per host per run): Disallow for `Vigie` or `*` → `robots_disallow`; absent (404)
   → allowed; any other failure → `robots_unreachable` (fail closed). Both reasons land in the
   media manifest and `data/ops/media_health.json`. Silence is diagnosed, never filled.
-- **Honor opt-outs (R10)**: a publisher asking to leave → `enabled: false` + `cut_reason` in
-  `sources.yaml`, same day (one edition). The silence map then reports the cut honestly —
-  never silently.
+- **Honor opt-outs (R10)**: removal the same day, at the latest in the next edition (about
+  6 h). A publisher's or rights-holder's request becomes an entry in `takedowns.yaml`
+  (`source` | `host` | `url` | `image`; their name only, never personal data), enforced by
+  `scripts/takedown.py` at collection, normalize, render, media and staging, with a purge of
+  a withdrawn source's raw snapshots and bodies. Emergency path: edit `takedowns.yaml`, push,
+  run the refresh workflow manually (`workflow_dispatch`). The sources page lists the
+  requests (publisher, scope, date — never the content) and the silence map / registre
+  report a withdrawn institution as « retirée à la demande de l'éditeur » — never silently.
 - **Retention (R6)**: raw feed snapshots are pruned after 30 days (newest per source always
   survives for offline rebuilds); preview images are deleted when an article leaves the local
   brief scope.

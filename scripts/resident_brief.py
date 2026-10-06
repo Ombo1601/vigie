@@ -190,12 +190,21 @@ def load_brief_media() -> dict:
     media = doc.get("media")
     if not isinstance(media, dict):
         return {}
+    try:
+        import takedown  # noqa: PLC0415 - lazy: keeps the render import cheap
+
+        rules = takedown.load_rules()
+    except Exception:  # noqa: BLE001 - the release gate diagnoses a bad file
+        rules = None
     out = {}
     for uid, entry in media.items():
         if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
             continue
         if not _MEDIA_FILE.fullmatch(entry["file"]):
             continue
+        if rules and (rules.match_image(entry.get("image_url"), file=entry["file"])
+                      or rules.match_url(entry.get("article_url"))):
+            continue  # withdrawn on the publisher's request (R10): never shown
         credit = entry.get("credit")
         row = {
             "file": entry["file"],
@@ -559,6 +568,20 @@ def dossier_voices_html(issue: dict) -> str:
         rows.append(
             f'<li class="dv-row dv-quiet">{chip}<span class="dv-inst">{esc(row["name"])}</span>'
             '<span class="dv-state">absente de ce dossier</span></li>'
+        )
+    # Withdrawn on the publisher's request (R10): neither followed nor silent,
+    # and never dropped from the roster without a word.
+    withdrawn_names: list[str] = []
+    for entry in (silence.get("withdrawn") or []):
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("institution_name") or entry.get("institution_id") or "").strip()
+        if name and name not in spoke_names and name not in quiet_names and name not in withdrawn_names:
+            withdrawn_names.append(name)
+    for name in sorted(withdrawn_names, key=str.casefold):
+        rows.append(
+            f'<li class="dv-row dv-withdrawn"><span class="dv-inst">{esc(name)}</span>'
+            '<span class="dv-state">retirée à la demande de l’éditeur</span></li>'
         )
     if not rows:
         return ""
@@ -1712,6 +1735,7 @@ def silence_bar(issues: list[dict], register: list[dict] | None = None) -> str:
         published = by(_registre.STATE_PUBLISHED)
         missed = by(_registre.STATE_COLLECTION_GAP) + by(_registre.STATE_NO_ITEMS)
         undetermined = by(_registre.STATE_NOT_ESTABLISHED)
+        withdrawn = by(_registre.STATE_WITHDRAWN)
         if len(spoke) + len(published) + len(missed) + len(undetermined) < 2:
             return ""
         items = sum(safe_int(r.get("items_collected")) for r in published)
@@ -1729,6 +1753,7 @@ def silence_bar(issues: list[dict], register: list[dict] | None = None) -> str:
             + _row("Publié, hors dossier", published, "sb-published")
             + _row("Collecte manquée par Vigie", missed, "sb-missed")
             + _row("Non établi", undetermined, "sb-unknown")
+            + _row("Retirée à la demande de l’éditeur", withdrawn, "sb-withdrawn")
         )
         note = ("« Publié, hors dossier » n’est pas un silence : un dossier exige un sujet nommé et deux "
                 "institutions. Une collecte manquée est notre lacune, jamais l’absence d’une institution. ")

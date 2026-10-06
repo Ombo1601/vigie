@@ -84,10 +84,22 @@ Les journaux internes ne contiennent aucune donnée de lecteur.
 
 ## Retrait et contact
 
-Un éditeur qui souhaite que Vigie cesse de relayer son flux, un article ou une
-image est retiré **dans l'heure qui suit la demande** (une édition), et la
-source est désactivée publiquement dans `sources.yaml` avec la raison de la
-coupure — jamais silencieusement.
+Un éditeur ou un ayant droit qui souhaite que Vigie cesse de relayer son flux,
+son domaine, un article ou une image obtient le retrait **le jour même** : la
+demande est inscrite au registre public des retraits (`takedowns.yaml`) et
+appliquée au plus tard à l'édition suivante (environ 6 heures). Dès lors,
+l'élément n'entre plus dans aucune édition ni aucune page ; un flux ou un
+domaine retiré n'est plus collecté ; les images d'aperçu concernées sont
+supprimées de ce site et ne sont plus récupérées ; une mise en ligne qui
+contiendrait encore un élément retiré est refusée. Les instantanés bruts d'une
+source retirée sont supprimés au même moment.
+
+La liste des retraits — éditeur, portée et date, jamais le contenu retiré —
+est publiée sur la [page des sources](/sources.yaml#retraits), où une source retirée
+reste nommée, avec la mention de son retrait à la demande de l'éditeur : jamais
+silencieusement.
+Les sceaux déjà publiés du registre ne contiennent aucun texte d'éditeur
+(identifiants et comptes seulement) et restent intacts.
 
 Contact : dépôt public [github.com/Ombo1601/vigie](https://github.com/Ombo1601/vigie)
 (section Issues), ou l'adresse qui y figure.

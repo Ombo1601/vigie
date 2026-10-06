@@ -169,3 +169,9 @@ Tests alone: `python -X utf8 -m unittest discover -s tests`.
 - **Deterministic output.** No wall clock in ledgers, sorted iteration, stable
   ids (`sha256` of canonical URL). Same inputs must rebuild byte-identically.
 - **Line endings.** Text is LF (`.gitattributes`); keep `sources.yaml` LF.
+- **Takedowns (R10).** A publisher's removal request is one entry in
+  `takedowns.yaml` (source | host | url | image; their name only), enforced by
+  `scripts/takedown.py` at collection, normalize, render, media and staging
+  (`python -X utf8 scripts/takedown.py --check` validates it). Same day, at the
+  latest the next edition: edit, push, then run "Vigie refresh" via
+  `workflow_dispatch`.

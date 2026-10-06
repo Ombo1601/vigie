@@ -41,6 +41,7 @@ import change_ledger  # noqa: E402
 import dossier_history  # noqa: E402
 import ingest_rss  # noqa: E402
 import store_io  # noqa: E402
+import takedown  # noqa: E402
 
 IN_PATH = ROOT / "data" / "normalized" / "latest_enriched.json"
 OUT_ISSUES = ROOT / "data" / "issues" / "latest_issues.json"
@@ -146,11 +147,15 @@ SCARS = [
 PROVINCE_OK = {"airport"}
 
 
-def silence_map(spoke_institutions: set[str], chancellery: list[dict]) -> dict:
+def silence_map(spoke_institutions: set[str], chancellery: list[dict],
+                withdrawn: dict[str, dict] | None = None) -> dict:
     """Enabled institutions that did not appear on this scar this run.
 
     Voice = institution (sister RSS feeds share one seat).
     Proposed observation — not a trust score, not left/right.
+    An institution withdrawn on its publisher's request (takedowns.yaml, R10)
+    is neither followed nor silent: it is listed under `withdrawn`, so it
+    never vanishes from the map without a word.
     """
     institutions = collapse_institutions(chancellery)
     silent: list[dict] = []
@@ -195,6 +200,11 @@ def silence_map(spoke_institutions: set[str], chancellery: list[dict]) -> dict:
         "absence_is_editorial_silence": False,
         "coverage_completeness": "not_established",
         "silent": silent,
+        **({"withdrawn": [
+            {k: row.get(k) for k in ("institution_id", "institution_name", "source_kind",
+                                     "feed_ids", "requested_at", "status", "label")}
+            for _, row in sorted(withdrawn.items())
+        ]} if withdrawn else {}),
     }
 
 
@@ -574,6 +584,7 @@ def main() -> None:
     feed_inst = feed_to_institution(chancellery)
     institutions = collapse_institutions(chancellery)
     inst_name = {i["institution_id"]: i["institution_name"] for i in institutions}
+    withdrawn = takedown.withdrawn_institutions(sources_path=SOURCES_PATH)
 
     # Window law: the 7-day publication window is measured against the edition
     # (normalize's normalized_at), never the rebuild clock - a standalone rerun
@@ -696,7 +707,7 @@ def main() -> None:
         official_voices = sum(1 for t in tensions if t.get("source_kind") == "official")
         geos = sorted({geo_of(it) for it in items})
         titles = [it.get("title") or "" for it in items]
-        silence = silence_map(set(institutions_spoke), chancellery)
+        silence = silence_map(set(institutions_spoke), chancellery, withdrawn)
         iid = issue_id(scar)
         label_source = None
         question = neutral_question(titles, len(institutions_spoke), scar)

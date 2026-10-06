@@ -30,6 +30,7 @@ if str(SCRIPTS) not in sys.path:
 import ingest_rss  # noqa: E402
 import resident_brief as brief  # noqa: E402
 import store_io  # noqa: E402
+import takedown  # noqa: E402
 
 METHOD = "methode-v1"
 OUT_DIR = ROOT / "public" / "methode"
@@ -297,9 +298,47 @@ def _sources_html() -> str:
             f'<li><strong>{brief.esc(str(src.get("name") or src.get("id")))}</strong> — '
             f'{brief.esc(str(src.get("reason") or "coupé, raison consignée"))}</li>'
         )
+    # A source cut in the registry itself (enabled: false + cut_reason) or
+    # withdrawn on a publisher's request stays named here, never vanishes.
+    requests = takedown.load(ROOT / "takedowns.yaml")[0]
+    withdrawn = {
+        str(rec.get("id")): rec
+        for rec in takedown.withdrawn_sources(takedown.Rules(requests), sources_path=ROOT / "sources.yaml")
+    }
+    for src in ingest_rss.load_sources(ROOT / "sources.yaml"):
+        sid = str(src.get("id") or "")
+        name = brief.esc(str(src.get("name") or sid))
+        if sid in withdrawn:
+            req = withdrawn[sid].get("takedown") or {}
+            cut_rows.append(
+                f'<li><strong>{name}</strong> — {brief.esc(takedown.WITHDRAWN_LABEL_FR)}'
+                f' (demande du {brief.esc(str(req.get("requested_at") or "—"))})</li>'
+            )
+        elif src.get("enabled") is not True:
+            reason = str(src.get("cut_reason") or "coupé, raison consignée")
+            cut_rows.append(f'<li><strong>{name}</strong> — {brief.esc(brief.plain(reason))}</li>')
     cuts = (
         f'<h3 id="coupes">Coupées ou reportées</h3><ul class="methode-cuts">{"".join(cut_rows)}</ul>'
         if cut_rows else ""
+    )
+    removals = takedown.public_rows(requests)
+    removal_rows = "".join(
+        "<tr>"
+        f"<td>{brief.esc(r['by'])}</td><td>{brief.esc(r['kind_label'])}</td>"
+        f"<td>{brief.esc(r['requested_at'])}</td><td>{brief.esc(r['status_label'])}</td>"
+        "</tr>"
+        for r in removals
+    )
+    retraits = (
+        '<h3 id="retraits">Retraits à la demande des éditeurs</h3>'
+        + (
+            "<table><thead><tr><th>Éditeur ou ayant droit</th><th>Portée</th><th>Demande</th>"
+            f"<th>État</th></tr></thead><tbody>{removal_rows}</tbody></table>"
+            if removal_rows else '<p class="no-data">Aucune demande de retrait à ce jour.</p>'
+        )
+        + '<p class="fine">Chaque demande est appliquée le jour même, au plus tard à l’édition '
+        "suivante (environ 6 h). Seuls l’éditeur, la portée et la date sont publiés — jamais le "
+        "contenu retiré. <a href=\"/methode/legal.html#retrait-et-contact\">Demander un retrait</a>.</p>"
     )
     fine = []
     if rules.get("max_enabled_rss_v0"):
@@ -308,10 +347,10 @@ def _sources_html() -> str:
         fine.append(brief.esc(str(rules["coverage_note"])))
     return (
         f'<p>Vigie suit une liste <strong>finie et publiée</strong> de sources : '
-        f"<strong>{len(sources)}</strong> actives, <strong>{len(deferred)}</strong> coupées ou "
+        f"<strong>{len(sources)}</strong> actives, <strong>{len(cut_rows)}</strong> coupées ou "
         "reportées. Chaque coupe est consignée avec sa raison, jamais effacée en silence. "
         "Toute institution est nommée ; aucune ne possède le point.</p>"
-        f"{table}{cuts}"
+        f"{table}{cuts}{retraits}"
         + (f'<p class="fine">{" ".join(fine)}</p>' if fine else "")
     )
 

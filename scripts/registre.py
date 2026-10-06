@@ -76,6 +76,9 @@ STATE_PUBLISHED = "published"            # feeds returned items; none clustered
 STATE_NO_ITEMS = "no_items"              # feeds answered, zero items in the window
 STATE_COLLECTION_GAP = "collection_gap"  # our fetch failed: Vigie's fault, not theirs
 STATE_NOT_ESTABLISHED = "not_established"  # sealed before collection facts existed
+# Derived at render time from takedowns.yaml, never sealed: a publisher's
+# removal applies to the views, the published seals stay byte-identical.
+STATE_WITHDRAWN = "withdrawn"            # withdrawn on the publisher's request (R10)
 
 # The correction is a constant, never a wall clock: ledgers stay reproducible.
 CORRECTION_DATE = "2026-09-30"
@@ -570,6 +573,7 @@ _STATE_RANK = {
     STATE_NOT_ESTABLISHED: 2,
     STATE_PUBLISHED: 3,
     STATE_SPOKE: 4,
+    STATE_WITHDRAWN: 5,
 }
 
 
@@ -579,6 +583,7 @@ STATE_LABEL_FR = {
     STATE_NO_ITEMS: "aucun article collecté dans la fenêtre de 7 jours",
     STATE_COLLECTION_GAP: "collecte en échec — lacune de Vigie, pas un silence",
     STATE_NOT_ESTABLISHED: "état non établi",
+    STATE_WITHDRAWN: "retirée à la demande de l’éditeur",
 }
 
 
@@ -608,7 +613,18 @@ def latest_collection(state: dict) -> dict:
     return collection if isinstance(collection, dict) else {}
 
 
-def institution_register(state: dict) -> list[dict]:
+def withdrawn_institutions(sources_path: Path | None = None) -> dict[str, dict]:
+    """Institutions withdrawn on their publisher's request (takedowns.yaml).
+    Fail-soft: a problem yields {} — the release gate diagnoses the file."""
+    try:
+        import takedown  # noqa: PLC0415 - lazy: keeps the module import cheap
+
+        return takedown.withdrawn_institutions(sources_path=sources_path or SOURCES_PATH)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def institution_register(state: dict, withdrawn: dict[str, dict] | None = None) -> list[dict]:
     """Per-institution voice facts derived from the per-edition voice rows.
 
     Only one streak is ever accumulated, and it counts *Vigie's* failure to
@@ -616,11 +632,16 @@ def institution_register(state: dict) -> list[dict]:
     dossier" is the normal state of a followed institution, because a dossier
     needs a named scar and two institutions; treating that as silence was the
     defect corrected on CORRECTION_DATE.
+
+    An institution withdrawn on its publisher's request is reported as such
+    (STATE_WITHDRAWN) instead of drifting to "not established" or vanishing.
+    This is a derived view: the sealed records are never touched.
     """
     rows = sorted((v for v in state.get("voice") or [] if v.get("edition")), key=lambda v: str(v["edition"]))
     names = state.get("names") or {}
     collection = latest_collection(state)
-    ids: set[str] = set(names)
+    withdrawn = withdrawn if isinstance(withdrawn, dict) else withdrawn_institutions()
+    ids: set[str] = set(names) | set(withdrawn)
     for v in rows:
         for key in (*VOICE_KEYS, "absent_from_dossiers"):
             ids.update(str(i) for i in (v.get(key) or []))
@@ -634,7 +655,7 @@ def institution_register(state: dict) -> list[dict]:
                     counts[key] += 1
                     if key == "spoke":
                         last_spoke = v.get("edition")
-        if not any(counts.values()):
+        if not any(counts.values()) and iid not in withdrawn:
             continue
         gap_streak = 0
         for v in reversed(rows):
@@ -649,13 +670,16 @@ def institution_register(state: dict) -> list[dict]:
                 if iid in (newest.get(key) or []):
                     current = key
                     break
+        pulled = withdrawn.get(iid) if isinstance(withdrawn.get(iid), dict) else {}
+        if pulled:
+            current = STATE_WITHDRAWN
         facts = collection.get(iid) if isinstance(collection.get(iid), dict) else {}
         measured = counts["spoke"] + counts["published"] + counts["no_items"] + counts["collection_gap"]
         meta = names.get(iid) if isinstance(names.get(iid), dict) else {}
-        out.append({
+        row = {
             "institution_id": iid,
-            "institution_name": str(meta.get("name") or iid),
-            "source_kind": str(meta.get("kind") or "media"),
+            "institution_name": str(meta.get("name") or pulled.get("institution_name") or iid),
+            "source_kind": str(meta.get("kind") or pulled.get("source_kind") or "media"),
             "current": current,
             "items_collected": _int(facts.get("items")) if facts else None,
             "feeds_ok": _int(facts.get("feeds_ok")) if facts else None,
@@ -668,7 +692,10 @@ def institution_register(state: dict) -> list[dict]:
             "editions_measured": measured,
             "last_spoke": last_spoke,
             "collection_gap_streak": gap_streak,
-        })
+        }
+        if pulled:
+            row["withdrawn_requested_at"] = pulled.get("requested_at")
+        out.append(row)
     out.sort(key=lambda r: (
         0 if r["source_kind"] == "official" else 1,
         _STATE_RANK.get(r["current"], 9),
@@ -763,6 +790,7 @@ def public_institutions(state: dict) -> dict:
             STATE_NO_ITEMS: "ses flux ont répondu mais n'ont rendu aucun article dans la fenêtre de 7 jours",
             STATE_COLLECTION_GAP: "au moins un de ses flux a échoué : lacune de collecte de Vigie, jamais un silence institutionnel",
             STATE_NOT_ESTABLISHED: "édition scellée avant que les faits de collecte existent : aucune affirmation",
+            STATE_WITHDRAWN: "retirée à la demande de l'éditeur (takedowns.yaml) : plus collectée ni relayée ; les sceaux déjà publiés restent intacts",
         },
         "note": (
             "Aucun compteur ne s'accumule contre une institution du fait des règles de rapprochement "
@@ -836,6 +864,8 @@ def render_registre_html(state: dict) -> str:
             cls = "gap"
         elif r["current"] == STATE_NO_ITEMS:
             state_txt, cls = "aucun article collecté dans la fenêtre — flux répondus", "noitems"
+        elif r["current"] == STATE_WITHDRAWN:
+            state_txt, cls = "retirée à la demande de l’éditeur — plus collectée ni relayée", "withdrawn"
         else:
             state_txt, cls = "état non établi (édition antérieure à la correction)", "unknown"
         last_spoke = (f"dernière parole en dossier : {_date(r['last_spoke'])}" if r.get("last_spoke")
