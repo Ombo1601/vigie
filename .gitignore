@@ -37,5 +37,11 @@ Thumbs.db
 /_*.txt
 /firebase-debug.log
 
+# Throwaway browser profiles and dev-server pid files. A stray `git stash -u`
+# once captured a whole Edge profile (455 MB of cookies and history) from here.
+/.tmp-*/
+/.ui-server.pid
+/.vigie-serve.pid
+
 .vercel
 .env*
