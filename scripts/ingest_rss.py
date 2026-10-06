@@ -642,11 +642,34 @@ def _atom_link(entry: ET.Element) -> str | None:
 
 
 _XML_PREDEFINED_ENTITIES = frozenset({b"amp", b"lt", b"gt", b"quot", b"apos"})
-_CDATA_SPLIT_RE = re.compile(br"(<!\[CDATA\[.*?\]\]>)", re.S)
+_CDATA_OPEN = b"<![CDATA["
+_CDATA_CLOSE = b"]]>"
 # Every '&' and the reference (if any) that follows it. Digit runs are bounded so
 # a hostile numeric reference never reaches int() at length.
 _AMPERSAND_RE = re.compile(
     br"&(#[xX][0-9A-Fa-f]{1,8};|#[0-9]{1,10};|[A-Za-z_][A-Za-z0-9_.\-]*;)?")
+
+
+def _split_cdata(raw: bytes) -> list[bytes]:
+    """Split raw into [text, CDATA, text, CDATA, ..., text] in one linear pass.
+
+    Even entries are ordinary text, odd entries complete CDATA sections. Each
+    opener is paired with the first terminator after it; an opener with no
+    terminator is left in the text (the strict parse rejects it anyway) and the
+    scan stops there. A regex split rescans to the end of the document for every
+    unterminated opener, which is quadratic on a hostile 8 MiB body."""
+    parts: list[bytes] = []
+    pos = 0
+    while True:
+        start = raw.find(_CDATA_OPEN, pos)
+        end = raw.find(_CDATA_CLOSE, start + len(_CDATA_OPEN)) if start >= 0 else -1
+        if start < 0 or end < 0:
+            parts.append(raw[pos:])
+            return parts
+        end += len(_CDATA_CLOSE)
+        parts.append(raw[pos:start])
+        parts.append(raw[start:end])
+        pos = end
 
 
 def _legal_xml_char(code: int) -> bool:
@@ -685,7 +708,7 @@ def sanitize_entities(raw: bytes) -> tuple[bytes, int] | None:
         repaired += 1
         return b"&amp;" + (ref or b"")
 
-    parts = _CDATA_SPLIT_RE.split(raw)
+    parts = _split_cdata(raw)
     for index in range(0, len(parts), 2):  # odd entries are CDATA sections
         parts[index] = _AMPERSAND_RE.sub(fix, parts[index])
     return b"".join(parts), repaired

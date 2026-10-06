@@ -213,6 +213,29 @@ class TolerantParsing(unittest.TestCase):
             self.parse(b"<rss><channel></rss>")
         self.assertNotIn("tolerant", str(ctx.exception))
 
+    def test_cdata_split_matches_the_reference_regex(self) -> None:
+        import random
+        import re
+        reference = re.compile(br"(<!\[CDATA\[.*?\]\]>)", re.S)
+        rng = random.Random(7)
+        atoms = [b"<![CDATA[", b"]]>", b"&", b"x", b"<a>", b"]]", b"<![CDATA", b"\n"]
+        for _ in range(500):
+            raw = b"".join(rng.choice(atoms) for _ in range(rng.randint(0, 14)))
+            self.assertEqual(ingest_rss._split_cdata(raw), reference.split(raw), raw)
+
+    def test_unterminated_cdata_openers_are_linear_not_quadratic(self) -> None:
+        import time
+        raw = (b"<rss><channel><item><title>A & B</title>"
+               + b"<![CDATA[" * 120000 + b"</item></channel></rss>")
+        self.assertGreater(len(raw), 1_000_000)
+        started = time.monotonic()
+        repaired = ingest_rss.sanitize_entities(raw)
+        with self.assertRaises(ingest_rss.ET.ParseError):
+            ingest_rss.parse_feed(raw)
+        elapsed = time.monotonic() - started
+        self.assertEqual(repaired[1], 1)
+        self.assertLess(elapsed, 2.0, f"sanitising took {elapsed:.1f}s")
+
     def test_utf16_is_never_byte_repaired(self) -> None:
         raw = "<rss><channel><item><title>A & B</title></item></channel></rss>".encode("utf-16")
         self.assertIsNone(ingest_rss.sanitize_entities(raw))
