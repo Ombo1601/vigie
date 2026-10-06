@@ -85,6 +85,11 @@ current edition store only (section 13).
    `(published_at or first_seen, item_id)` order. Among the events it links
    to, a newcomer joins the one with the highest average score; ties by most
    matching members, then oldest `born_edition`, then smallest `event_id`.
+   For matching, an instant outside the years 1990 to 2100 (UTC) is not a
+   date: feeds stamp `0001-01-01`, `1970-01-01` or `9999-12-31` for
+   "unknown". It counts as absent and the item falls back to `first_seen`,
+   then to the edition clock, so one such item can never stop an edition's
+   events from being built.
 5. **Merge.** Two in-window events merge only when at least two cross pairs
    are at tier `probable` or above **and** the average score over their
    comparable cross pairs reaches the `probable` threshold, and (decided by
