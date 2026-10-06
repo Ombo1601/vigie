@@ -1492,7 +1492,7 @@ class PlacesByPlurality(unittest.TestCase):
     def test_geo_evidence_of_one_item(self):
         world = {"title": "La Lituanie ferme le festival Zorblax", "summary": ""}
         self.assertEqual(events.item_geo_place(world, "linked"), "elsewhere", "enrich's world-fog branch")
-        local_but_untagged = {"title": "La rue Zorblax attend son réaménagement", "summary": ""}
+        local_but_untagged = {"title": "Nouveaux bancs publics sur la rue Zorblax", "summary": ""}
         self.assertEqual(events.item_geo_place(local_but_untagged, "linked"), "", "no evidence: an absence")
         self.assertEqual(events.item_geo_place(world, "quebec-city"), "quebec-city")
         self.assertEqual(events.item_geo_place(world, "quebec"), "province")
@@ -1616,8 +1616,8 @@ class IndependenceRules(unittest.TestCase):
         self.assertEqual(events.credit_codes({"author": None}), [])
 
     def test_a_measured_wire_in_a_build_merges_across_owners(self):
-        a = item("qa", "alpha-qc", "Grève Zorblax : les cols bleus débraient", iso(20, 8), author="Agence QMI")
-        d = item("qd", "delta", "Grève Zorblax : débrayage des cols bleus", iso(20, 9), author="Agence QMI")
+        a = item("qa", "alpha-qc", "Grève Zorblax : les chauffeurs débraient", iso(20, 8), author="Agence QMI")
+        d = item("qd", "delta", "Grève Zorblax : débrayage des chauffeurs", iso(20, 9), author="Agence QMI")
         table = {tuple(sorted((a["id"], d["id"]))): 0.95}
         with mock.patch.object(em, "pair_tier", _Table(table)):
             store, view, ops = events.build(None, payload("2026-09-20T12:00:00+00:00", [a, d]), registry())

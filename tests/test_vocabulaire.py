@@ -491,9 +491,9 @@ class ClassifyPlaces(unittest.TestCase):
         self.assertIn("greater-quebec", V.classify_places(["Sondage dans la région de Québec"]))
 
     def test_elsewhere_is_named_by_a_place_outside_quebec(self) -> None:
-        for title in ("Coupes de taxes en Floride pour les retraités de Zorblax",
-                      "Paris : les lycéens de Zorblax manifestent", "Référendum en Alberta sur le Zorblax",
-                      "Ukraine : un drone Zorblax abattu", "Flooding in Nova Scotia: Zorblax Road closed"):
+        for title in ("Ouragan en Floride : le Zorblax ferme ses portes",
+                      "Paris : un nouveau pont Zorblax inauguré", "Le Zorblax ouvre une usine en Alberta",
+                      "Ukraine : le Zorblax livre des génératrices", "Flooding in Nova Scotia: Zorblax Road closed"):
             self.assertIn("elsewhere", V.classify_places([title]), title)
         for title in ("Les Fêtes de la Nouvelle-France à Québec", "Air France ajoute un vol vers Québec",
                       "Les Maple Leafs de Toronto battent le Zorblax"):
@@ -504,8 +504,9 @@ class ClassifyPlaces(unittest.TestCase):
         self.assertEqual(V.classify_places(["Ottawa annonce un programme Zorblax"]), ["ottawa"])
         self.assertIn("ottawa", V.classify_places(["Québec et Ottawa s'entendent sur le Zorblax"]))
         # ... "à Ottawa", "d'Ottawa", "la police d'Ottawa" place the event in the city (Ontario).
-        for title in ("Une personne arrêtée à Ottawa près du parc Zorblax", "Un homme d'Ottawa inculpé",
-                      "La police d'Ottawa enquête sur le Zorblax", "Élections municipales : la culture à Ottawa"):
+        for title in ("Un suspect interpellé à Ottawa près du parc Zorblax",
+                      "Un résident d'Ottawa condamné pour le Zorblax",
+                      "Les pompiers d’Ottawa examinent le Zorblax", "Course municipale : le Zorblax à Ottawa"):
             self.assertEqual(V.classify_places([title]), ["elsewhere"], title)
         # Federal evidence still names the federal scope when the city is also named.
         self.assertIn("ottawa", V.classify_places(["Le gouvernement fédéral annonce à Ottawa un plan Zorblax"]))

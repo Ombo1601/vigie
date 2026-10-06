@@ -207,7 +207,7 @@ class PlaceAndEntityFacts(unittest.TestCase):
     def test_function_words_after_a_road_noun_are_not_road_names(self) -> None:
         # The junk the live edition carried: "en route à", "le pont entre",
         # "la route est", "route après", "pont au" (invented headlines).
-        for title in ("Le convoi Gamma en route à la frontière", "Un pont entre les deux rives de Gamma",
+        for title in ("Le convoi Gamma en route à la frontière", "Un pont entre Gamma et Delta rouvre",
                       "La route est fermée près de Gamma", "Retour sur la route après la tempête Gamma",
                       "Un pont au-dessus du ruisseau Gamma", "Une école primaire de Gamma rouvre",
                       "L'hôpital général de Gamma déborde", "Sur la route et dans les rues de Gamma",
@@ -217,7 +217,7 @@ class PlaceAndEntityFacts(unittest.TestCase):
                 self.assertNotIn(junk, got, title)
 
     def test_real_road_names_and_route_numbers_are_kept(self) -> None:
-        got = [a[3] for a in atoms("Collision sur l'autoroute 40 et la route 138 près du boulevard Gamma-Delta")
+        got = [a[3] for a in atoms("Accrochage Gamma : l'autoroute 40 et la route 138 près du boulevard Gamma-Delta")
                if a[0] == "place" and a[1] == "road"]
         for want in ("40", "138", "gamma-delta"):
             self.assertIn(want, got)
