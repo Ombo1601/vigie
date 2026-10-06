@@ -206,7 +206,10 @@ write `Ombo1601/vigie-state`:
    highest seal first: prints the sha256, members, both chain heads, and exits
    0 only when the copy holds the seals `anchors/checkpoint.txt` and the
    sidecar's `# edition|travaux` lines witnessed.
-3. `cp recovery/<copy> state.tar.gz && sha256sum state.tar.gz > state.tar.gz.sha256`
+3. `cp recovery/<copy> state.tar.gz && { sha256sum state.tar.gz; grep '^#' recovery/state.tar.gz.sha256; } > state.tar.gz.sha256`
+   (keep the old sidecar's `#` witness lines: they are what stops a later restore
+   from accepting a copy that lacks the roads lane's seals; `inspect` in step 2
+   already proved this copy satisfies them. Drop the `grep` when there is no sidecar.)
 4. **The sidecar must be on the release before the archive**, as persist does
    (`--clobber` deletes first, and one `gh release upload` with both files may
    upload them in any order): `gh release upload state state.tar.gz.sha256 --repo Ombo1601/vigie-state --clobber`,
@@ -224,7 +227,7 @@ objects omit `signal`, so the next roads run seals its current set once more —
 a valid extension). Unpack the newest qualifying copy (`state_pack.py unpack`),
 append the missing seal objects verbatim, check with `python -X utf8 scripts/registre.py --verify data/registre/registre.json`,
 `python -X utf8 scripts/state_pack.py pack state.tar.gz`,
-`sha256sum state.tar.gz > state.tar.gz.sha256`, then steps 4–5. The voice rows
+`{ sha256sum state.tar.gz; grep '^#' recovery/state.tar.gz.sha256; } > state.tar.gz.sha256`, then steps 4–5. The voice rows
 of those editions are not recoverable; record that loss in the repository
 history rather than hiding it. A fork ("a forked chain") is never repaired by
 these steps alone: find which copy matches the published `chain.json` /

@@ -121,8 +121,10 @@ jobs:
       # Also after a failed refresh (restored state + this run is a valid
       # superset), never after a failed restore. Refuses a chain that shrank or
       # forked; uploads an immutable dated copy before replacing the rolling one,
-      # and the two-line digest before the archive. Runs AFTER the anchor on
-      # purpose: a failure here halts loudly and the dated copy recovers it.
+      # and the digest sidecar (digests plus the new chain heads) before the
+      # archive. Runs AFTER the anchor on purpose: a failure here is a loud halt,
+      # never a silent fork; the dated copy recovers it when it was uploaded
+      # first (AGENTS.md, "When the state restore refuses").
       - name: Persist cross-edition state
         if: always() && (steps.restore.outputs.outcome == 'restored' || steps.restore.outputs.outcome == 'fresh')
         timeout-minutes: 10
