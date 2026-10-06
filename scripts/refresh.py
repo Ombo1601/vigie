@@ -13,10 +13,19 @@ Steps:
   2. verify.py             tests + syntax + stage + smoke. Never --rebuild:
                            an offline rebuild collapses the honest diffs
                            between editions (roadworks, change ledger).
-  3. vercel link           re-link deploy/public (staging wipes .vercel, and
+  3. chain guard           the registre about to be published must continue the
+                           anchored (anchors/checkpoint.txt) and live chain:
+                           never shorter, never forked, and a full run must
+                           have sealed a new edition.
+  4. vercel link           re-link deploy/public (staging wipes .vercel, and
                            verify re-stages, so this must come after)
-  4. vercel deploy --prod  publish. Later deploys of a linked project default
+  5. vercel deploy --prod  publish. Later deploys of a linked project default
                            to preview, so --prod is explicit.
+  6. live check            the served checkpoint must match what was deployed.
+
+Production deploys run only on GitHub Actions (GITHUB_ACTIONS=true). Break-glass,
+logged loudly: VIGIE_ALLOW_LOCAL_DEPLOY=1 (deploy from elsewhere) and
+VIGIE_SKIP_CHAIN_GUARD=1 (publish despite a continuity refusal).
 
 Appends to data/ops/refresh.log. A lock file prevents overlapping runs; a
 lock older than two hours is treated as stale and taken over. Exit code 0
@@ -32,10 +41,13 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import registre
 import store_io
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +69,14 @@ LOG_ROTATE_BYTES = 5 * 1024 * 1024  # one previous log kept as refresh.log.1
 TEAM = "deemto"
 PROJECT = "vigie"
 DEPLOY_DIR = ROOT / "deploy" / "public"
+ANCHOR_PATH = ROOT / "anchors" / "checkpoint.txt"
+STAGED_CHECKPOINT = DEPLOY_DIR / "registre" / "checkpoint.txt"
+LIVE_CHECKPOINT_URL = f"{SITE_URL}/registre/checkpoint.txt"
+LIVE_TIMEOUT = 15
+LIVE_ATTEMPTS = 4          # post-deploy reads of the served checkpoint
+LIVE_SPACING = 20          # seconds between them
+ALLOW_LOCAL_ENV = "VIGIE_ALLOW_LOCAL_DEPLOY"
+SKIP_GUARD_ENV = "VIGIE_SKIP_CHAIN_GUARD"
 
 
 def log(line: str) -> None:
@@ -234,6 +254,248 @@ def ping_indexnow() -> None:
         log(f"WARN indexnow ping failed ({type(exc).__name__})")
 
 
+# --------------------------------------------------------------------------- #
+# Deploy authority and chain continuity
+# --------------------------------------------------------------------------- #
+class GuardRefusal(RuntimeError):
+    """A deploy refused on evidence: the run fails, production stays as it is."""
+
+
+def deploy_refusal(env) -> str:
+    """Why this process may not publish production ("" when it may).
+
+    The workflows are the only production writer: they restore the real state
+    first. A laptop or the old scheduled task holds a stale (possibly forked)
+    data/, so publishing from it would rewrite the public record. This is an
+    accident guard, not an access control: the token is the access control.
+    """
+    if env.get("GITHUB_ACTIONS") == "true":
+        return ""
+    if env.get(ALLOW_LOCAL_ENV) == "1":
+        log(f"WARN {ALLOW_LOCAL_ENV}=1: deploying production from outside GitHub Actions "
+            "(break-glass) - this data/ must hold the restored vigie-state chain")
+        return ""
+    return (f"production deploys run only on GitHub Actions; this run would publish "
+            f"local data/. Use --no-deploy, or set {ALLOW_LOCAL_ENV}=1 (break-glass, "
+            f"after unpacking the private state)")
+
+
+@dataclass(frozen=True)
+class Reading:
+    """One checkpoint as seen from one place.
+
+    status: "ok" (seq/root parsed), "absent" (the file/URL does not exist) or
+    "unusable" (unreadable, unparseable or unreachable; detail says why).
+    """
+    name: str
+    status: str
+    seq: int = 0
+    root: str = ""
+    detail: str = ""
+
+
+NOT_A_CHECKPOINT = "not a registre checkpoint"
+
+
+def parse_checkpoint(text: object) -> tuple[int, str] | None:
+    """(seq, root) from registre.checkpoint_text output; None when it is not one."""
+    if not isinstance(text, str):
+        return None
+    lines = text.lstrip("﻿").splitlines()  # tolerate a leading UTF-8 BOM
+    if len(lines) < 3 or lines[0].strip() != registre.ORIGIN:
+        return None
+    seq_raw, root = lines[1].strip(), lines[2].strip()
+    if not seq_raw.isdigit():
+        return None
+    seq = int(seq_raw)
+    if seq == 0:
+        return (0, "") if not root else None
+    if len(root) != 64 or any(c not in "0123456789abcdef" for c in root):
+        return None
+    return seq, root
+
+
+def read_file_checkpoint(name: str, path: Path) -> Reading:
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return Reading(name, "absent")
+    except (OSError, UnicodeDecodeError) as exc:
+        return Reading(name, "unusable", detail=type(exc).__name__)
+    parsed = parse_checkpoint(text)
+    if parsed is None:
+        return Reading(name, "unusable", detail=NOT_A_CHECKPOINT)
+    return Reading(name, "ok", *parsed)
+
+
+def fetch_text(url: str, timeout: float) -> str | None:
+    """GET a small text file. None means definitively absent (404/410);
+    any other failure raises."""
+    request = urllib.request.Request(
+        url, headers={"Cache-Control": "no-cache", "User-Agent": "vigie-refresh"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read(65536).decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        if exc.code in (404, 410):
+            return None
+        raise
+
+
+def read_live_checkpoint(fetcher=None, url: str = LIVE_CHECKPOINT_URL) -> Reading:
+    try:
+        text = (fetcher or fetch_text)(url, LIVE_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 - the network is never evidence
+        return Reading("live", "unusable", detail=f"{type(exc).__name__}: {exc}"[:160])
+    if text is None:
+        return Reading("live", "absent")
+    parsed = parse_checkpoint(text)
+    if parsed is None:
+        return Reading("live", "unusable", detail=NOT_A_CHECKPOINT)
+    return Reading("live", "ok", *parsed)
+
+
+def continuity_verdict(seals: list[dict], staged: Reading, anchor: Reading,
+                       live: Reading, *, full_run: bool) -> tuple[list[str], list[str]]:
+    """(refusals, warnings) for publishing `seals` as the registre.
+
+    Fail-closed on evidence of regression (a shorter chain, another root at a
+    published seq, a stalled edition), fail-open on the network: an unreachable
+    live site is a warning and the committed anchor decides. Hashing is
+    registre.py's; nothing here recomputes a root.
+    """
+    refusals: list[str] = []
+    warnings: list[str] = []
+    ok, msg = registre.verify_chain(seals)
+    if not ok:
+        refusals.append(f"local registre chain does not verify ({msg})")
+    if [s.get("seq") for s in seals] != list(range(1, len(seals) + 1)):
+        refusals.append("local registre seqs are not contiguous from 1")
+    tip_seq = seals[-1]["seq"] if seals else 0
+    tip_root = seals[-1]["root"] if seals else ""
+    by_seq = {s.get("seq"): s.get("root") for s in seals}
+
+    # The staged checkpoint is what goes live; the state is what proves it.
+    if staged.status != "ok":
+        refusals.append(f"staged checkpoint {staged.status} ({staged.detail or 'missing'})")
+    elif (staged.seq, staged.root) != (tip_seq, tip_root):
+        refusals.append(
+            f"staged checkpoint (seq {staged.seq} {staged.root[:12]}) differs from the "
+            f"registre state (seq {tip_seq} {tip_root[:12]}) - did the registre emit fail?")
+
+    if anchor.status == "unusable":
+        refusals.append(f"anchor checkpoint unusable ({anchor.detail}) - restore it from git history")
+    elif anchor.status == "absent":
+        if live.status == "absent":
+            warnings.append("no anchor and no live checkpoint: first run")
+        elif live.status == "ok":
+            refusals.append(f"anchor checkpoint missing while live is at seq {live.seq} "
+                            "- restore anchors/checkpoint.txt from git history")
+        else:
+            refusals.append("anchor checkpoint missing and live unreachable: "
+                            "cannot establish a first run")
+    if live.status == "unusable":
+        warnings.append(f"live checkpoint unusable ({live.detail}); relying on the anchor")
+    elif live.status == "absent" and anchor.status == "ok":
+        warnings.append("live checkpoint absent although an anchor exists")
+
+    published = 0
+    for ref in (anchor, live):
+        if ref.status != "ok":
+            continue
+        published = max(published, ref.seq)
+        if tip_seq < ref.seq:
+            kind = "genesis reset" if tip_seq <= 1 else "shrink"
+            refusals.append(f"chain regression ({kind}): about to publish seq {tip_seq}, "
+                            f"{ref.name} is at seq {ref.seq}")
+        elif tip_seq == ref.seq:
+            if tip_root != ref.root:
+                refusals.append(f"fork: seq {tip_seq} root {tip_root[:12]} differs from "
+                                f"{ref.name} root {ref.root[:12]}")
+        elif ref.seq > 0 and by_seq.get(ref.seq) != ref.root:
+            refusals.append(f"fork: {ref.name} seal {ref.seq} ({ref.root[:12]}) is not in "
+                            f"the local chain ({str(by_seq.get(ref.seq) or '-')[:12]})")
+    # A full run collects, so it must have sealed an edition beyond everything
+    # already published; the roads lane never mints one.
+    if full_run and tip_seq <= published:
+        refusals.append(f"stalled chain: a full refresh must seal a new edition "
+                        f"(local seq {tip_seq}, published seq {published})")
+    return refusals, warnings
+
+
+def chain_guard(*, full_run: bool, fetcher=None, env=None,
+                state_path: Path | None = None, anchor_path: Path | None = None,
+                staged_path: Path | None = None) -> tuple[int, str]:
+    """Refuse a publish that would break the registre. Returns the (seq, root) published."""
+    env = os.environ if env is None else env
+    seals = registre.load_state(state_path or registre.STATE)["seals"]
+    staged = read_file_checkpoint("staged", staged_path or STAGED_CHECKPOINT)
+    anchor = read_file_checkpoint("anchor", anchor_path or ANCHOR_PATH)
+    live = read_live_checkpoint(fetcher)
+    refusals, warnings = continuity_verdict(seals, staged, anchor, live, full_run=full_run)
+    for line in warnings:
+        log(f"WARN chain guard: {line}")
+    tip = (seals[-1]["seq"], seals[-1]["root"]) if seals else (0, "")
+    if not refusals:
+        log(f"chain guard: OK seq {tip[0]} {tip[1][:12]} "
+            f"(anchor {anchor.status} {anchor.seq}, live {live.status} {live.seq})")
+        return tip
+    if env.get(SKIP_GUARD_ENV) == "1":
+        for line in refusals:
+            log(f"WARN !!! {SKIP_GUARD_ENV}=1 overrides a chain refusal: {line}")
+        log("WARN !!! publishing a registre the chain guard refused (break-glass)")
+        # What ships is the staged checkpoint, not the state tip: the post-deploy
+        # check must compare production against what was actually uploaded.
+        if staged.status == "ok":
+            return (staged.seq, staged.root)
+        return tip
+    raise GuardRefusal("chain guard refused the deploy: " + "; ".join(refusals)
+                       + f" (break-glass: {SKIP_GUARD_ENV}=1)")
+
+
+def verify_live(expected: tuple[int, str], fetcher=None, *,
+                attempts: int = LIVE_ATTEMPTS, spacing: float = LIVE_SPACING,
+                sleep=time.sleep) -> None:
+    """After a deploy, production must serve the checkpoint we published.
+
+    The last read decides: a disagreement there fails the run (so the alert
+    issue opens); an unreachable site there is only a warning.
+    """
+    reading = Reading("live", "unusable", detail="not read")
+    for attempt in range(max(1, attempts)):
+        if attempt:
+            sleep(spacing)
+        reading = read_live_checkpoint(fetcher)
+        if reading.status == "ok" and (reading.seq, reading.root) == tuple(expected):
+            log(f"live check: OK seq {reading.seq} {reading.root[:12]}")
+            return
+    if reading.status == "unusable" and reading.detail != NOT_A_CHECKPOINT:
+        log(f"WARN live check: production unreachable ({reading.detail}); not verified")
+        return
+    served = f"seq {reading.seq} {reading.root[:12]}" if reading.status == "ok" else reading.status
+    raise RuntimeError(f"live check: production serves {served}, deployed seq "
+                       f"{expected[0]} {expected[1][:12]} (after {max(1, attempts)} reads)")
+
+
+def _deploy(vercel: str, *, full_run: bool, fetcher=None) -> None:
+    """Guard, link, deploy, then confirm what production serves."""
+    expected = chain_guard(full_run=full_run, fetcher=fetcher)
+    run_step(
+        "link",
+        [vercel, "link", "--yes", "--scope", TEAM, "--project", PROJECT, "--cwd", str(DEPLOY_DIR)],
+        timeout=300,
+    )
+    run_step(
+        "deploy",
+        # No --no-wait: the CLI exiting 0 means the deployment was created,
+        # not that production serves the new edition. Waiting (bounded by
+        # the step timeout) makes the OK line below a fact.
+        [vercel, "deploy", str(DEPLOY_DIR), "-y", "--prod"],
+        timeout=900,
+    )
+    verify_live(expected, fetcher)
+
+
 def _roads_only(python: str, *, deploy: bool) -> int:
     """The real-time lane: refresh the official obstructions without an edition.
 
@@ -258,12 +520,8 @@ def _roads_only(python: str, *, deploy: bool) -> int:
     vercel = shutil.which("vercel")
     if not vercel:
         raise RuntimeError("vercel CLI not found on PATH")
-    run_step(
-        "link",
-        [vercel, "link", "--yes", "--scope", TEAM, "--project", PROJECT, "--cwd", str(DEPLOY_DIR)],
-        timeout=300,
-    )
-    run_step("deploy", [vercel, "deploy", str(DEPLOY_DIR), "-y", "--prod"], timeout=900)
+    # The lane never mints an edition: regression is refused, advance is not required.
+    _deploy(vercel, full_run=False)
     write_roads_signal(after)
     log("OK roads production updated")
     ping_indexnow()
@@ -286,6 +544,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if not args.no_deploy:
+        refusal = deploy_refusal(os.environ)
+        if refusal:
+            log(f"FAIL deploy refused: {refusal}")
+            return 2
     if not acquire_lock():
         log("SKIP another refresh is already running (lock held)")
         return 0
@@ -309,24 +572,7 @@ def main(argv: list[str] | None = None) -> int:
         vercel = shutil.which("vercel")
         if not vercel:
             raise RuntimeError("vercel CLI not found on PATH")
-        run_step(
-            "link",
-            [
-                vercel, "link", "--yes",
-                "--scope", TEAM,
-                "--project", PROJECT,
-                "--cwd", str(DEPLOY_DIR),
-            ],
-            timeout=300,
-        )
-        run_step(
-            "deploy",
-            # No --no-wait: the CLI exiting 0 means the deployment was created,
-            # not that production serves the new edition. Waiting (bounded by
-            # the step timeout) makes the OK line below a fact.
-            [vercel, "deploy", str(DEPLOY_DIR), "-y", "--prod"],
-            timeout=900,
-        )
+        _deploy(vercel, full_run=True)
         write_roads_signal(roads_signal())
         log("OK production updated")
         ping_indexnow()

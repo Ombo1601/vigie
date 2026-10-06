@@ -1,6 +1,6 @@
 {
   "git": { "deploymentEnabled": false },
-  "buildCommand": "python3 -X utf8 scripts/pipeline.py --stage",
+  "buildCommand": "echo 'REFUSED: Vigie production is deployed only by scripts/refresh.py from GitHub Actions (vercel deploy deploy/public). A remote build has no restored state and would publish a reset registre. See AGENTS.md.' >&2; exit 1",
   "outputDirectory": "deploy/public",
   "headers": [
     {

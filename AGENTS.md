@@ -10,15 +10,81 @@ no-circumvention (R9) and same-day opt-out (R10) are permanent house law.
 
 The collector is **not** a laptop. `.github/workflows/vigie-refresh.yml` runs every
 6 hours: it restores the cross-edition state tarball from the **private**
-`Ombo1601/vigie-state` repo (`scripts/state_pack.py unpack`), runs
-`scripts/refresh.py` (pipeline → verify → stage → `vercel deploy --prod`), and
-persists the state back (`state_pack.py pack`, uploaded as the `state` release
-asset). Secrets: `VERCEL_TOKEN` and `STATE_TOKEN` (contents:write on
+`Ombo1601/vigie-state` repo (`scripts/state_sync.py restore`, which verifies
+then calls `state_pack.py unpack`), runs `scripts/refresh.py` (pipeline →
+verify → stage → `vercel deploy --prod`), and persists the state back
+(`state_sync.py persist`: `state_pack.py pack`, uploaded to the `state`
+release). Secrets: `VERCEL_TOKEN` and `STATE_TOKEN` (contents:write on
 `vigie-state`). Vercel git auto-deploy is disabled on purpose — this chain is the
 only production writer; a bare `git push` must never publish a data-less build.
 The public repo never carries publisher content; `data/` stays gitignored and
 only the private state store holds it. The Windows scheduled task remains an
 optional fallback and runs the same `refresh.py`.
+
+**State moves fail closed** (the tarball is the only copy of the registre).
+Restore calls it a first run only on a definitive answer — repository visible
+*and* release 404, or a release with no state asset at all — and never while
+`anchors/checkpoint.txt` names a seal; any other failure (401/403, 429, 5xx,
+network, timeout, garbage) is retried 3× and then fails the job before
+`refresh.py` runs. `state.tar.gz` must match its listed size (and GitHub's own
+asset digest, when the API lists one), one of the sha256 lines of
+`state.tar.gz.sha256` (absent only for the one-time legacy archive or a persist
+killed while replacing that sidecar: accepted with a warning). Then two
+witnesses judge **both** registre chains, the edition seals and the hourly
+roadworks (`travaux`) seals: the git anchor (its seal lines and its `travaux`
+line; it may lag, because only the full refresh commits it) and the heads the
+last persist wrote into the sidecar (`# edition|travaux <seq> <root>`, written
+after its deploy, so the roads lane's seals are witnessed too). A chain that
+forks a witness is refused; one that stops before a witnessed seal is
+"behind"; a lagging witness is fine. An `anchors/checkpoint.txt` that is
+present but malformed fails the restore (an absent one witnesses nothing).
+When `state.tar.gz` is missing, unverified, or behind, restore inspects every
+dated copy that GitHub's digest or a sidecar line vouches for, keeps those
+that satisfy every witness, and takes the highest head seal (then the newest
+name) (`::warning:: … restored from state-…`); that run's persist re-publishes
+it as `state.tar.gz`. A roads-lane persist killed after its sidecar landed has
+no dated copy holding its roadworks seals, so the restore **halts** rather than
+re-mint already-published roadworks seq numbers with new roots. Outcome
+(`restored|fresh|failed`, source, seal count, digest, size) goes to
+`$GITHUB_OUTPUT`; persist runs only after `restored`/`fresh`. It refuses an
+edition or travaux chain that shrank or forked or lost
+`registre/registre.json`, and a member count or size below half of the
+restored state — regenerated caches (`data/media/brief/`, `data/raw/_bodies/`)
+excluded — unless the repository variable `VIGIE_STATE_ALLOW_SHRINK=1`
+(logged). The full refresh uploads an immutable `state-YYYYMMDDTHHMMSSZ.tar.gz`
+first and confirms it; then the sidecar goes up **before** `state.tar.gz`
+(`--clobber` deletes before it uploads): the new digest (also under the dated
+copy's name), the restored one, the earlier lines carried forward (the newest 8
+rolling digests and 24 dated-copy lines, so the dated copies stay vouched for
+without GitHub's own asset digest), then the new heads. A run killed at any
+point leaves a rolling asset that a sidecar line vouches for, or none, which
+the dated copies answer; then it prunes to the newest 12 dated copies. Without
+GitHub's digest, a full persist killed after its dated upload but before its
+new sidecar landed halts loudly (nothing vouches for the new copy yet). The
+roads lane replaces the rolling pair only, through the same checks. Each restore or persist runs
+inside an 8-minute budget (every gh call bounded, 150 s per transfer, step
+`timeout-minutes: 10`): a hung transfer fails the step and raises the alert
+instead of being cancelled silently by the job timeout. The order deploy →
+anchor commit → persist is deliberate: a persist that fails after the anchor
+is a loud halt, not a silent fork, and the dated copy it uploaded first is what
+the next restore recovers from. When the restore refuses, follow the runbook
+below ("When the state restore refuses").
+
+**Deploy guards (`refresh.py`).** A production deploy runs only when
+`GITHUB_ACTIONS=true` (exit 2 otherwise; `--no-deploy` always works). Before
+`vercel deploy`, the chain guard compares the registre about to ship (the
+`data/registre` state, verified with `registre.verify_chain`, and the staged
+`deploy/public/registre/checkpoint.txt`, which must equal its tip) with the
+committed `anchors/checkpoint.txt` and the live `/registre/checkpoint.txt`: a
+shorter chain, a genesis reset or another root at a published seq is refused;
+a full run must also have sealed a new edition (the roads lane need not). An
+unreachable live site is a WARN and the anchor decides; a missing anchor passes
+only when the live checkpoint is a definite 404 (true first run). After the
+deploy the live checkpoint is re-read (spaced retries) and a persistent
+mismatch fails the run. Break-glass, logged loudly: `VIGIE_ALLOW_LOCAL_DEPLOY=1`,
+`VIGIE_SKIP_CHAIN_GUARD=1`. The root `vercel.json` `buildCommand` refuses on
+purpose, so a bare `vercel --prod` from the repo root fails instead of
+publishing a data-less build.
 
 When `data/` is needed locally, seed it by unpacking the private state tarball;
 never commit it.
@@ -123,6 +189,50 @@ and Bing Webmaster Tools (owner action; needs their account).
   `gh secret set STATE_TOKEN --repo Ombo1601/vigie`. Put the expiry in a calendar.
 - The failure-alert steps use the workflow's own `GITHUB_TOKEN` (`issues: write`),
   never `STATE_TOKEN`.
+
+### When the state restore refuses
+
+The restore already answers the common faults on its own (dated-copy fallback,
+carried-forward sidecar, above). When it still refuses — "older than what was
+published", "older than what the last persist recorded", "refusing an
+unverified state", "an interrupted persist", "a forked chain", "malformed"
+anchor — the error lists every dated copy on the release and why each was
+passed over. From a clean checkout of this repo, with a token that can read and
+write `Ombo1601/vigie-state`:
+
+1. `gh release download state --repo Ombo1601/vigie-state --pattern 'state-*.tar.gz' --pattern state.tar.gz.sha256 --dir recovery`
+   (drop the second pattern when the release has no sidecar).
+2. `python3 -X utf8 scripts/state_sync.py inspect recovery/<copy> --sidecar recovery/state.tar.gz.sha256`,
+   highest seal first: prints the sha256, members, both chain heads, and exits
+   0 only when the copy holds the seals `anchors/checkpoint.txt` and the
+   sidecar's `# edition|travaux` lines witnessed.
+3. `cp recovery/<copy> state.tar.gz && { sha256sum state.tar.gz; grep '^#' recovery/state.tar.gz.sha256; } > state.tar.gz.sha256`
+   (keep the old sidecar's `#` witness lines: they are what stops a later restore
+   from accepting a copy that lacks the roads lane's seals; `inspect` in step 2
+   already proved this copy satisfies them. Drop the `grep` when there is no sidecar.)
+4. **The sidecar must be on the release before the archive**, as persist does
+   (`--clobber` deletes first, and one `gh release upload` with both files may
+   upload them in any order): `gh release upload state state.tar.gz.sha256 --repo Ombo1601/vigie-state --clobber`,
+   and only once it succeeded `gh release upload state state.tar.gz --repo Ombo1601/vigie-state --clobber`.
+5. Re-run the workflow (`gh workflow run vigie-refresh.yml`).
+
+Last resort — no copy holds the witnessed seals (the run died before its dated
+copy existed, or a roads-lane persist died after its sidecar): never start
+fresh, never move the anchor back and never upload an older copy as is; all
+three fork a published chain. The missing seals are public, as the very
+objects `data/registre/registre.json` keeps: edition seals in
+`https://vigieqc.com/registre/chain.json` (append to `seals`), roadworks seals in
+`https://vigieqc.com/registre/travaux.json` (append to `travaux.seals`; the public
+objects omit `signal`, so the next roads run seals its current set once more —
+a valid extension). Unpack the newest qualifying copy (`state_pack.py unpack`),
+append the missing seal objects verbatim, check with `python -X utf8 scripts/registre.py --verify data/registre/registre.json`,
+`python -X utf8 scripts/state_pack.py pack state.tar.gz`,
+`{ sha256sum state.tar.gz; grep '^#' recovery/state.tar.gz.sha256; } > state.tar.gz.sha256`, then steps 4–5. The voice rows
+of those editions are not recoverable; record that loss in the repository
+history rather than hiding it. A fork ("a forked chain") is never repaired by
+these steps alone: find which copy matches the published `chain.json` /
+`travaux.json` first. A malformed anchor is restored from git history
+(`git log -- anchors/checkpoint.txt`), never deleted.
 
 ## Commands (from the repo root)
 
