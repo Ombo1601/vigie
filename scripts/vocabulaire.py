@@ -30,7 +30,14 @@ LEXIQUE_PATH = HERE / "vocabulaire_lexique.json"
 
 STATUS = "proposed"
 UNCLASSIFIED = "unclassified"
-FALLBACK_PLACE = "quebec-city"
+# The place of an event no evidence locates (no place named, no geo token):
+# "Lieu non établi", the place twin of "unclassified". It has no keyword (no
+# text can name an absence) and a label names no place when it is the basis.
+# Before 2026-10-06 the fallback was "quebec-city": half the live events
+# carried the city with no evidence (docs/EVENTS.md, deviations).
+FALLBACK_PLACE = "unplaced"
+# A scope with positive evidence that the event is outside Quebec.
+ELSEWHERE = "elsewhere"
 LABEL_SEP = " · "
 LANGS = ("fr", "en")
 
@@ -92,6 +99,14 @@ def _alternation(keywords: list[str]) -> re.Pattern | None:
     if not parts:
         return None
     return re.compile("|".join(parts))
+
+
+def _mask(phrases: list[str]) -> re.Pattern | None:
+    """A removal pattern: longest phrase first, so "le canadien de montreal"
+    is removed whole rather than "le canadien" leaving "de montreal" behind
+    (ties by the phrase itself: no list-order dependence)."""
+    folded = {fold(p.replace("*", "")): p for p in phrases if fold(p.replace("*", ""))}
+    return _alternation([folded[k] for k in sorted(folded, key=lambda k: (-len(k), k))])
 
 
 # --------------------------------------------------------------------------
@@ -212,10 +227,18 @@ _ROAD_TOKENS = {
     "laurier": "boulevard-laurier",
 }
 
-# enrich.propose_geo -> place code (item-level fallback when no place is named).
+# Item geo evidence -> place code (the item-level scope when no place is
+# named). enrich.propose_geo says "quebec-city" only on a strict city token
+# and "quebec" on a Quebec token or an official province document. Its
+# "linked" means NO local evidence ("source geography is not article
+# geography"): an absence, which maps to no place at all, never to a guessed
+# one. "world" is enrich's world-fog branch (a foreign token and no Quebec
+# token): positive evidence of elsewhere. "federal" is federal evidence.
 _GEO_TO_PLACE = {
     "quebec-city": "quebec-city",
     "quebec": "province",
+    "world": ELSEWHERE,
+    "federal": "ottawa",
     "ottawa": "ottawa",
 }
 
@@ -241,7 +264,8 @@ def place_for_road(token: str) -> str | None:
 
 
 def place_from_geo(geo: str) -> str | None:
-    """Fallback place from enrich's item geo (quebec-city, quebec, ottawa)."""
+    """The scope an item's geo evidence supports (quebec-city, province,
+    elsewhere, ottawa), or None: "linked" and "unknown" are absences."""
     code = _GEO_TO_PLACE.get(str(geo or "").strip().lower())
     return code if code in vocabulary()["place_by_code"] else None
 
@@ -282,10 +306,14 @@ def _lexicon() -> dict:
             "fr": _alternation(_words(rule, "fr")),
             "en": _alternation(_words(rule, "en")),
             "needs_context": bool(rule.get("needs_context")),
+            # Phrases removed before THIS place's keywords are tested ("à
+            # Ottawa" is the city of Ottawa, not the federal scope; "Nouvelle-
+            # France" is no evidence of France). Other places still see them.
+            "mask": _mask(_words(rule, "mask")),
         })
     place_rules.sort(key=lambda r: specificity_key(r["code"]))
     context = _alternation(_words(doc, "place_context"))
-    mask = _alternation(_words(doc, "place_mask"))
+    mask = _mask(_words(doc, "place_mask"))
     return {"types": type_rules, "places": place_rules, "context": context, "mask": mask}
 
 
@@ -372,6 +400,7 @@ def classify_places(texts: list, langs: list[str] | None = None) -> list[str]:
         for rule in lex["places"]:
             if rule["code"] in found or (rule["needs_context"] and not has_context):
                 continue
-            if any(rule[w] is not None and rule[w].search(folded) for w in which):
+            text = rule["mask"].sub(" ", folded) if rule["mask"] is not None else folded
+            if any(rule[w] is not None and rule[w].search(text) for w in which):
                 found.add(rule["code"])
     return sorted(found, key=specificity_key)

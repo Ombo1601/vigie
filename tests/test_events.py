@@ -313,7 +313,7 @@ class SchemaChecker(unittest.TestCase):
         for doc in stores + views:
             for e in doc["events"]:
                 self.assertEqual(check_v1(events.to_v1(e)), [], e["event_id"])
-                self.assertTrue(set(e) - set(events.V1_KEYS) <= set(events.EXT_KEYS) | {"member_count", "in_edition", "silence"},
+                self.assertTrue(set(e) - set(events.V1_KEYS) <= set(events.EXT_KEYS) | set(events.VIEW_KEYS),
                                 sorted(set(e) - set(events.V1_KEYS)))
 
 
@@ -609,11 +609,45 @@ class PlacesTypeLabel(unittest.TestCase):
              "summary": "Les dommages sont évalués à 1,5 million $. Le maire de Québec s'est rendu sur place.",
              "published_at": iso(20, 8)},
             {"id": "b" * 24, "institution": "delta", "title": "Incendie : 3 blessés, 14 logements évacués",
-             "summary": "Le 21 septembre, les pompiers sont revenus rue Zorblax.", "published_at": iso(20, 9)},
+             "summary": "Le 21 septembre, les pompiers sont revenus rue Zorblax à Limoilou.", "published_at": iso(20, 9)},
         ]
         rows = [(it["id"], it["institution"], json.loads(json.dumps(facts.extract_item(it)))) for it in items]
-        self.assertEqual(events.slots_from_atoms(rows), facts.build_slots(items))
-        self.assertTrue(any(r["divergent"] for r in events.slots_from_atoms(rows)), "2 vs 3 injured: side by side")
+        mine = events.slots_from_atoms(rows)
+        theirs = facts.build_slots(items)
+        # Same rows as facts.build_slots for every kind but place ...
+        self.assertEqual([r for r in mine if r["slot"]["kind"] != "place"],
+                         [r for r in theirs if r["slot"]["kind"] != "place"])
+        self.assertTrue(any(r["divergent"] for r in mine), "2 vs 3 injured: side by side")
+        # ... where an event carries vocabulary codes only: the area hint maps
+        # onto its code, the road name "zorblax" (no corridor code) is ignored.
+        self.assertIn("zorblax", [v["value"] for r in theirs if r["slot"]["kind"] == "place" for v in r["values"]])
+        places = [v["value"] for r in mine if r["slot"]["kind"] == "place" for v in r["values"]]
+        self.assertEqual(places, ["limoilou"])
+        for code in places:
+            self.assertIsNotNone(vocabulaire.place_kind(code))
+
+    def test_a_stored_junk_place_atom_never_reaches_an_event(self):
+        """Atoms stored before facts.py guarded its road tokens ("a", "est",
+        a road name with no code) are ignored by the event, whatever the store holds."""
+        junk = [{"kind": "place", "unit": "road", "subject": None, "value": v, "qualifiers": ["exact"]}
+                for v in ("a", "est", "entre", "zorblax-quirion")]
+        good = [{"kind": "place", "unit": "road", "subject": None, "value": "laporte", "qualifiers": ["exact"]},
+                {"kind": "place", "unit": "area", "subject": None, "value": "duberger", "qualifiers": ["exact"]},
+                {"kind": "place", "unit": "area", "subject": None, "value": "nowhere-zq", "qualifiers": ["exact"]}]
+        out = events.slots_from_atoms([("c" * 24, "alpha", junk + good)])
+        self.assertEqual(sorted(v["value"] for r in out for v in r["values"]),
+                         ["duberger-les-saules", "pierre-laporte-bridge"])
+        self.assertIsNone(events.place_atom_code({"kind": "place", "unit": "road", "value": "unplaced"}))
+        self.assertEqual(events.place_atom_code({"kind": "place", "unit": "x", "value": "limoilou"}), "limoilou")
+        # In a build: a junk atom planted in the stored item codes stays out of the view.
+        s1, _, _ = events.build(None, E1, registry())
+        s1["items"][F1["id"]]["facts"] = junk + s1["items"][F1["id"]]["facts"]
+        _, view, _ = events.build(json.loads(json.dumps(s1)), E2, registry())
+        values = [v["value"] for e in view["events"] for r in e["facts"] if r["slot"]["kind"] == "place"
+                  for v in r["values"]]
+        self.assertTrue(values)
+        for value in values:
+            self.assertIsNotNone(vocabulaire.place_kind(value), value)
 
     def test_published_dates_null_when_implausible_and_suspect_when_late(self):
         first = "2026-09-20T12:00:00+00:00"
@@ -793,21 +827,94 @@ class Anchors(unittest.TestCase):
 class SilenceRoster(unittest.TestCase):
     def test_followed_institutions_without_a_member_with_measured_collection_state(self):
         collection = {"delta": {"items": 0, "feeds_ok": 0, "feeds_total": 1},
-                      "beta": {"items": 4, "feeds_ok": 1, "feeds_total": 1}}
+                      "beta": {"items": 4, "feeds_ok": 1, "feeds_total": 1},
+                      "alpha": {"items": 3, "feeds_ok": 1, "feeds_total": 1},
+                      "gamma": {"items": 0, "feeds_ok": 0, "feeds_total": 0}}
         _, view, _ = events.build(None, E1, registry(), collection=collection)
         strike = by_id(view)[STRIKE_ID]
         states = {r["institution"]: r["state"] for r in strike["silence"]}
         self.assertNotIn("beta", states, "the strike's own outlet is not silent")
         self.assertEqual(states["delta"], "collection_gap", "our fetch failed: Vigie's gap, not theirs")
-        self.assertEqual(states["alpha"], "no_linked_item")
+        self.assertEqual(states["alpha"], "no_linked_item", "fetched fine, no linked article: the measured fact")
+        self.assertEqual(states["gamma"], "not_established", "no feed measured: nothing can be said")
+        self.assertEqual(states["gamma-en"], "not_established", "no collection fact at all for it")
         self.assertNotIn("cutmedia", states, "a cut source is not followed")
         for r in strike["silence"]:
             self.assertIn(r["state"], events.SILENCE_STATES)
+
+    def test_not_established_only_where_no_fact_exists(self):
+        self.assertEqual(events.collection_state("x", None), "not_established")
+        self.assertEqual(events.collection_state("x", {}), "not_established")
+        self.assertEqual(events.collection_state("x", {"x": "garbage"}), "not_established")
+        self.assertEqual(events.collection_state("x", {"x": {"feeds_ok": 2, "feeds_total": 2}}), "no_linked_item")
+        self.assertEqual(events.collection_state("x", {"x": {"feeds_ok": 1, "feeds_total": 2}}), "collection_gap")
+        self.assertEqual(events.collection_state("x", {"x": {"feeds_ok": 0, "feeds_total": 0}}), "not_established")
+
+    def test_a_voice_withdrawn_whole_is_listed_as_withdrawn_in_every_roster(self):
+        rules = takedown.Rules([{"id": "td-g", "kind": "source", "value": "gamma-en", "requested_at": "2026-09-20",
+                                 "by": "Gamma English", "status": "active"}])
+        _, view, _ = events.build(None, E1, registry(rules), collection={})
+        for e in view["events"]:
+            rows = {r["institution"]: r for r in e["silence"]}
+            self.assertEqual(rows["gamma-en"]["state"], "withdrawn", e["event_id"])
+            self.assertEqual(rows["gamma-en"]["scope"], "institution")
+            self.assertEqual(rows["gamma-en"]["institution_name"], "Gamma English")
+            self.assertNotIn("gamma-en", e["institutions"])
+            self.assertNotIn("en", e["languages"], "its English coverage is not counted either")
+        self.assertIn("withdrawn", events.SILENCE_STATES)
+
+    def test_the_in_memory_rule_equals_takedown_withdrawn_institutions(self):
+        rules = takedown.Rules([{"id": "td-g", "kind": "source", "value": "gamma-en", "requested_at": "2026-09-20",
+                                 "by": "Gamma English", "status": "active"},
+                                {"id": "td-h", "kind": "host", "value": "delta.example.org",
+                                 "requested_at": "2026-09-21", "by": "Delta Quotidien", "status": "active"}])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sources.yaml"
+            path.write_text(sources_yaml(), encoding="utf-8", newline="\n")
+            from_file = takedown.withdrawn_institutions(rules, path)
+            loaded = events.Registry(events.ingest_rss.load_sources(path), rules, path).withdrawn_institutions()
+        in_memory = events.Registry([dict(s) for s in SOURCES], rules).withdrawn_institutions()
+        self.assertEqual(sorted(from_file), ["delta", "gamma-en"])
+        self.assertEqual(loaded, from_file)
+        self.assertEqual({k: v["institution_name"] for k, v in in_memory.items()},
+                         {k: v["institution_name"] for k, v in from_file.items()})
 
 
 # --------------------------------------------------------------------------- #
 # R10
 # --------------------------------------------------------------------------- #
+def assert_never_credited(test: unittest.TestCase, ev: dict, gone: set[str]) -> None:
+    """No field of a view event a renderer could read credits or counts a
+    withdrawn member: it is listed under `withdrawn` and nowhere else."""
+    present = {m["item_id"] for m in ev["members"]}
+    test.assertFalse(present & gone)
+    test.assertTrue(gone <= set(ev["withdrawn"]))
+    test.assertEqual(ev["withdrawn_count"], len(ev["withdrawn"]))
+    test.assertEqual(ev["member_count"], len(ev["members"]))
+    test.assertEqual(ev["institutions"], sorted({m["institution"] for m in ev["members"]}))
+    ind = ev["independence"]
+    test.assertEqual(sorted(i for g in ind["groups"] for i in g), sorted(present))
+    test.assertEqual(sorted(i for o in ind["origins"] for i in o["members"]), sorted(present))
+    test.assertEqual(set(ind["keys"]), present)
+    test.assertTrue(set(ind["declarations"]) <= present)
+    test.assertEqual(ev["reporting_origin_count"], ind["reporting_count"])
+    test.assertTrue(set(ev["declared_by"]) <= set(ev["institutions"]))
+    for p in ev["copies"]:
+        test.assertTrue(set(p) <= present)
+    for p in ev["language_pairs"]:
+        test.assertTrue({p["fr"], p["en"]} <= present)
+    for f in ev["facts"]:
+        for v in f["values"]:
+            test.assertTrue(set(v["stated_by"]) <= present)
+            test.assertTrue(set(v["institutions"]) <= set(ev["institutions"]))
+    for a in ev["anchors"]:
+        if a["type"] in events.ITEM_ANCHORS:
+            test.assertNotIn(a["ref"], gone)
+    test.assertFalse(set(ev["in_edition"]) & gone)
+    roster = {r["institution"] for r in ev["silence"]}
+    test.assertFalse(roster & set(ev["institutions"]), "a credited voice is never in its own silence roster")
+
+
 class Takedowns(unittest.TestCase):
     def _rules(self, kind, value):
         return takedown.Rules([{"id": "td-x", "kind": kind, "value": value, "requested_at": "2026-09-20",
@@ -825,26 +932,47 @@ class Takedowns(unittest.TestCase):
         vfire = by_id(view)[FIRE_ID]
         shown = {m["item_id"] for m in vfire["members"]}
         self.assertFalse(shown & set(gone), "R10: no display, the same run")
-        self.assertEqual(vfire["member_count"], len(fire["members"]))
+        self.assertEqual(vfire["member_count"], len(fire["members"]) - len(gone), "members present only")
+        self.assertEqual((vfire["withdrawn"], vfire["withdrawn_count"]), (sorted(gone), len(gone)))
         self.assertEqual(vfire["event_id"], FIRE_ID)
-        for slot in vfire["facts"]:
-            for v in slot["values"]:
-                self.assertFalse(set(v["stated_by"]) & set(gone))
+        assert_never_credited(self, vfire, set(gone))
         # A later edition without the article: still withdrawn (by id or domain).
         store3, view3, _ = events.build(json.loads(json.dumps(store)), E3, registry(rules))
         self.assertEqual(by_id(store3)[FIRE_ID]["withdrawn"], sorted(gone))
         self.assertFalse({m["item_id"] for m in by_id(view3)[FIRE_ID]["members"]} & set(gone))
-        return store
+        assert_never_credited(self, by_id(view3)[FIRE_ID], set(gone))
+        return store, view
 
     def test_an_article_takedown(self):
-        self._check_withdrawn(self._rules("url", takedown._canon(F2["url"])), [F2["id"]])
+        _, view = self._check_withdrawn(self._rules("url", takedown._canon(F2["url"])), [F2["id"]])
+        # Delta's edited URL (another article) is still present: the voice stays credited.
+        self.assertIn("delta", by_id(view)[FIRE_ID]["institutions"])
 
     def test_a_source_takedown(self):
         # The edited URL arrives after the request: it never joins anything.
-        self._check_withdrawn(self._rules("source", "delta"), [F2["id"]])
+        _, view = self._check_withdrawn(self._rules("source", "delta"), [F2["id"]])
+        fire = by_id(view)[FIRE_ID]
+        self.assertNotIn("delta", fire["institutions"])
+        row = next(r for r in fire["silence"] if r["institution"] == "delta")
+        self.assertEqual((row["state"], row["scope"]), ("withdrawn", "institution"))
 
     def test_a_domain_takedown_still_matches_after_the_url_is_gone(self):
         self._check_withdrawn(self._rules("host", "delta.example.org"), [F2["id"]])
+
+    def test_an_article_takedown_of_a_voice_with_no_other_member_says_withdrawn_not_silent(self):
+        stores, _, _ = build_all(EDITIONS[:1])
+        rules = self._rules("url", takedown._canon(F4["url"]))
+        store, view, _ = events.build(stores[0], E2, registry(rules))
+        fire = by_id(view)[FIRE_ID]
+        self.assertNotIn("gamma-en", fire["institutions"])
+        row = next(r for r in fire["silence"] if r["institution"] == "gamma-en")
+        self.assertEqual((row["state"], row["scope"]), ("withdrawn", "article"),
+                         "its article here was withdrawn: never silent, never 'no linked item'")
+        self.assertEqual(fire["languages"], ["fr"])
+        self.assertFalse([p for p in fire["language_pairs"] if p["en"] == F4["id"]])
+        # The store keeps the sticky pair ids (a revoked request would bring them back).
+        self.assertTrue([p for p in by_id(store)[FIRE_ID]["language_pairs"] if p["en"] == F4["id"]])
+        assert_never_credited(self, fire, {F4["id"]})
 
     def test_with_the_takedown_file_through_the_cli(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1323,3 +1451,278 @@ class LexiconFixes(unittest.TestCase):
             self.assertNotEqual(vocabulaire.classify_type([word_boundary])[0], "assault", word_boundary)
         self.assertEqual(vocabulaire.classify_type(["L'Université de Zorblax ouvre un nouveau programme de doctorat"])[0],
                          "higher-education")
+
+
+# --------------------------------------------------------------------------- #
+# Tranche C: places by plurality, the window, independence, R10 at render time
+# (every headline, byline and outlet below is invented)
+# --------------------------------------------------------------------------- #
+class PlacesByPlurality(unittest.TestCase):
+    def test_one_member_saying_quebec_city_cannot_relabel_an_event_placed_elsewhere(self):
+        items = {"a": {"places": [], "geo": "linked", "geo_place": "elsewhere"},
+                 "b": {"places": ["elsewhere"], "geo": "linked", "geo_place": ""},
+                 "c": {"places": [], "geo": "linked", "geo_place": "elsewhere"},
+                 "d": {"places": [], "geo": "quebec-city", "geo_place": "quebec-city"}}
+        places, basis = events.event_places(sorted(items), items)
+        self.assertEqual(places, ["elsewhere", "quebec-city"])
+        self.assertEqual(basis, "named", "one of the winner's votes is named by a headline")
+        self.assertEqual(events.place_votes(sorted(items), items), {"elsewhere": [3, 1], "quebec-city": [1, 0]})
+        # Two members only, one each: a tie, broken by the named vote, then specificity.
+        two = {"x": {"places": ["limoilou"], "geo": "linked"}, "y": {"places": [], "geo": "quebec-city"}}
+        self.assertEqual(events.event_places(sorted(two), two), (["limoilou", "quebec-city"], "named"))
+        geo_tie = {"x": {"places": [], "geo_place": "elsewhere"}, "y": {"places": [], "geo_place": "quebec-city"}}
+        self.assertEqual(events.event_places(sorted(geo_tie), geo_tie)[0][0], "quebec-city",
+                         "equal geo votes: the published tie-break (specificity, then table order)")
+        specific = {"x": {"places": ["beauport"]}, "y": {"places": ["limoilou"]}}
+        self.assertEqual(events.event_places(sorted(specific), specific)[0][0], "limoilou", "a quartier is more specific")
+
+    def test_no_evidence_is_unplaced_never_the_city(self):
+        for entry in ({"places": [], "geo": "linked"}, {"places": [], "geo": "unknown"},
+                      {"places": [], "geo": "linked", "geo_place": ""}, {}):
+            self.assertEqual(events.event_places(["i"], {"i": entry}), (["unplaced"], "fallback"), entry)
+        self.assertEqual(vocabulaire.FALLBACK_PLACE, "unplaced")
+        self.assertEqual(vocabulaire.place_label("unplaced", "fr"), "Lieu non établi")
+        self.assertEqual(events.event_label("fire-building", ["unplaced"], "fallback")["fr"],
+                         vocabulaire.type_label("fire-building", "fr"), "the label names no place")
+        # Items stored before `geo_place` existed: the plain geo mapping, where linked supports nothing.
+        self.assertEqual(events.event_places(["i"], {"i": {"places": [], "geo": "quebec"}}), (["province"], "geo"))
+        self.assertEqual(events.event_places(["i"], {"i": {"places": [], "geo": "quebec-city"}}),
+                         (["quebec-city"], "geo"))
+
+    def test_geo_evidence_of_one_item(self):
+        world = {"title": "La Lituanie ferme le festival Zorblax", "summary": ""}
+        self.assertEqual(events.item_geo_place(world, "linked"), "elsewhere", "enrich's world-fog branch")
+        local_but_untagged = {"title": "La rue Zorblax attend son réaménagement", "summary": ""}
+        self.assertEqual(events.item_geo_place(local_but_untagged, "linked"), "", "no evidence: an absence")
+        self.assertEqual(events.item_geo_place(world, "quebec-city"), "quebec-city")
+        self.assertEqual(events.item_geo_place(world, "quebec"), "province")
+        self.assertEqual(events.event_geo(["a", "b", "c"], {"a": {"geo": "quebec"}, "b": {"geo": "quebec"},
+                                                            "c": {"geo": "quebec-city"}}), "quebec")
+        self.assertEqual(events.event_geo(["a", "b"], {"a": {"geo": "quebec"}, "b": {"geo": "quebec-city"}}),
+                         "quebec-city", "a tie goes to the more local")
+        self.assertEqual(events.event_geo(["a"], {"a": {"geo": "linked"}}), "linked")
+
+    def test_a_built_event_placed_elsewhere_by_its_members(self):
+        def foreign(name, source, title, hour):
+            it = item(name, source, title, iso(20, hour))
+            it["enrich"] = {"geo": {"geo": "linked"}}
+            return it
+
+        a = foreign("pl-a", "delta", "Trump inaugure le festival Zorblax", 8)
+        b = foreign("pl-b", "alpha-qc", "Festival Zorblax : Trump salue la foule", 9)
+        c = foreign("pl-c", "gamma-fr", "Le festival Zorblax et Trump font salle comble", 10)
+        d = item("pl-d", "beta-qc", "Festival Zorblax : des gens de Québec sur place", iso(20, 11))
+        d["enrich"] = {"geo": {"geo": "quebec-city"}}
+        table = {(x["id"], y["id"]): 0.95 for x in (a, b, c, d) for y in (a, b, c, d) if x["id"] < y["id"]}
+        with mock.patch.object(em, "pair_tier", _Table(table)):
+            store, view, ops = events.build(None, payload("2026-09-20T12:00:00+00:00", [a, b, c, d]), registry())
+        self.assertEqual(len(view["events"]), 1)
+        ev = view["events"][0]
+        self.assertEqual(ev["places"][0], "elsewhere")
+        self.assertEqual(ev["place_votes"]["elsewhere"]["votes"], 3)
+        self.assertEqual(ev["place_basis"], "geo")
+        self.assertEqual(ev["label"]["fr"].split(" · ")[-1], "Hors Québec")
+        self.assertEqual(ops["edition_view"]["first_place"], {"elsewhere": 1})
+
+
+class SuspectDates(unittest.TestCase):
+    """A publication date more than 6 h after the first collection is kept as
+    given but never dates the member: the first collection does."""
+
+    E1 = "2026-09-20T12:00:00+00:00"
+    E2 = "2026-09-28T12:00:00+00:00"
+
+    def test_a_future_date_never_holds_an_event_in_window_nor_its_facts_live(self):
+        future = item("fut", "delta", "Incendie Zorblax à Beauport : 3 blessés", "2026-09-26T12:00:00+00:00",
+                      "Trois personnes blessées dans l'incendie Zorblax.")
+        later = item("fut-2", "alpha-qc", "Beauport : l'incendie Zorblax, le bilan", "2026-09-28T09:00:00+00:00")
+        table = {tuple(sorted((future["id"], later["id"]))): 0.95}
+        with mock.patch.object(em, "pair_tier", _Table(table)):
+            s1, _, _ = events.build(None, payload(self.E1, [future]), registry())
+            row = s1["events"][0]["members"][0]
+            self.assertEqual((row["published_at"], row["date_suspect"]), ("2026-09-26T12:00:00+00:00", True),
+                             "kept as given, flagged, never corrected")
+            s2, view, _ = events.build(json.loads(json.dumps(s1)), payload(self.E2, [future, later]), registry())
+        fut_event = by_id(s2)[em.event_id_for(future["id"])]
+        self.assertEqual(fut_event["window_state"], "out_of_window", "dated by its first collection: 8 days ago")
+        self.assertEqual(fut_event["facts_state"], "reduced")
+        self.assertEqual(fut_event["members"][0]["published_at"], "2026-09-26T12:00:00+00:00", "the store keeps the date")
+        # The matcher dates it the same way: the newcomer, two days after the
+        # suspect date but eight after the first collection, founds its own event.
+        self.assertEqual(owner_map(s2)[later["id"]], em.event_id_for(later["id"]))
+
+    def test_member_instant(self):
+        row = {"published_at": "2026-09-26T12:00:00+00:00", "first_seen": self.E1, "date_suspect": True}
+        self.assertEqual(events._member_instant(row).isoformat(), self.E1)
+        row["date_suspect"] = False
+        self.assertEqual(events._member_instant(row).isoformat(), "2026-09-26T12:00:00+00:00")
+        self.assertEqual(events._matcher_item({"published_at": "2026-09-26T12:00:00Z"}, self.E1)["published_at"], None)
+        kept = {"published_at": "2026-09-20T10:00:00Z"}
+        self.assertIs(events._matcher_item(kept, self.E1), kept)
+
+
+def irow(i, inst, group, cls="own_reporting", rule="own_reporting.named_byline"):
+    return {"item_id": i, "institution": inst, "source_id": inst, "owner_group": group, "language": "fr",
+            "origin_class": cls, "origin_rule": rule}
+
+
+class IndependenceRules(unittest.TestCase):
+    def test_declarations_never_count_as_reporting_and_one_owner_declares_once(self):
+        rows = {"a": irow("a", "alpha", "quebecor"), "d": irow("d", "delta", "delta"),
+                "g": irow("g", "ville-x", "ville-x", "official", "official.source_kind"),
+                "h": irow("h", "hydro-x", "etat-x", "official", "official.source_kind"),
+                "k": irow("k", "gouv-x", "etat-x", "official", "official.source_kind")}
+        out = events.independence(sorted(rows), rows)
+        self.assertEqual(out["declarations"], ["g", "h", "k"])
+        self.assertEqual(out["reporting_count"], 2)
+        self.assertEqual(out["count"], 4)
+        state = next(o for o in out["origins"] if o["members"] == ["h", "k"])
+        self.assertEqual((state["kind"], state["reasons"]), ("declaration", [{"rule": "same-owner", "key": "etat-x"}]))
+        # A media text that copies the communiqué joins the declaration: it adds no reporting origin.
+        copied = events.independence(sorted(rows), rows, [["a", "g"]])
+        self.assertEqual(copied["reporting_count"], 1)
+        origin_ag = next(o for o in copied["origins"] if "a" in o["members"])
+        self.assertEqual(origin_ag["kind"], "declaration")
+        self.assertIn({"rule": "near-duplicate", "key": "shingles-3-of-5"}, origin_ag["reasons"])
+        # A declaration never merges with media by owner: a medium of the same owner stays reporting.
+        rows["m"] = irow("m", "media-x", "etat-x")
+        mixed = events.independence(sorted(rows), rows)
+        self.assertEqual(mixed["reporting_count"], 3)
+
+    def test_a_credit_is_a_wire_only_when_seen_in_two_owner_groups(self):
+        rows = {"q1": irow("q1", "alpha", "quebecor", "unknown", "unknown.newsroom_credit"),
+                "q2": irow("q2", "beta", "quebecor", "unknown", "unknown.newsroom_credit"),
+                "q3": irow("q3", "delta", "delta", "unknown", "unknown.newsroom_credit")}
+        credits = {"q1": ["qmi"], "q2": ["qmi"], "q3": ["qmi"]}
+        one_group = events.wire_credits([(rows["q1"], ["qmi"]), (rows["q2"], ["qmi"])])
+        self.assertEqual(one_group["qmi"], {"items": 2, "owner_groups": 1, "wire": False, "basis": "measured"})
+        two_groups = events.wire_credits([(rows[i], credits[i]) for i in sorted(rows)])
+        self.assertEqual(two_groups["qmi"], {"items": 3, "owner_groups": 2, "wire": True, "basis": "measured"})
+        inside = events.independence(sorted(rows), rows, credits=credits, wire=set())
+        self.assertEqual(inside["groups"], [["q1", "q2"], ["q3"]], "inside one group it is that group's byline")
+        across = events.independence(sorted(rows), rows, credits=credits, wire={"qmi"})
+        self.assertEqual(across["groups"], [["q1", "q2", "q3"]])
+        self.assertEqual(across["origins"][0]["reasons"],
+                         [{"basis": "measured", "key": "qmi", "rule": "same-wire-credit"}])
+        prior = events.wire_credits([(irow("w", "delta", "delta", "wire", "wire.author.cp"), ["cp"])])
+        self.assertEqual(prior["cp"], {"items": 1, "owner_groups": 1, "wire": True, "basis": "prior"})
+        self.assertFalse(hasattr(events, "AGENCE_QMI_IS_WIRE"), "no human flag decides it here")
+
+    def test_credit_codes_read_the_byline_and_keep_codes_only(self):
+        self.assertEqual(events.credit_codes({"author": "Agence QMI"}), ["qmi"])
+        self.assertEqual(events.credit_codes({"author": "Odile Zorblax, La Presse Canadienne"}), ["cp"])
+        self.assertEqual(events.credit_codes({"author": "Agence QMI et Agence France-Presse"}), ["afp", "qmi"])
+        self.assertEqual(events.credit_codes({"author": "Odile Pétronille-Quartz"}), [])
+        self.assertEqual(events.credit_codes({"author": None}), [])
+
+    def test_a_measured_wire_in_a_build_merges_across_owners(self):
+        a = item("qa", "alpha-qc", "Grève Zorblax : les cols bleus débraient", iso(20, 8), author="Agence QMI")
+        d = item("qd", "delta", "Grève Zorblax : débrayage des cols bleus", iso(20, 9), author="Agence QMI")
+        table = {tuple(sorted((a["id"], d["id"]))): 0.95}
+        with mock.patch.object(em, "pair_tier", _Table(table)):
+            store, view, ops = events.build(None, payload("2026-09-20T12:00:00+00:00", [a, d]), registry())
+        ev = view["events"][0]
+        self.assertEqual(ev["independence"]["groups"], [sorted([a["id"], d["id"]])])
+        self.assertEqual(ev["reporting_origin_count"], 1)
+        self.assertEqual(ops["credits"]["qmi"], {"items": 2, "owner_groups": 2, "wire": True, "basis": "measured"})
+        self.assertNotIn("Agence QMI", json.dumps(store, ensure_ascii=False))
+        self.assertEqual(store["items"][a["id"]]["credits"], ["qmi"])
+
+    def test_every_merged_origin_says_why_and_the_view_publishes_its_bounds(self):
+        _, views, _ = build_all(EDITIONS[:2])
+        rules = set(events.ORIGIN_RULES.values())
+        merged = 0
+        for ev in views[1]["events"]:
+            for o in ev["independence"]["origins"]:
+                if len(o["members"]) > 1:
+                    merged += 1
+                    self.assertTrue(o["reasons"], o)
+                    self.assertTrue({r["rule"] for r in o["reasons"]} <= rules)
+                else:
+                    self.assertEqual(o["reasons"], [])
+            self.assertEqual(ev["reporting_origin_count"], ev["independence"]["reporting_count"])
+        self.assertGreater(merged, 0)
+        self.assertEqual(views[1]["rules"], events.INDEPENDENCE_RULES)
+        self.assertEqual(views[1]["rules"]["near_duplicate"]["jaccard_at_least"], [3, 5])
+        g = by_id(views[1]).get(em.event_id_for(G1["id"]))
+        self.assertEqual((g["declared_by"], g["reporting_origin_count"]), (["ville-x"], 0))
+
+    def test_hydro_quebec_and_the_government_declare_as_one_owner_in_the_real_registry(self):
+        reg = events.Registry.load(ROOT / "sources.yaml", ROOT / "takedowns.yaml")
+        rows = {}
+        for i, sid, cls in (("h", "hydro-quebec", "official"), ("g", "gouv-quebec", "official"),
+                            ("j", "journal-de-quebec", "own_reporting")):
+            r = {"item_id": i, "source_id": sid, "institution": reg.institution_of(sid), "origin_class": cls,
+                 "origin_rule": "x"}
+            events._refresh_ownership(r, reg)
+            rows[i] = r
+        out = events.independence(sorted(rows), rows)
+        self.assertEqual(out["groups"], [["g", "h"], ["j"]], "the sourced fact: the State is the sole shareholder")
+        self.assertEqual(out["reporting_count"], 1, "and neither counts as reporting")
+
+
+class ApplyTakedownsAtRenderTime(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.sources = Path(self.tmp.name) / "sources.yaml"
+        self.sources.write_text(sources_yaml(), encoding="utf-8", newline="\n")
+        self.stores, self.views, _ = build_all(EDITIONS[:2])
+
+    def rules(self, kind, value):
+        return takedown.Rules([{"id": "td-r", "kind": kind, "value": value, "requested_at": "2026-09-21",
+                                "by": "Delta Quotidien", "status": "active"}])
+
+    def test_a_stored_view_is_stripped_as_the_builder_strips_it(self):
+        view = self.views[1]
+        before = json.dumps(view, sort_keys=True)
+        rules = self.rules("source", "delta")
+        out = events.apply_takedowns(view, rules, sources_path=self.sources)
+        self.assertEqual(json.dumps(view, sort_keys=True), before, "the stored view is never mutated")
+        fire = by_id(out)[FIRE_ID]
+        assert_never_credited(self, fire, {F2["id"], F2B["id"]})
+        self.assertEqual(fire["withdrawn"], sorted([F2["id"], F2B["id"]]))
+        row = next(r for r in fire["silence"] if r["institution"] == "delta")
+        self.assertEqual((row["state"], row["scope"], row["institution_name"]),
+                         ("withdrawn", "institution", "Delta Quotidien"))
+        for ev in out["events"]:
+            self.assertEqual(next(r for r in ev["silence"] if r["institution"] == "delta")["state"], "withdrawn")
+        # The same R10 outcome as a rebuild of that edition under the rule.
+        _, rebuilt, _ = events.build(self.stores[0], E2, registry(rules))
+        again = by_id(rebuilt)[FIRE_ID]
+        for key in ("institutions", "languages", "reporting_origin_count", "declared_by"):
+            self.assertEqual(fire[key], again[key], key)
+        self.assertEqual(fire["independence"]["count"], again["independence"]["count"])
+        # Idempotent.
+        self.assertEqual(events.apply_takedowns(out, rules, sources_path=self.sources), out)
+        self.assertEqual(out["event_count"], len(out["events"]))
+
+    def test_no_active_takedown_changes_nothing(self):
+        view = self.views[1]
+        self.assertEqual(events.apply_takedowns(view, takedown.Rules([]), sources_path=self.sources), view)
+
+    def test_an_event_left_without_a_member_leaves_the_view(self):
+        view = self.views[0]
+        self.assertIn(STRIKE_ID, by_id(view))
+        out = events.apply_takedowns(view, self.rules("source", "beta-qc"), sources_path=self.sources)
+        self.assertNotIn(STRIKE_ID, by_id(out))
+        self.assertEqual(out["event_count"], len(view["events"]) - 1)
+
+    def test_a_domain_rule_on_a_member_without_url_uses_the_store_hosts(self):
+        view = json.loads(json.dumps(self.views[1]))
+        fire = by_id(view)[FIRE_ID]
+        for m in fire["members"]:
+            if m["item_id"] == F1["id"]:
+                m.pop("url")
+        rules = self.rules("host", "alpha-qc.example.org")
+        blind = events.apply_takedowns(view, rules, sources_path=None)
+        self.assertIn(F1["id"], [m["item_id"] for m in by_id(blind)[FIRE_ID]["members"]],
+                      "without its URL or the store's host code the article cannot be recognised")
+        hosts = {k: v["host"] for k, v in self.stores[1]["items"].items()}
+        seen = events.apply_takedowns(view, rules, sources_path=None, hosts=hosts)
+        assert_never_credited(self, by_id(seen)[FIRE_ID], {F1["id"]})
+
+    def test_unbuilt_or_foreign_views_pass_through(self):
+        rules = self.rules("source", "delta")
+        for doc in ({"status": "store_unreadable", "events": []}, {"events": "x"}, "garbage", None):
+            self.assertEqual(events.apply_takedowns(doc, rules, sources_path=self.sources), doc)

@@ -43,10 +43,40 @@ House law carried here
     (`lineage.absorbed`). `members` lists only the rows the event owns: an
     item belongs to one event, once.
   * R10: a member withdrawn by takedowns.yaml loses its URL and its display
-    (the view omits it) in the same run; the event id and its counts stand.
-    A URL is kept only while its source is enabled. This holds in a run that
-    does not rebuild the store too (see below): the withdrawn URLs are
-    removed from the store as it stands.
+    in the same run; the event id stands. The store keeps the member's ids
+    (sticky membership, sticky pairs); every derived field is computed over
+    the members still present, and the VIEW never lets a renderer credit or
+    count a withdrawn voice: the member is absent from `members`, listed by id
+    under `withdrawn` (with `withdrawn_count`), and absent from institutions,
+    languages, independence, copies, language pairs, fact attributions and
+    item anchors; its institution appears in the silence roster as
+    `withdrawn` (scope `institution` when takedowns.yaml withdrew the whole
+    voice, `article` when only its items here), never vanishing silently.
+    `apply_takedowns(view, rules)` re-applies the same rule to a stored view
+    at render time (the hourly roads lane re-renders from stored files and
+    never rebuilds this view). A URL is kept only while its source is
+    enabled. This holds in a run that does not rebuild the store too (see
+    below): the withdrawn URLs are removed from the store as it stands.
+  * Places (EVENTS.md section 17.1): each member casts one vote, its best
+    evidence (a specific place its headline names; else a strict city geo
+    token; else a scope its headline names; else its other geo evidence).
+    The area (capital, province, federal, elsewhere) is the plurality; inside
+    it `places[0]` is the named specific place when one exists, else the
+    scope (ties: votes, named votes, specificity, table order). A member
+    with no evidence (enrich geo `linked`: no local token, an absence) casts
+    none; an event with no vote is `unplaced` ("Lieu non établi"), never a
+    guessed city. `place_basis` and `place_votes` keep the evidence visible.
+  * Independence (docs/AUTONOMY.md): official members are declarations,
+    never corroboration: `reporting_origin_count` counts media origins only,
+    `declared_by` lists the declaring institutions. Origins merge on a
+    sourced owner group, a wire credit (the closed list is a prior; any
+    other credit is a wire only when copy carrying it is seen in two or more
+    owner groups within the 7-day window, measured every edition), a relayed
+    communiqué, or near-duplicate text; each merged origin carries its
+    reason codes.
+  * Window: a member whose publication date is suspect (more than 6 h after
+    its first collection) is dated by its first collection, for the matcher
+    as for the window, so a future date never keeps an event in window.
   * Fail-soft: any fault prints a diagnosis and exits 0. A run that does not
     rebuild the store (no readable edition, a damaged store, an edition older
     than the store, sources.yaml unreadable, any fault in the build) clears
@@ -66,13 +96,15 @@ House law carried here
     slot (values stated by an official member are kept).
 
 Shadow extensions beyond the event-v1 schema (EVENTS.md section 14), kept in
-the same object under EXT_KEYS: family, geo (best member geo, for ranking),
-place_basis, tier, neighbours (ids and integer scores), withdrawn, copies
-(near-duplicate id pairs), facts_reduced, facts_state; plus
-`lineage.merged_at` and `independence.declarations/reporting_count` (open
-objects in the schema). `to_v1()` projects an event onto the schema. The
-current-edition view adds member_count, in_edition (member ids whose text is
-in this edition) and silence (the followed institutions without a member).
+the same object under EXT_KEYS: family, geo (plurality of member geos, for
+ranking), place_basis, place_votes, tier, neighbours (ids and integer
+scores), withdrawn, copies (near-duplicate id pairs), facts_reduced,
+facts_state, reporting_origin_count, declared_by; plus `lineage.merged_at`
+and `independence.declarations/reporting_count/keys/origins` (open objects in
+the schema). `to_v1()` projects an event onto the schema. The current-edition
+view adds member_count (members present), withdrawn_count, in_edition (member
+ids whose text is in this edition) and silence (the followed institutions
+without a member present, plus every withdrawn voice).
 
     python -X utf8 scripts/events.py                     # one edition (pipeline step)
     python -X utf8 scripts/events.py --replay DIR        # every DIR/*_candidates.json, from an empty store
@@ -114,7 +146,7 @@ TAKEDOWNS_PATH = ROOT / "takedowns.yaml"
 
 SCHEMA = 1
 STORE_FORMAT = "events-store-v1"
-METHOD = "events-v1 rules r1 (event-match-v1, vocabulaire, origin, ownership, facts-v1)"
+METHOD = "events-v1 rules r2 (event-match-v1, vocabulaire, origin, ownership, facts-v1)"
 RETENTION_EDITIONS = 400
 PUBLICATION_WINDOW_DAYS = cluster_issues.MAX_AGE_DAYS   # older items found no event
 DATE_SUSPECT_HOURS = 6
@@ -126,14 +158,21 @@ ACTIVITIES = ("new", "developed", "quiet")
 ORIGIN_CLASSES = origin.CLASSES
 OWNERSHIP_CLASSES = ownership.CLASSES          # the schema's five plus "unverified"
 ANCHOR_TYPES = ("official_item", "roadwork", "consultation", "outage", "edition_seal")
-SILENCE_STATES = ("no_linked_item", "collection_gap", "not_established")
+# Silence roster states. `withdrawn` (takedown.WITHDRAWN_LABEL_FR, "retiré à
+# la demande de l'éditeur") is a publisher's request, never a silence;
+# `not_established` is said only when this edition carries no collection fact
+# for the institution (a replayed snapshot, an institution the collection did
+# not measure), never as a default.
+SILENCE_STATES = ("no_linked_item", "collection_gap", "not_established", "withdrawn")
+WITHDRAWN_SCOPES = ("institution", "article")
 GEO_RANK = {"quebec-city": 0, "quebec": 1, "linked": 2}
 
 V1_KEYS = ("event_id", "schema", "method", "type", "places", "label", "born_edition",
            "last_edition", "window_state", "activity", "members", "institutions", "languages",
            "independence", "facts", "anchors", "language_pairs", "lineage", "seals")
-EXT_KEYS = ("family", "geo", "place_basis", "tier", "neighbours", "withdrawn", "copies",
-            "facts_reduced", "facts_state")
+EXT_KEYS = ("family", "geo", "place_basis", "place_votes", "tier", "neighbours", "withdrawn", "copies",
+            "facts_reduced", "facts_state", "reporting_origin_count", "declared_by")
+VIEW_KEYS = ("member_count", "withdrawn_count", "in_edition", "silence")
 MEMBER_KEYS = ("item_id", "institution", "source_id", "language", "published_at", "first_seen",
                "origin_class", "origin_rule", "ownership_class", "owner_group", "url", "date_suspect")
 
@@ -202,8 +241,11 @@ def _dump(doc, compact: bool = False) -> str:
 class Registry:
     """sources.yaml (every entry) plus the active takedown rules."""
 
-    def __init__(self, records: list[dict], rules: takedown.Rules | None = None):
+    def __init__(self, records: list[dict], rules: takedown.Rules | None = None,
+                 sources_path: Path | None = None):
         self.rules = rules if rules is not None else takedown.Rules([])
+        self.sources_path = Path(sources_path) if sources_path is not None else None
+        self._withdrawn_institutions: dict[str, dict] | None = None
         self.by_id: dict[str, dict] = {}
         for rec in records or []:
             if isinstance(rec, dict) and rec.get("id"):
@@ -228,13 +270,34 @@ class Registry:
         entries, errors = takedown.load(Path(takedowns_path))
         for err in errors:
             _say(f"takedowns: {err}")
-        return cls(records, takedown.Rules(entries))
+        return cls(records, takedown.Rules(entries), Path(sources_path))
 
     def followed_institutions(self) -> list[dict]:
         if self._followed is None:
             chancellery = [self.by_id[s] for s in sorted(self.enabled)]
             self._followed = cluster_issues.collapse_institutions(chancellery)
         return self._followed
+
+    def withdrawn_institutions(self) -> dict[str, dict]:
+        """institution id -> {institution_name, ...}: every voice with no feed
+        left after the takedowns (one withdrawn sister feed does not withdraw
+        the voice; the last one does). takedown.withdrawn_institutions over the
+        registry file when this registry was loaded from one; otherwise the
+        same rule over the in-memory records (a test holds the two equal)."""
+        if self._withdrawn_institutions is None:
+            if not self.rules:
+                self._withdrawn_institutions = {}
+            elif self.sources_path is not None:
+                self._withdrawn_institutions = takedown.withdrawn_institutions(self.rules, self.sources_path)
+            else:
+                self._withdrawn_institutions = _withdrawn_voices(list(self.by_id.values()), self.rules)
+        return self._withdrawn_institutions
+
+    def institution_name(self, iid: str) -> str:
+        for rec in self.by_id.values():
+            if cluster_issues.institution_of(rec) == iid:
+                return cluster_issues.institution_name_of(rec)
+        return iid
 
     def institution_of(self, sid: str, item: dict | None = None) -> str:
         rec = self.by_id.get(sid)
@@ -256,6 +319,26 @@ class Registry:
         if host and self.rules.match_host("https://" + host + "/") is not None:
             return True
         return bool(row.get("url")) and self.rules.match_url(row.get("url")) is not None
+
+
+def _withdrawn_voices(records: list[dict], rules: takedown.Rules) -> dict[str, dict]:
+    """takedown.withdrawn_institutions's rule over records already in memory."""
+    by_inst: dict[str, list[tuple[dict, dict | None]]] = {}
+    for rec in records:
+        iid = str(rec.get("institution") or rec.get("id") or "")
+        hit = rules.match_source(rec)
+        if iid and (hit or rec.get("enabled") is True):
+            by_inst.setdefault(iid, []).append((rec, hit))
+    out: dict[str, dict] = {}
+    for iid, feeds in sorted(by_inst.items()):
+        hits = [h for _, h in feeds if h]
+        if not hits or len(hits) != len(feeds):
+            continue
+        first = feeds[0][0]
+        out[iid] = {"institution_id": iid,
+                    "institution_name": str(first.get("institution_name") or first.get("name") or iid),
+                    "status": "withdrawn_on_request", "label": takedown.WITHDRAWN_LABEL_FR}
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -286,6 +369,39 @@ def item_geo(item: dict) -> str:
         return str(enrich.propose_geo(item, enrich.blob(item)).get("geo") or "unknown")
     except Exception:  # noqa: BLE001 - a geo fault is an unknown geo, never a crash
         return "unknown"
+
+
+def item_geo_place(item: dict, geo: str) -> str:
+    """The scope this item's geo evidence supports, or "" for none.
+
+    quebec-city (a strict city token), province (a Quebec token or an
+    official province document), elsewhere when enrich's `linked` came from
+    its world-fog branch (a foreign token and no Quebec token: the same two
+    regexes enrich applies, over the same text). Any other `linked` means
+    enrich found no local evidence: an absence, which supports no place."""
+    if geo == "linked":
+        text = enrich.blob(item)
+        if enrich.WORLD_FOG.search(text) and not enrich.PROVINCE_HINT.search(text):
+            return vocabulaire.ELSEWHERE
+        return ""
+    return vocabulaire.place_from_geo(geo) or ""
+
+
+def credit_codes(item: dict) -> list[str]:
+    """Agency credits the item's byline names, as codes (origin.py's closed
+    alias tables, Agence QMI included; the byline itself is never kept).
+    Whether a credit is a wire is not decided here: closed-list agencies are
+    priors, any other credit is measured per edition (`wire_credits`)."""
+    author = origin._clean(item.get("author"))
+    if not author:
+        return []
+    table = origin._WIRE_TABLE + origin._QMI_TABLE
+    codes = origin._segment_agencies(author, table)
+    if not codes:
+        codes = set()
+        for seg in origin._segments(author):
+            codes |= origin._segment_agencies(seg, table) or set()
+    return sorted(codes)
 
 
 def item_places(item: dict) -> list[str]:
@@ -326,7 +442,9 @@ def derive_item(item: dict, diagnosis: list[str] | None = None) -> dict:
     codes (diagnosed), never the edition its events."""
     out: dict = {}
     for key, fn, empty in (("type_scores", item_type_scores, {}), ("places", item_places, []),
-                           ("geo", item_geo, "unknown"), ("facts", facts.extract_item, [])):
+                           ("geo", item_geo, "unknown"),
+                           ("geo_place", lambda it: item_geo_place(it, out.get("geo") or ""), ""),
+                           ("facts", facts.extract_item, []), ("credits", credit_codes, [])):
         try:
             out[key] = fn(item)
         except Exception as exc:  # noqa: BLE001 - per-item fail-soft
@@ -409,44 +527,112 @@ def event_type(ids: list[str], items: dict) -> str:
 CITY_SCOPE = "quebec-city"
 
 
+def _geo_place_of(entry: dict) -> str:
+    """The scope a stored item's geo evidence supports ("" for none). Items
+    derived before `geo_place` existed fall back to the plain geo mapping
+    (where `linked` supports nothing)."""
+    if isinstance(entry.get("geo_place"), str):
+        code = entry["geo_place"]
+    else:
+        code = vocabulaire.place_from_geo(_str(entry.get("geo"))) or ""
+    return code if code and vocabulaire.place_kind(code) and code != vocabulaire.FALLBACK_PLACE else ""
+
+
+def _named_places(entry: dict) -> list[str]:
+    return [c for c in entry.get("places") or []
+            if isinstance(c, str) and vocabulaire.place_kind(c) is not None and c != vocabulaire.FALLBACK_PLACE]
+
+
+def member_place_vote(entry: dict) -> tuple[str, str] | None:
+    """One member's place evidence, as (code, "named" | "geo"), or None.
+
+    Precedence inside one member (the rule of tranche B, kept): a specific
+    place its headline names (quartier > arrondissement > site > corridor >
+    neighbour) > a strict Québec City geo token > a scope its headline names
+    (an item about the city is never labelled "ottawa" because its headline
+    says Canada) > any other geo evidence (province, elsewhere: the province
+    geo is often the source's own nest, weaker than the text). A member with
+    no evidence casts no vote: absence is never turned into a place."""
+    key = vocabulaire.specificity_key
+    named = _named_places(entry)
+    specific = sorted((c for c in named if not vocabulaire.is_scope(c)), key=key)
+    if specific:
+        return specific[0], "named"
+    geo = _geo_place_of(entry)
+    if geo == CITY_SCOPE:
+        return CITY_SCOPE, "geo"
+    scopes = sorted((c for c in named if vocabulaire.is_scope(c)), key=key)
+    if scopes:
+        return scopes[0], "named"
+    return (geo, "geo") if geo else None
+
+
+def place_votes(ids: list[str], items: dict) -> dict[str, list[int]]:
+    """code -> [votes, named votes] over the members (one vote each)."""
+    votes: dict[str, list[int]] = {}
+    for i in sorted(ids):
+        vote = member_place_vote(items.get(i) or {})
+        if vote is None:
+            continue
+        tally = votes.setdefault(vote[0], [0, 0])
+        tally[0] += 1
+        tally[1] += 1 if vote[1] == "named" else 0
+    return votes
+
+
+# The four areas a place vote counts for: the capital (Québec City, its
+# quartiers, arrondissements, sites, corridors, its region and neighbours),
+# the rest of the province, the federal scope, elsewhere. In this order on a tie.
+PLACE_AREAS = ("capitale", "province", "federal", "elsewhere")
+
+
+def place_area(code: str) -> str | None:
+    if code == "province":
+        return "province"
+    if code == "ottawa":
+        return "federal"
+    if code == vocabulaire.ELSEWHERE:
+        return "elsewhere"
+    if code == vocabulaire.FALLBACK_PLACE or vocabulaire.place_kind(code) is None:
+        return None
+    return "capitale"
+
+
 def event_places(ids: list[str], items: dict) -> tuple[list[str], str]:
-    """(places, basis). Named specific places first (quartier > arrondissement >
-    site > corridor > neighbour); then scope codes. A member whose enrich geo
-    says Québec City (strict city evidence) puts the city scope before any
-    scope its headline names, so an item about the city is never labelled with
-    the bare scope "ottawa" because its headline mentions Canada. A scope the
-    headlines name comes before the province geo (that one is mostly the
-    source's own nest, weaker than the text). Never empty: no place at all
-    falls back to a scope code with basis "fallback" (the label then names
-    no place)."""
-    specific: set[str] = set()
-    scope_text: set[str] = set()
-    scope_geo: set[str] = set()
+    """(places, basis). Two steps over the members' votes (`member_place_vote`,
+    one per member). First the AREA (capital, province, federal, elsewhere) by
+    plurality: most votes, then most named votes, then that order. One member
+    saying Québec City therefore cannot relabel an event three others place
+    elsewhere. Then, inside that area, `places[0]` is the named specific place
+    when one exists (a vote for Limoilou is also a vote for the city), else
+    its scope: most votes, then most named votes, then the more specific,
+    then table order. The other places any member's evidence supports follow,
+    most specific first. basis: "named" (a headline names `places[0]`),
+    "geo" (only geo evidence supports it) or "fallback": no member carries
+    any evidence, the event is `unplaced` ("Lieu non établi") and its label
+    names no place."""
+    votes = place_votes(ids, items)
+    if not votes:
+        return [vocabulaire.FALLBACK_PLACE], "fallback"
+    key = vocabulaire.specificity_key
+    areas: dict[str, list[int]] = {}
+    for code, (n, named) in votes.items():
+        tally = areas.setdefault(place_area(code) or "elsewhere", [0, 0])
+        tally[0] += n
+        tally[1] += named
+    area = min(areas, key=lambda a: (-areas[a][0], -areas[a][1], PLACE_AREAS.index(a)))
+    pool = [c for c in votes if (place_area(c) or "elsewhere") == area]
+    pool = [c for c in pool if not vocabulaire.is_scope(c)] or pool
+    winner = min(pool, key=lambda c: (-votes[c][0], -votes[c][1], key(c)))
+    evidence: set[str] = set()
     for i in sorted(ids):
         entry = items.get(i) or {}
-        for code in entry.get("places") or []:
-            if not isinstance(code, str) or vocabulaire.place_kind(code) is None:
-                continue
-            (scope_text if vocabulaire.is_scope(code) else specific).add(code)
-        geo_code = vocabulaire.place_from_geo(_str(entry.get("geo")))
-        if geo_code:
-            scope_geo.add(geo_code)
-    key = vocabulaire.specificity_key
-    city = [CITY_SCOPE] if CITY_SCOPE in scope_geo else []
-    named_scopes = sorted(scope_text - set(city), key=key)
-    other_geo = sorted(scope_geo - set(city) - scope_text, key=key)
-    places = sorted(specific, key=key) + city + named_scopes + other_geo
-    if specific:
-        basis = "named"
-    elif city:
-        basis = "geo"
-    elif named_scopes:
-        basis = "named"
-    elif other_geo:
-        basis = "geo"
-    else:
-        return [vocabulaire.FALLBACK_PLACE], "fallback"
-    return places, basis
+        evidence.update(_named_places(entry))
+        geo = _geo_place_of(entry)
+        if geo:
+            evidence.add(geo)
+    rest = sorted(evidence - {winner}, key=key)
+    return [winner] + rest, ("named" if votes[winner][1] else "geo")
 
 
 def event_label(type_code: str, places: list[str], basis: str) -> dict:
@@ -455,26 +641,129 @@ def event_label(type_code: str, places: list[str], basis: str) -> dict:
 
 
 def event_geo(ids: list[str], items: dict) -> str:
-    geos = {_str((items.get(i) or {}).get("geo")) for i in ids}
-    ranked = sorted((g for g in geos if g in GEO_RANK), key=lambda g: GEO_RANK[g])
-    return ranked[0] if ranked else "unknown"
+    """The plurality of the members' enrich geos that carry evidence
+    (quebec-city, quebec); ties go to the more local one. With no evidence:
+    "linked" when a member says so, else "unknown"."""
+    counts: dict[str, int] = {}
+    seen: set[str] = set()
+    for i in sorted(ids):
+        geo = _str((items.get(i) or {}).get("geo"))
+        seen.add(geo)
+        if geo in ("quebec-city", "quebec"):
+            counts[geo] = counts.get(geo, 0) + 1
+    if counts:
+        return min(counts, key=lambda g: (-counts[g], GEO_RANK[g]))
+    return "linked" if "linked" in seen else "unknown"
 
 
-def independence(ids: list[str], rows: dict[str, dict], copies: list | None = None) -> dict:
-    """Union-find over the members (EVENTS.md section 8, docs/AUTONOMY.md), in
-    sorted order.
+# --------------------------------------------------------------------------- #
+# Independence (docs/AUTONOMY.md): counted by rule, never judged
+# --------------------------------------------------------------------------- #
+# Closed list of wire agencies (EVENTS.md section 7): priors, not opinions.
+WIRE_PRIORS = tuple(sorted(origin.WIRE_AGENCIES))
+# Any other agency credit (Agence QMI, ...) is a wire when copy carrying it is
+# seen in at least this many distinct owner groups within the window; inside
+# one group it is that group's own byline. Measured every edition.
+WIRE_CREDIT_MIN_GROUPS = 2
+# Reason codes, one per merge rule (the page says why two members are one origin).
+ORIGIN_RULES = {
+    "owner": "same-owner",              # a sourced controlling owner (sources.yaml owner_group)
+    "institution": "same-institution",  # no sourced owner: the institution is its own group
+    "wire": "same-wire-credit",         # the same agency credit (prior or measured)
+    "release": "same-release",          # relays of a communiqué (issuer unknown to the rules: one origin)
+    "declaration": "same-owner",        # official members of one owner (the State: Gouv + Hydro)
+    "copy": "near-duplicate",           # near-duplicate text, whoever owns the outlets
+}
 
-    Each member carries one key: a wire member the agency that wrote it
-    (`wire:<agency>`), a press-release relay its issuer (unknown to the rules
-    today, so `release:unknown-issuer`), any other member its owner group
-    (`owner:<group>`; Radio-Canada and CBC are one group, Quebecor titles one
-    group), or its institution when no sourced owner is declared. Members
-    sharing a key are one group; so are near-duplicate copies (`copies`,
-    pairs found by `near_duplicate`, whoever owns them). Counted, never judged.
 
-    `count` is every group (the schema's figure). Official members are
-    declarations, never corroboration of the reporting: they are listed in
-    `declarations`, and `reporting_count` counts only the groups without one."""
+def credit_group(row: dict) -> str:
+    """The owner group a member's credit is observed in (its institution when
+    no sourced owner is declared)."""
+    return _str(row.get("owner_group")) or "institution:" + (_str(row.get("institution")) or _str(row.get("source_id")))
+
+
+def wire_credits(observed: list[tuple[dict, list[str]]]) -> dict[str, dict]:
+    """credit code -> {items, owner_groups, wire, basis} over the window's
+    member rows and their stored credits. Closed-list agencies are wires by
+    prior; any other credit is a wire when seen in WIRE_CREDIT_MIN_GROUPS or
+    more owner groups. Counts and codes only."""
+    groups: dict[str, set[str]] = {}
+    items: dict[str, int] = {}
+    for row, credits in observed:
+        for code in sorted(set(c for c in credits or [] if isinstance(c, str) and c)):
+            groups.setdefault(code, set()).add(credit_group(row))
+            items[code] = items.get(code, 0) + 1
+    out = {}
+    for code in sorted(groups):
+        prior = code in WIRE_PRIORS
+        out[code] = {"items": items[code], "owner_groups": len(groups[code]),
+                     "wire": prior or len(groups[code]) >= WIRE_CREDIT_MIN_GROUPS,
+                     "basis": "prior" if prior else "measured"}
+    return out
+
+
+def member_keys(ids: list[str], rows: dict[str, dict], credits: dict[str, list[str]] | None = None,
+                wire: set[str] | None = None) -> dict[str, list[str]]:
+    """The keys that join members into one origin, per member (sorted).
+
+    official      declaration:<owner group or institution> (a declaration
+                  joins other declarations of the same owner, never media)
+    wire          wire:<agency> for every closed-list credit it carries (else
+                  the agency its origin rule names), plus any measured wire
+    measured wire wire:<credit> (a non-closed credit seen in >= 2 groups)
+    press_release release:unknown-issuer (the rules know no issuer yet)
+    other         owner:<sourced owner group>, else institution:<id>"""
+    credits = credits or {}
+    wire = wire or set()
+    out: dict[str, list[str]] = {}
+    for i in sorted(ids):
+        row = rows.get(i) or {}
+        cls = _str(row.get("origin_class"))
+        group = _str(row.get("owner_group"))
+        inst = _str(row.get("institution")) or _str(row.get("source_id")) or i
+        mine = sorted(set(c for c in credits.get(i) or [] if isinstance(c, str)))
+        measured = ["wire:" + c for c in mine if c in wire and c not in WIRE_PRIORS]
+        if cls == origin.OFFICIAL:
+            keys = ["declaration:" + (group or inst)]
+        elif cls == origin.WIRE:
+            agencies = [c for c in mine if c in WIRE_PRIORS]
+            keys = ["wire:" + c for c in agencies] or \
+                ["wire:" + (_str(row.get("origin_rule")).rsplit(".", 1)[-1] or "unknown")]
+            keys += measured
+        elif measured:
+            keys = measured
+        elif cls == origin.PRESS_RELEASE:
+            keys = ["release:unknown-issuer"]
+        elif group:
+            keys = ["owner:" + group]
+        else:
+            keys = ["institution:" + inst]
+        out[i] = sorted(set(keys))
+    return out
+
+
+def _reason(key: str) -> dict:
+    kind, _, value = key.partition(":")
+    out = {"rule": ORIGIN_RULES.get(kind, kind), "key": value}
+    if kind == "wire":
+        out["basis"] = "prior" if value in WIRE_PRIORS else "measured"
+    return out
+
+
+def independence_from_keys(ids: list[str], keys: dict[str, list[str]], copies: list | None = None,
+                           official: set[str] | None = None) -> dict:
+    """Union-find over the members, in sorted order: members sharing a key are
+    one origin, and so are near-duplicate copies (`copies`). Output:
+
+    groups          every origin (the schema's figure), sorted
+    count           len(groups), at least 1 (the schema's minimum)
+    declarations    the official members (declarations, never corroboration)
+    reporting_count origins with no official member: media reporting only
+    keys            the member keys the groups were built from (so a renderer
+                    can re-apply a takedown without a second brain)
+    origins         per origin: members, kind (reporting | declaration) and
+                    the reasons that merged it (empty for a single member)"""
+    ids = sorted(ids)
     parent = {i: i for i in ids}
 
     def find(x: str) -> str:
@@ -489,31 +778,53 @@ def independence(ids: list[str], rows: dict[str, dict], copies: list | None = No
             parent[max(ra, rb)] = min(ra, rb)
 
     first: dict[str, str] = {}
-    for i in sorted(ids):
-        row = rows.get(i) or {}
-        cls = _str(row.get("origin_class"))
-        if cls == origin.WIRE:
-            key = "wire:" + (_str(row.get("origin_rule")).rsplit(".", 1)[-1] or "unknown")
-        elif cls == origin.PRESS_RELEASE:
-            key = "release:unknown-issuer"
-        elif _str(row.get("owner_group")):
-            key = "owner:" + row["owner_group"]
-        else:
-            key = "institution:" + (_str(row.get("institution")) or _str(row.get("source_id")) or i)
-        if key in first:
-            union(i, first[key])
-        else:
-            first[key] = i
-    for pair in sorted(tuple(p) for p in copies or [] if isinstance(p, (list, tuple)) and len(p) == 2):
-        if pair[0] in parent and pair[1] in parent:
-            union(pair[0], pair[1])
-    groups: dict[str, list[str]] = {}
-    for i in sorted(ids):
-        groups.setdefault(find(i), []).append(i)
-    out = sorted(sorted(g) for g in groups.values())
-    declarations = sorted(i for i in ids if _str((rows.get(i) or {}).get("origin_class")) == origin.OFFICIAL)
-    reporting = sum(1 for g in out if not set(g) & set(declarations))
-    return {"groups": out, "count": max(1, len(out)), "declarations": declarations, "reporting_count": reporting}
+    for i in ids:
+        for k in keys.get(i) or []:
+            if k in first:
+                union(i, first[k])
+            else:
+                first[k] = i
+    pairs = sorted(tuple(p) for p in copies or [] if isinstance(p, (list, tuple)) and len(p) == 2
+                   and p[0] in parent and p[1] in parent)
+    for a, b in pairs:
+        union(a, b)
+    by_root: dict[str, list[str]] = {}
+    for i in ids:
+        by_root.setdefault(find(i), []).append(i)
+    groups = sorted(sorted(g) for g in by_root.values())
+    official = set(official or ())
+    declarations = sorted(i for i in ids if i in official)
+    origins = []
+    for g in groups:
+        members = set(g)
+        reasons: dict[tuple, dict] = {}
+        if len(g) > 1:
+            shared: dict[str, int] = {}
+            for i in g:
+                for k in keys.get(i) or []:
+                    shared[k] = shared.get(k, 0) + 1
+            for k in sorted(shared):
+                if shared[k] >= 2:
+                    r = _reason(k)
+                    reasons[tuple(sorted(r.items()))] = r
+            if any(a in members and b in members for a, b in pairs):
+                r = {"rule": ORIGIN_RULES["copy"], "key": "shingles-3-of-5"}
+                reasons[tuple(sorted(r.items()))] = r
+        origins.append({"members": g, "kind": "declaration" if members & official else "reporting",
+                        "reasons": [reasons[k] for k in sorted(reasons)]})
+    return {"groups": groups, "count": max(1, len(groups)), "declarations": declarations,
+            "reporting_count": sum(1 for o in origins if o["kind"] == "reporting"),
+            "keys": {i: list(keys.get(i) or []) for i in ids}, "origins": origins}
+
+
+def independence(ids: list[str], rows: dict[str, dict], copies: list | None = None, *,
+                 credits: dict[str, list[str]] | None = None, wire: set[str] | None = None) -> dict:
+    """EVENTS.md section 8 under docs/AUTONOMY.md: `member_keys` then
+    `independence_from_keys`. Official members are declarations: they never
+    count as independent corroboration of the media reporting
+    (`reporting_count`), whatever they share with it."""
+    official = {i for i in ids if _str((rows.get(i) or {}).get("origin_class")) == origin.OFFICIAL}
+    return independence_from_keys(ids, member_keys(ids, rows, credits, wire), copies, official)
 
 
 # Near-duplicate copy (docs/AUTONOMY.md): two members whose texts share most
@@ -541,20 +852,46 @@ def near_duplicate(a: dict, b: dict) -> bool:
     return den * len(sa & sb) >= num * len(sa | sb)
 
 
+def place_atom_code(atom: dict) -> str | None:
+    """The vocabulary code a place atom names, or None. An `area` atom is a
+    cluster_issues place hint, a `road` atom a road-name token: each maps
+    through vocabulaire's own tables; an atom that already is a code stays.
+    Anything else (a road name with no corridor code, a stray word) is not a
+    place an event can carry: facts.py keeps the raw token for its shadow
+    counts, an event never does."""
+    value = atom.get("value")
+    if not isinstance(value, str) or not value:
+        return None
+    unit = _str(atom.get("unit"))
+    code = (vocabulaire.place_for_hint(value) if unit == "area"
+            else vocabulaire.place_for_road(value) if unit == "road" else None)
+    if code is None and vocabulaire.place_kind(value) is not None:
+        code = value
+    return code if code and code != vocabulaire.FALLBACK_PLACE else None
+
+
 def slots_from_atoms(rows: list[tuple[str, str, list[dict]]]) -> list[dict]:
     """facts.build_slots over stored atoms: (item_id, institution, atoms) rows.
 
     Same grouping, ordering, attribution and divergence rule as
     facts.build_slots(items) (a test holds the equivalence); it exists because
-    the event store keeps typed atoms, never the texts build_slots re-reads."""
+    the event store keeps typed atoms, never the texts build_slots re-reads.
+    One difference, on purpose: a place atom enters an event only as a
+    vocabulary code (`place_atom_code`); a non-code token is ignored, so an
+    atom stored before facts.py guarded its road tokens can never reach a view."""
     slots: dict[tuple, dict] = {}
     for item_id, inst, atoms in rows:
         for a in atoms or []:
             if not isinstance(a, dict) or a.get("kind") not in facts.KINDS:
                 continue
+            value = a.get("value")
+            if a["kind"] == "place":
+                value = place_atom_code(a)
+                if value is None:
+                    continue
             slot = (a["kind"], _str(a.get("unit")), _str(a.get("subject")))
             entry = slots.setdefault(slot, {}).setdefault(
-                a.get("value"), {"stated_by": set(), "institutions": set(), "qualifiers": set()})
+                value, {"stated_by": set(), "institutions": set(), "qualifiers": set()})
             entry["stated_by"].add(item_id)
             if inst:
                 entry["institutions"].add(inst)
@@ -598,19 +935,34 @@ def reduce_facts(rows: list[dict], official_ids: set[str]) -> tuple[list[dict], 
     return kept, reduced
 
 
-def _without(rows: list[dict], gone: set[str]) -> list[dict]:
-    """Fact rows with withdrawn items removed from every attribution (R10)."""
+def _without(rows: list[dict], gone: set[str], inst_of: dict[str, str] | None = None) -> list[dict]:
+    """Fact rows with withdrawn items removed from every attribution (R10).
+
+    A value's institutions are re-derived from the items still stating it
+    (`inst_of`: item id -> institution of the members present), so a
+    withdrawn voice is never credited with a value another outlet also
+    stated. Divergence is recomputed over what remains."""
     if not gone:
         return rows
     out = []
     for row in rows:
         values = []
         for v in row.get("values") or []:
+            if not isinstance(v, dict):
+                continue
             stated = [i for i in v.get("stated_by") or [] if i not in gone]
-            if stated:
-                values.append({**v, "stated_by": stated})
+            if not stated:
+                continue
+            value = {**v, "stated_by": stated}
+            if inst_of is not None:
+                value["institutions"] = sorted({inst_of[i] for i in stated if i in inst_of})
+            values.append(value)
         if values:
-            out.append({**row, "values": values})
+            fixed = {**row, "values": values}
+            if "divergent" in row:
+                stating = {i for v in values for i in v["stated_by"]}
+                fixed["divergent"] = bool(row.get("comparable", True) and len(values) >= 2 and len(stating) >= 2)
+            out.append(fixed)
     return out
 
 
@@ -789,9 +1141,11 @@ def item_codes_problem(codes) -> str | None:
         return "item type scores that are not code -> integer"
     if not _str_list(codes.get("places", [])):
         return "item places that are not a list of codes"
-    for key in ("geo", "host"):
+    for key in ("geo", "geo_place", "host"):
         if key in codes and not isinstance(codes[key], str):
             return f"an item {key} that is not a string"
+    if not _str_list(codes.get("credits", [])):
+        return "item credits that are not a list of codes"
     atoms = codes.get("facts", [])
     if not isinstance(atoms, list) or not all(isinstance(a, dict) for a in atoms):
         return "item facts that are not a list of atoms"
@@ -907,7 +1261,22 @@ def _roots(events: list[dict]) -> dict[str, str]:
 
 
 def _member_instant(row: dict) -> datetime | None:
+    """The instant a member counts at: its publication date, unless that date
+    is suspect (more than DATE_SUSPECT_HOURS after its first collection, kept
+    as given, never corrected): then its first collection. A future date can
+    therefore never hold an event in window, nor its media facts live."""
+    if row.get("date_suspect") is True:
+        return em._clock(row.get("first_seen")) or em._clock(row.get("published_at"))
     return em._clock(row.get("published_at")) or em._clock(row.get("first_seen"))
+
+
+def _matcher_item(item: dict, first_seen: str) -> dict:
+    """The item as the matcher sees it: a publication date suspect against
+    the item's FIRST collection (`first_seen`: its stored row's when it is
+    already a member) is no instant, so the matcher dates it by that first
+    collection, as the window does. The stored row keeps the date as given."""
+    published, suspect = published_fields(item.get("published_at"), first_seen)
+    return {**item, "published_at": None} if suspect and published is not None else item
 
 
 def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict | None = None,
@@ -998,9 +1367,30 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
         registry[younger["event_id"]] = younger
         return class_of(older) == class_of(younger)
 
-    ctx = em.MatchContext(eligible)
-    events, decisions = em.attach(prev_events, eligible, ctx, edition=edition, items_by_id=texts,
-                                  compatible=compatible)
+    # The matcher dates a suspect member by its first collection: its texts
+    # and stored rows reach em.attach without the suspect date, which every
+    # returned row gets back as given (never corrected, never stored masked).
+    first_seen_of = {em._member_id(m): _str(m.get("first_seen")) for e in prev_events
+                     for m in e.get("members") or [] if isinstance(m, dict)}
+    mtexts = {k: _matcher_item(v, first_seen_of.get(k) or edition) for k, v in texts.items()}
+    masked_pub: dict[str, object] = {}
+    prev_for_match = []
+    for e in prev_events:
+        members = []
+        for m in e.get("members") or []:
+            if isinstance(m, dict) and m.get("date_suspect") is True and m.get("published_at"):
+                masked_pub[em._member_id(m)] = m["published_at"]
+                m = {**m, "published_at": None}
+            members.append(m)
+        prev_for_match.append({**e, "members": members})
+    ctx = em.MatchContext([mtexts[k] for k in sorted(mtexts)])
+    events, decisions = em.attach(prev_for_match, [mtexts[k] for k in sorted(mtexts)], ctx, edition=edition,
+                                  items_by_id=mtexts, compatible=compatible)
+    nbrs = em.neighbours(events, mtexts, ctx) if mtexts else {}
+    for e in events:
+        for m in e.get("members") or []:
+            if isinstance(m, dict) and em._member_id(m) in masked_pub:
+                m["published_at"] = masked_pub[em._member_id(m)]
     merged_now = {_str(d.get("event_id")) for d in decisions if d.get("action") == "merged"}
     for d in decisions:
         iid = _str(d.get("item_id"))
@@ -1062,7 +1452,21 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
         return "in_window" if clock - t <= timedelta(days=em.EDITION_WINDOW_DAYS) else "out_of_window"
 
     present = {r_id for r_id, ids in eff.items() if any(i in texts for i in ids)}
-    nbrs = em.neighbours(events, texts, ctx) if texts else {}
+
+    # Agency credits measured over the window (docs/AUTONOMY.md): a credit
+    # outside the closed list is a wire when copy carrying it is seen in two
+    # or more owner groups among the members published (or first collected)
+    # within PUBLICATION_WINDOW_DAYS; withdrawn members are never counted.
+    observed = []
+    for e in events:
+        for r in e["members"]:
+            t = _member_instant(r)
+            if r["item_id"] in withdrawn_ids or (t is not None and clock - t > timedelta(days=PUBLICATION_WINDOW_DAYS)):
+                continue
+            observed.append((r, (items.get(r["item_id"]) or {}).get("credits") or []))
+    credit_facts = wire_credits(observed)
+    wire = {code for code, fact in credit_facts.items() if fact["wire"]}
+    credits_of = {k: list(v.get("credits") or []) for k, v in items.items()}
     anchor_inputs = dict(anchor_inputs or {})
     if anchors_module() is not None:
         # The edition's own official and Hydro-Québec items, from the
@@ -1085,19 +1489,25 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
         eid = e["event_id"]
         ids = ids_of(eid)
         live = [i for i in ids if i not in withdrawn_ids]
+        # Every derived field describes the coverage still present (R10: a
+        # withdrawn member is never counted); an event whose every member is
+        # withdrawn keeps fields over its ids so its stored record stays whole.
+        base = live or ids
         e["schema"] = SCHEMA
         e["method"] = METHOD
-        e["type"] = event_type(ids, items)
-        places, basis = event_places(ids, items)
+        e["type"] = event_type(base, items)
+        places, basis = event_places(base, items)
         e["places"], e["place_basis"] = places, basis
+        e["place_votes"] = {code: {"votes": v[0], "named": v[1]}
+                            for code, v in sorted(place_votes(base, items).items())}
         e["label"] = event_label(e["type"], places, basis)
         e["family"] = vocabulaire.family_of(e["type"]) or ""
-        e["geo"] = event_geo(ids, items)
+        e["geo"] = event_geo(base, items)
         e["window_state"] = window_of(eid)
         e["activity"] = ("new" if e.get("born_edition") == edition
                          else "developed" if e.get("last_edition") == edition else "quiet")
-        e["institutions"] = sorted({rows[i]["institution"] for i in ids})
-        e["languages"] = sorted({rows[i]["language"] for i in ids if rows[i].get("language") in ("fr", "en")})
+        e["institutions"] = sorted({rows[i]["institution"] for i in base})
+        e["languages"] = sorted({rows[i]["language"] for i in base if rows[i].get("language") in ("fr", "en")})
         # Near-duplicate copies (sticky): one origin whoever owns them.
         copies = {tuple(p) for p in e.get("copies") or []
                   if isinstance(p, list) and len(p) == 2 and p[0] in ids and p[1] in ids}
@@ -1108,7 +1518,9 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
                 if (a, b) not in copies and near_duplicate(texts[a], texts[b]):
                     copies.add((a, b))
         e["copies"] = [list(p) for p in sorted(copies)]
-        e["independence"] = independence(ids, rows, e["copies"])
+        e["independence"] = independence(base, rows, e["copies"], credits=credits_of, wire=wire)
+        e["reporting_origin_count"] = e["independence"]["reporting_count"]
+        e["declared_by"] = sorted({rows[i]["institution"] for i in e["independence"]["declarations"]})
         e["withdrawn"] = sorted(set(ids) & withdrawn_ids)
         lineage = dict(e.get("lineage") or {})
         e["lineage"] = {"merged_into": _str(lineage.get("merged_into")),
@@ -1135,7 +1547,7 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
         # Facts: live while in window; reduced once out of it.
         official = {i for i in ids if rows[i].get("origin_class") == origin.OFFICIAL}
         if e.get("facts_state") == "reduced":
-            e["facts"] = _without(e.get("facts") or [], withdrawn_ids)
+            e["facts"] = _without(e.get("facts") or [], withdrawn_ids, {i: rows[i]["institution"] for i in live})
         else:
             live_facts = slots_from_atoms([(i, rows[i]["institution"], (items.get(i) or {}).get("facts") or [])
                                            for i in live])
@@ -1158,7 +1570,7 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
                 rule = None
                 if cluster_issues.same_event(texts[f], texts[n]):
                     rule = PAIR_RULE_FEATURES
-                elif em.at_least(em.pair_tier(texts[f], texts[n], ctx)[1], em.MERGE_TIER):
+                elif em.at_least(em.pair_tier(mtexts[f], mtexts[n], ctx)[1], em.MERGE_TIER):
                     rule = PAIR_RULE_MATCHER
                 if rule:
                     same = bool(rows[f].get("owner_group")) and rows[f].get("owner_group") == rows[n].get("owner_group")
@@ -1202,8 +1614,9 @@ def build(previous: dict | None, payload: dict, reg: Registry, *, issues: dict |
     store = {"format": STORE_FORMAT, "schema": SCHEMA, "method": METHOD, "editions": editions,
              "events": [_ordered(e) for e in kept_events], "items": items}
 
-    view = _view(store, edition, texts, rows, withdrawn_ids, reg, collection)
-    ops = _ops(store, view, edition, raw, eligible, excluded, decisions, issues, anchor_source, diagnosis)
+    view = _view(store, edition, texts, withdrawn_ids, reg, collection)
+    ops = _ops(store, view, edition, raw, eligible, excluded, decisions, issues, anchor_source, diagnosis,
+               credit_facts)
     return store, view, ops
 
 
@@ -1223,36 +1636,144 @@ def to_v1(e: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # The current-edition view and the shadow counts
 # --------------------------------------------------------------------------- #
+# The published bounds of the independence rules, printed in every view so a
+# page can say "why one origin" with the real values (docs/AUTONOMY.md).
+INDEPENDENCE_RULES = {
+    "wire_priors": list(WIRE_PRIORS),
+    "wire_credit_min_owner_groups": WIRE_CREDIT_MIN_GROUPS,
+    "wire_credit_window_days": PUBLICATION_WINDOW_DAYS,
+    "near_duplicate": {"shingle_words": COPY_SHINGLE, "jaccard_at_least": list(COPY_BOUND),
+                       "min_shingles": COPY_MIN_SHINGLES, "excerpt_chars": em.SUMMARY_CHARS},
+    "declarations_counted_as_reporting": False,
+    "date_suspect_hours": DATE_SUSPECT_HOURS,
+}
+
+
+def collection_state(iid: str, collection: dict | None) -> str:
+    """What this edition measured for a followed institution with no member
+    here: our fetch failed (`collection_gap`), it answered (`no_linked_item`),
+    or the edition carries no collection fact for it (`not_established`, a
+    replayed snapshot, an institution the collection did not measure)."""
+    f = (collection or {}).get(iid)
+    if not isinstance(f, dict):
+        return "not_established"
+    total, ok = int(f.get("feeds_total") or 0), int(f.get("feeds_ok") or 0)
+    if total <= 0:
+        return "not_established"
+    return "collection_gap" if ok < total else "no_linked_item"
+
+
+def _withdrawn_row(iid: str, name: str, scope: str) -> dict:
+    return {"institution": iid, "institution_name": name or iid, "state": "withdrawn", "scope": scope}
+
+
 def silence_roster(institutions: list[str], reg: Registry, collection: dict | None) -> list[dict]:
-    """Followed institutions with no member in this event, each with the
-    collection state measured this edition: our fetch failed
-    (`collection_gap`), else simply no linked article (`no_linked_item`)."""
+    """The followed institutions with no member present in this event, each
+    with what this edition measured (`collection_state`), plus every voice
+    takedowns.yaml withdrew whole (`withdrawn`, scope `institution`): a
+    withdrawn voice is said to be withdrawn, it never vanishes from the
+    roster. (A voice whose items here were withdrawn is added by
+    `strip_withdrawn`, scope `article`.)"""
     have = set(institutions)
-    out = []
+    rows: dict[str, dict] = {}
     for inst in reg.followed_institutions():
         iid = inst["institution_id"]
-        if iid in have:
-            continue
-        state = "no_linked_item"
-        f = (collection or {}).get(iid)
-        if isinstance(f, dict):
-            total, ok = int(f.get("feeds_total") or 0), int(f.get("feeds_ok") or 0)
-            if total and ok < total:
-                state = "collection_gap"
-        out.append({"institution": iid, "institution_name": str(inst.get("institution_name") or iid),
-                    "state": state})
-    return sorted(out, key=lambda r: r["institution"])
+        if iid not in have:
+            rows[iid] = {"institution": iid, "institution_name": str(inst.get("institution_name") or iid),
+                         "state": collection_state(iid, collection)}
+    for iid, info in sorted(reg.withdrawn_institutions().items()):
+        if iid not in have:
+            rows[iid] = _withdrawn_row(iid, _str(info.get("institution_name")), "institution")
+    return [rows[k] for k in sorted(rows)]
 
 
-def _view(store: dict, edition: str, texts: dict, rows: dict, withdrawn_ids: set[str], reg: Registry,
+def strip_withdrawn(v: dict, gone: set[str], whole: dict[str, dict] | None = None,
+                    names: dict[str, str] | None = None) -> dict | None:
+    """The view event `v` with every member in `gone` withdrawn (R10), or
+    None when no member is left present, or none of this edition.
+
+    The members leave `members` and are listed by id under `withdrawn`;
+    institutions, languages, copies, language pairs, fact attributions and
+    item anchors are re-derived from the members present; independence is
+    recomputed from the stored member keys (`independence.keys`) and the
+    remaining copies, by the same function the builder uses, so
+    `reporting_origin_count` and `declared_by` never count a withdrawn voice.
+    A voice left with no member here is in the silence roster as
+    `withdrawn` (scope `article`, or `institution` when `whole` lists it).
+    Type, places and label are Vigie's own codes and stay as built.
+    Idempotent; `v` is not mutated."""
+    whole = whole or {}
+    names = names or {}
+    rows = [m for m in v.get("members") or [] if isinstance(m, dict) and _str(m.get("item_id"))]
+    leaving = [m for m in rows if m["item_id"] in gone]
+    present = [m for m in rows if m["item_id"] not in gone]
+    if not present:
+        return None
+    out = json.loads(json.dumps(v))
+    withdrawn = sorted(set(_str(x) for x in v.get("withdrawn") or [] if _str(x)) | {m["item_id"] for m in leaving})
+    gone_all = set(withdrawn) | set(gone)
+    ids = sorted(m["item_id"] for m in present)
+    idset = set(ids)
+    inst_of = {m["item_id"]: _str(m.get("institution")) or _str(m.get("source_id")) for m in present}
+    out["members"] = json.loads(json.dumps(present))
+    out["member_count"] = len(present)
+    out["withdrawn"] = withdrawn
+    out["withdrawn_count"] = len(withdrawn)
+    if "in_edition" in v:
+        out["in_edition"] = [i for i in v.get("in_edition") or [] if i in idset]
+        if not out["in_edition"]:
+            return None
+    out["institutions"] = sorted(set(inst_of.values()))
+    out["languages"] = sorted({m.get("language") for m in present if m.get("language") in ("fr", "en")})
+    out["copies"] = [list(p) for p in v.get("copies") or []
+                     if isinstance(p, (list, tuple)) and len(p) == 2 and p[0] in idset and p[1] in idset]
+    out["language_pairs"] = [dict(p) for p in v.get("language_pairs") or []
+                             if isinstance(p, dict) and p.get("fr") in idset and p.get("en") in idset]
+    ind = v.get("independence") if isinstance(v.get("independence"), dict) else {}
+    stored = ind.get("keys") if isinstance(ind.get("keys"), dict) else {}
+    keys: dict[str, list[str]] = {}
+    for m in present:
+        k = stored.get(m["item_id"])
+        keys[m["item_id"]] = ([str(x) for x in k] if isinstance(k, list) and k
+                              else member_keys([m["item_id"]], {m["item_id"]: m})[m["item_id"]])
+    official = {m["item_id"] for m in present if m.get("origin_class") == origin.OFFICIAL}
+    out["independence"] = independence_from_keys(ids, keys, out["copies"], official)
+    out["reporting_origin_count"] = out["independence"]["reporting_count"]
+    out["declared_by"] = sorted({inst_of[i] for i in out["independence"]["declarations"]})
+    out["facts"] = _without(json.loads(json.dumps(v.get("facts") or [])), gone_all, inst_of)
+    out["anchors"] = [dict(a) for a in v.get("anchors") or []
+                      if isinstance(a, dict) and not (a.get("type") in ITEM_ANCHORS and a.get("ref") in gone_all)]
+    roster: dict[str, dict] = {}
+    for r in v.get("silence") or []:
+        if isinstance(r, dict) and _str(r.get("institution")) and r["institution"] not in out["institutions"]:
+            roster[r["institution"]] = dict(r)
+    lost = {_str(m.get("institution")) for m in leaving if _str(m.get("institution"))} - set(out["institutions"])
+    for iid in sorted(lost):
+        name = _str((roster.get(iid) or {}).get("institution_name")) or names.get(iid) or \
+            _str((whole.get(iid) or {}).get("institution_name")) or iid
+        roster[iid] = _withdrawn_row(iid, name, "institution" if iid in whole else "article")
+    for iid, info in sorted(whole.items()):
+        if iid not in out["institutions"]:
+            name = _str((roster.get(iid) or {}).get("institution_name")) or _str(info.get("institution_name"))
+            roster[iid] = _withdrawn_row(iid, name, "institution")
+    out["silence"] = [roster[k] for k in sorted(roster)]
+    return out
+
+
+def _view(store: dict, edition: str, texts: dict, withdrawn_ids: set[str], reg: Registry,
           collection: dict | None) -> dict:
-    """Surviving events with at least one member in this edition and at least
-    one member still displayable. Effective membership; withdrawn rows omitted."""
+    """Surviving events with at least one member present in this edition.
+    Effective membership; withdrawn members stripped (`strip_withdrawn`, the
+    function `apply_takedowns` re-applies at render time)."""
     events = store["events"]
     root = _roots(events)
     eff: dict[str, list[dict]] = {}
     for e in events:
         eff.setdefault(root[e["event_id"]], []).extend(e["members"])
+    whole = reg.withdrawn_institutions()
+    names = {iid: reg.institution_name(iid)
+             for iid in sorted({_str(r.get("institution")) for e in events for r in e["members"]
+                                if r["item_id"] in withdrawn_ids})}
     out = []
     for e in events:
         eid = e["event_id"]
@@ -1260,17 +1781,85 @@ def _view(store: dict, edition: str, texts: dict, rows: dict, withdrawn_ids: set
             continue
         members = sorted(eff.get(eid) or [], key=lambda r: (_str(r.get("first_seen")), _str(r.get("published_at")), r["item_id"]))
         in_edition = sorted(r["item_id"] for r in members if r["item_id"] in texts)
-        shown = [r for r in members if r["item_id"] not in withdrawn_ids]
-        if not in_edition or not shown:
+        if not in_edition:
             continue
         v = _ordered(e)
-        v["members"] = shown
+        v["members"] = members
         v["member_count"] = len(members)
+        v["withdrawn_count"] = len(e.get("withdrawn") or [])
         v["in_edition"] = in_edition
         v["silence"] = silence_roster(e["institutions"], reg, collection)
-        out.append(v)
+        v = strip_withdrawn(v, withdrawn_ids, whole, names)
+        if v is not None:
+            out.append(v)
     return {"format": "events-latest-v1", "schema": SCHEMA, "method": METHOD, "edition": edition,
-            "status": "ok", "event_count": len(out), "events": out}
+            "status": "ok", "rules": INDEPENDENCE_RULES, "event_count": len(out), "events": out}
+
+
+def _mark_withdrawn_voices(v: dict, whole: dict[str, dict]) -> dict:
+    """`v` (a copy) with every voice withdrawn whole marked `withdrawn` in its
+    silence roster; nothing else changes."""
+    out = json.loads(json.dumps(v))
+    if not whole:
+        return out
+    present = set(out.get("institutions") or [])
+    roster = {r["institution"]: r for r in out.get("silence") or [] if isinstance(r, dict) and _str(r.get("institution"))}
+    for iid, info in sorted(whole.items()):
+        if iid not in present:
+            name = _str((roster.get(iid) or {}).get("institution_name")) or _str(info.get("institution_name"))
+            roster[iid] = _withdrawn_row(iid, name, "institution")
+    out["silence"] = [roster[k] for k in sorted(roster)]
+    return out
+
+
+def apply_takedowns(view: dict, rules: takedown.Rules | None = None, *, sources_path: Path | None = SOURCES_PATH,
+                    hosts: dict[str, str] | None = None) -> dict:
+    """R10 at render time: `view` (a stored latest_events.json) with every
+    member the active takedowns withdraw stripped exactly as `build` strips
+    it (`strip_withdrawn`), and every withdrawn voice marked in the silence
+    rosters. The hourly roads lane re-renders from stored files without
+    rebuilding the view, so whoever renders or seals it calls this first.
+
+    rules         takedown.Rules (None: takedowns.yaml as it stands)
+    sources_path  sources.yaml, for feed-domain rules and withdrawn voices
+                  (unreadable: source-id, URL and article-domain rules still apply)
+    hosts         item id -> article domain (the store's `host` codes), for
+                  a domain rule on a member whose URL is already gone
+
+    Pure apart from reading those two files; never mutates `view`; idempotent.
+    A view that is not an "ok" events view is returned as it is (a copy)."""
+    doc = json.loads(json.dumps(view)) if isinstance(view, (dict, list)) else view
+    if not isinstance(doc, dict) or not isinstance(doc.get("events"), list) or doc.get("status", "ok") != "ok":
+        return doc
+    if rules is None:
+        rules = takedown.load_rules()
+    try:
+        reg = Registry(ingest_rss.load_sources(Path(sources_path)), rules, Path(sources_path)) \
+            if sources_path is not None else Registry([], rules)
+    except (Exception, SystemExit):  # noqa: BLE001 - an unreadable registry never blocks R10
+        reg = Registry([], rules)
+    hosts = hosts or {}
+    whole = reg.withdrawn_institutions()
+    events = []
+    for v in doc["events"]:
+        if not isinstance(v, dict):
+            continue
+        gone = {m["item_id"] for m in v.get("members") or []
+                if isinstance(m, dict) and _str(m.get("item_id"))
+                and reg.withdrawn(m, hosts.get(m["item_id"]) or article_host(m.get("url")))}
+        if not gone:
+            # Nothing of this event is withdrawn: it stays as built, except
+            # that a voice withdrawn whole is marked in its silence roster.
+            events.append(_mark_withdrawn_voices(v, whole))
+            continue
+        names = {_str(m.get("institution")): reg.institution_name(_str(m.get("institution")))
+                 for m in v.get("members") or [] if isinstance(m, dict) and m.get("item_id") in gone}
+        stripped = strip_withdrawn(v, gone, whole, names)
+        if stripped is not None:
+            events.append(stripped)
+    doc["events"] = events
+    doc["event_count"] = len(events)
+    return doc
 
 
 def _bp(n: int, d: int) -> int:
@@ -1306,8 +1895,15 @@ def dossier_overlap(issues: dict | None, store: dict) -> dict:
             "events_holding_dossier_items": len(touched)}
 
 
+def _dist(values) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for v in values:
+        out[str(v)] = out.get(str(v), 0) + 1
+    return dict(sorted(out.items(), key=lambda kv: (int(kv[0]) if kv[0].lstrip("-").isdigit() else 10 ** 9, kv[0])))
+
+
 def _ops(store: dict, view: dict, edition: str, raw: list, eligible: list, excluded: dict, decisions: list,
-         issues: dict | None, anchor_source: str, diagnosis: list[str]) -> dict:
+         issues: dict | None, anchor_source: str, diagnosis: list[str], credit_facts: dict | None = None) -> dict:
     vev = view["events"]
     multi = [e for e in vev if e["member_count"] > 1]
     independence_dist: dict[str, int] = {}
@@ -1362,7 +1958,19 @@ def _ops(store: dict, view: dict, edition: str, raw: list, eligible: list, exclu
             "copy_pairs": sum(len(e.get("copies") or []) for e in vev),
             "withdrawn_members": sum(len(e.get("withdrawn") or []) for e in vev),
             "language_pairs": sum(len(e["language_pairs"]) for e in vev),
+            "multi_institution_reporting_origins": _dist(e.get("reporting_origin_count", 0) for e in vev
+                                                         if len(e["institutions"]) >= 2),
+            "with_declarations": sum(1 for e in vev if e.get("declared_by")),
+            "merged_origin_reasons": dict(sorted(_dist(r["rule"] for e in vev
+                                                       for o in (e["independence"].get("origins") or [])
+                                                       for r in o.get("reasons") or []).items())),
+            "place_basis": dict(sorted(_dist(e.get("place_basis") for e in vev).items())),
+            "first_place": dict(sorted(_dist(e["places"][0] for e in vev).items())),
+            "silence_states": dict(sorted(_dist(r.get("state") for e in vev for r in e.get("silence") or []).items())),
         },
+        # Agency credits over the window (docs/AUTONOMY.md): counts and codes
+        # only; `wire` is the rule's answer this edition, `basis` prior or measured.
+        "credits": credit_facts or {},
         "dossiers_vs_events": dossier_overlap(issues, store),
         "anchors": anchor_source or "no event this edition",
         "diagnosis": sorted(diagnosis),

@@ -108,6 +108,28 @@ class LiveRegistryDeclaresOwnership(unittest.TestCase):
                 else:
                     self.assertNotEqual(cls, "government")
 
+    def test_hydro_quebec_follows_the_sourced_fact_not_an_opinion(self) -> None:
+        # The State is Hydro-Québec's sole shareholder, as its own sourced
+        # declaration says: one owner group with the Government of Quebec.
+        hydro, gouv = self.by_id["hydro-quebec"], self.by_id["gouv-quebec"]
+        for rec in (hydro, gouv):
+            self.assertTrue(ownership.is_https_ref(rec["ownership_ref"]), rec["id"])
+        self.assertEqual(ownership.owner_group_of("hydro-quebec", self.sources),
+                         ownership.owner_group_of("gouv-quebec", self.sources))
+        # Both are declarations: they stand apart from media reporting.
+        self.assertTrue(ownership.declares("hydro-quebec", self.sources))
+        self.assertTrue(ownership.declares("gouv-quebec", self.sources))
+        self.assertFalse(ownership.declares("journal-de-quebec", self.sources))
+        self.assertFalse(ownership.declares("nobody", self.sources))
+
+    def test_no_media_shares_an_owner_group_with_a_declaring_source(self) -> None:
+        # So a declaration can never merge with, or stand in for, a media origin by owner.
+        declaring = {ownership.owner_group_of(s["id"], self.sources) for s in self.sources
+                     if ownership.declares(s["id"], self.sources)}
+        for src in self.sources:
+            if not ownership.declares(src["id"], self.sources):
+                self.assertNotIn(ownership.owner_group_of(src["id"], self.sources), declaring - {None}, src["id"])
+
     def test_default_registry_is_the_repository_file(self) -> None:
         self.assertEqual(ownership.ownership_class_of("journal-de-quebec"), "quebecor")
         self.assertEqual(ownership.independence_key("radio-canada-quebec"),
@@ -186,6 +208,11 @@ class HelpersOnInventedSources(unittest.TestCase):
         rows = ownership.table(self.fx)
         self.assertEqual([r["institution"] for r in rows], sorted(r["institution"] for r in rows))
         self.assertEqual(rows, ownership.table(list(reversed(self.fx))))
+        self.assertEqual({r["declares"] for r in rows}, {False}, "no invented source is official")
+        official = self.fx + [{"id": "omega", "institution": "omega", "language": "fr", "source_kind": "official",
+                               "ownership_class": "government", "owner_group": "omega",
+                               "ownership_ref": "https://example.org/o", "ownership_asof": "2026-01-02"}]
+        self.assertTrue(next(r for r in ownership.table(official) if r["institution"] == "omega")["declares"])
 
 
 class FailSoft(unittest.TestCase):
