@@ -32,6 +32,7 @@ numbers use U+2212.
 from __future__ import annotations
 
 import json
+import re
 import string
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -43,6 +44,9 @@ NBSP = " "
 MINUS = "−"
 
 _CACHE: dict[str, dict[str, str]] = {}
+# "a.m." / "p.m." already end in a period: a sentence that ends on a time must not
+# print two ("at 2:05 p.m.." -> "at 2:05 p.m.").
+_DOUBLE_DOT = re.compile(r"\b([ap]\.m\.)\.")
 
 
 # --------------------------------------------------------------------------- #
@@ -68,7 +72,7 @@ def t(key: str, lang: str, **kw: object) -> str:
     cat = catalogue(lang)
     if key not in cat:
         raise KeyError(f"i18n: missing key {key!r} for {lang!r}")
-    return cat[key].format(**kw)
+    return _DOUBLE_DOT.sub(r"\1", cat[key].format(**kw))
 
 
 def plural_form(n: int, lang: str) -> str:

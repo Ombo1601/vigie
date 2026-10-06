@@ -166,6 +166,14 @@ class Formatters(unittest.TestCase):
         self.assertEqual(i18n.fmt_duration(3 * 3600, "fr"), "3 h")
         self.assertEqual(i18n.fmt_duration(72 * 3600, "en"), "72 hr")
 
+    def test_a_sentence_that_ends_on_a_time_has_one_period(self):
+        self.assertEqual(i18n.t("end.next", "en", tm="4:10 p.m."), "Next collection around 4:10 p.m.")
+        self.assertEqual(i18n.t("end.next", "fr", tm="16 h 10"), "Prochaine collecte vers 16 h 10.")
+        lede = i18n.t("ed.lede", "en", events="5 events", institutions="9 institutions followed", tm="10:12 a.m.")
+        self.assertNotIn("..", lede)
+        page = composants.demo_pages()["en/evenements.html"]
+        self.assertNotIn("m..", page)
+
     def test_no_wall_clock_or_locale_in_the_formatters(self):
         for name in ("i18n.py", "composants.py"):
             tree = ast.parse((harness.SCRIPTS / name).read_text(encoding="utf-8"))
