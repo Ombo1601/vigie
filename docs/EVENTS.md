@@ -958,3 +958,28 @@ candidates, 194 events), frozen clock, old code against new:
   `deploy/public` is byte-identical; off ships regardless. An `events.py`
   that cannot start (`pipeline.py --offline`): off diagnoses it and renders
   the edition, live stops at `events.py` before any render.
+
+## 20. Honest labels (2026-10-07)
+
+An unclassified event is never named by its type (docs/AUTONOMY.md: a label
+that says nothing is not a rule's output worth printing). Deviation from
+sections 3 and 5 for what the pages print; nothing changes in the stores, the
+seals or the machine files, which keep `type: "unclassified"` and both labels.
+
+- **Card.** No kind chip. The place chip stands, and nothing stands when the
+  place is not established (`place_known: false`, i.e. "Lieu non établi"); the
+  "Pourquoi ici ?" row says "only the links (no type is established)".
+- **Current page.** The h1 and the document title (and `og:title`,
+  description) are the lead voice's verbatim headline, in its own `lang`, with
+  its outlet and declared time under it; the place is a chip.
+- **Permanent page and merged page.** No publisher text, ever: the h1 is the
+  place label alone ("Lieu non établi" when none), a small neutral line says
+  "Type non établi" / "Type not established", and the document title adds the
+  day the record was opened so records of one place stay distinct.
+- **View.** `evenements.build_view` adds `place_known` (kit input only, not in
+  `latest.json`); `composants.is_unclassified`, `kind_text`, `place_text` and
+  `plain_name` are the one place that decides.
+- **Keywords.** The type lexicon gained about 110 entries (
+  keywords and `unless` guards) and no code. Stored items keep the `type_scores`
+  they were derived with (events.py derives an item once), so a lexicon change
+  reaches the events as their items are re-derived or new items arrive.

@@ -993,6 +993,24 @@ def _places(e: dict) -> tuple[list[str], str]:
     return places, _str(e.get("place_basis"))
 
 
+def _naming(e: dict) -> dict:
+    """What the kit needs to name an event without publisher text: the type
+    code, the stored `{fr, en}` label, the worded place and whether it is
+    established. The place is always worded: a named or geo place by its label
+    ("Hors Québec" included); an event no evidence places (basis "fallback", or
+    no place at all) by the place twin of "unclassified", "Lieu non établi",
+    never by a code it may still carry from before that rule (EVENTS.md 17.1).
+    An unclassified type is carried as a code and a label for the machine
+    files; the pages never print it (composants.plain_name)."""
+    places, basis = _places(e)
+    type_code = _str(e.get("type")) or vocabulaire.UNCLASSIFIED
+    label = e.get("label") if isinstance(e.get("label"), dict) else {}
+    label = {lang: _str(label.get(lang)) or vocabulaire.label(type_code, None, lang) for lang in LANGS}
+    place_known = bool(places and basis != "fallback" and places[0] != vocabulaire.FALLBACK_PLACE)
+    place_label = _labels_of(places[0] if place_known else vocabulaire.FALLBACK_PLACE, "place")
+    return {"type": type_code, "label": label, "place_known": place_known, "place_label": place_label}
+
+
 def build_view(r: Render, e: dict, rows: list[dict], *, current: bool, in_current: bool,
                matcher: dict, published: set[str], quality_chip: dict, current_ids: set[str]) -> dict | None:
     """One EventView for the kit. `rows` are the member rows (already R10
@@ -1009,17 +1027,9 @@ def build_view(r: Render, e: dict, rows: list[dict], *, current: bool, in_curren
             if m["item_id"] not in texted:
                 m["text_gone"] = True
     places, basis = _places(e)
-    type_code = _str(e.get("type")) or vocabulaire.UNCLASSIFIED
-    label = e.get("label") if isinstance(e.get("label"), dict) else {}
-    label = {lang: _str(label.get(lang)) or vocabulaire.label(type_code, None, lang) for lang in LANGS}
-    # The place is always worded: a named or geo place by its label ("Hors
-    # Québec" included); an event no evidence places (basis "fallback", or no
-    # place at all) by the place twin of "unclassified", "Lieu non établi",
-    # never by a code it may still carry from before that rule (EVENTS.md 17.1).
-    if places and basis != "fallback":
-        place_label = _labels_of(places[0], "place")
-    else:
-        place_label = _labels_of(vocabulaire.FALLBACK_PLACE, "place")
+    naming = _naming(e)
+    type_code, label = naming["type"], naming["label"]
+    place_known, place_label = naming["place_known"], naming["place_label"]
     pairs = [p for p in _dicts(e.get("language_pairs")) if p.get("fr") in by_id and p.get("en") in by_id]
     facts_rows = []
     if current:
@@ -1080,6 +1090,7 @@ def build_view(r: Render, e: dict, rows: list[dict], *, current: bool, in_curren
         "label": label,
         "type_label": _labels_of(type_code, "type"),
         "place_label": place_label,
+        "place_known": place_known,
         "tier": _str(e.get("tier")) or None,
         "tier_view": quality_chip,
         "quality_href": QUALITY_PATH,
@@ -1422,15 +1433,17 @@ def _home(lang: str, mode: str = "") -> str:
 
 def _merged_page(r: Render, e: dict, survivor_view: dict, lang: str, note: str) -> str:
     eid = e["event_id"]
-    label = e.get("label") if isinstance(e.get("label"), dict) else {}
-    title = ck.loc({k: _str(label.get(k)) for k in LANGS}, lang) or ck.loc(survivor_view.get("label"), lang)
+    own = _naming(e)
+    title = ck.plain_name(own, lang) or ck.plain_name(survivor_view, lang)
     lineage = e.get("lineage") if isinstance(e.get("lineage"), dict) else {}
     when = i18n.fmt_datetime(lineage.get("merged_at"), lang)
     text = i18n.t("merged.p", lang, d=when) if when else i18n.t("merged.p.nodate", lang)
     target = ck.path_for(lang, ck.event_path(survivor_view["event_id"]))
-    go = i18n.t("merged.go", lang, label=ck.loc(survivor_view.get("label"), lang))
+    go = i18n.t("merged.go", lang, label=ck.plain_name(survivor_view, lang))
+    untyped = (f'<p class="small muted m0">{ck.esc(i18n.t("ev.type_unknown", lang))}</p>'
+               if ck.is_unclassified(own) else "")
     main = (f'{ck.internal_link(lang, "/evenements.html", i18n.t("crumb.index", lang), cls="crumb")}'
-            f'<header class="evp-head"><h1 id="h1" tabindex="-1">{ck.esc(title)}</h1>'
+            f'<header class="evp-head"><h1 id="h1" tabindex="-1">{ck.esc(title)}</h1>{untyped}'
             f'<p class="facts-line"><code>{ck.esc(eid)}</code></p></header>'
             f'<section class="card panel"><p class="m0">{ck.esc(text)}</p>'
             f'<p class="mt-s"><a class="btn primary" href="{ck.esc(target)}">{ck.esc(go)}</a></p></section>')
