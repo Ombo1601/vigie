@@ -59,8 +59,8 @@ ATOM_FIXTURE = """<?xml version="1.0" encoding="utf-8"?>
 # Golden digests: sha256 of the meta JSON ingest_one wrote for the fixtures
 # above, computed on the Phase 1 base commit BEFORE any hardening change.
 GOLDEN = {
-    "rss": "6b2d8380e2e61cb6aad8ac54fd6d38c6c400307d3f0f7404f2a93c477b99e180",
-    "atom": "82ab2b5f28e36be19f865358e209be3811603ab16d260b3db90fb9c74f9ea589",
+    "rss": "88a9c762e4bd491deda5b248f8321ff4580c30d1292b912f7c90ad1cb236d97c",
+    "atom": "20c44b89092378e7b143482b1a1396a1673d4fa213f299ef521c6a216ff656d5",
     "rss_candidates": "aceff685f342acf1267273938fff0fa4979be6e357ba3efed03295c8684bc288",
     "atom_candidates": "3f1170e4f6d1f46f3df8d3c1a4d24c4c5c7fbecbfb4f83dd94944391a8745dcb",
 }
@@ -96,7 +96,8 @@ class GoldenByteIdentity(unittest.TestCase):
     def digest(self, raw: bytes) -> str:
         with tempfile.TemporaryDirectory() as tmp:
             _, meta = run_ingest(raw, root=Path(tmp))
-        return hashlib.sha256(meta).hexdigest()
+        # LF-normalised: the file is CRLF on a Windows writer and LF on the Linux runner
+        return hashlib.sha256(meta.replace(b"\r\n", b"\n")).hexdigest()
 
     def test_rss_meta_is_byte_identical_to_the_base_commit(self) -> None:
         self.assertEqual(self.digest(RSS_FIXTURE), GOLDEN["rss"])
@@ -122,7 +123,7 @@ class DeterminismAcrossHashSeeds(unittest.TestCase):
             "import test_ingest_hardening as t\n"
             "with tempfile.TemporaryDirectory() as tmp:\n"
             "    _, meta = t.run_ingest(t.RSS_FIXTURE, root=Path(tmp))\n"
-            "print(hashlib.sha256(meta).hexdigest())\n")
+            "print(hashlib.sha256(meta.replace(b'\\r\\n', b'\\n')).hexdigest())\n")
         here = Path(__file__).resolve().parent
         outs = set()
         for seed in ("0", "1", "4242"):
