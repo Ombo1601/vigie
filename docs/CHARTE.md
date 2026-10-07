@@ -25,9 +25,12 @@ Vigie est un projet non commercial, pour Québec, en français d'abord.
 2. **Montre l'origine.** Pour chaque article : reportage propre, dépêche
    d'agence, communiqué relayé, document officiel, ou « origine inconnue »
    quand nous ne savons pas. Nous ne devinons pas.
-3. **Montre la propriété.** Diffuseur public, Québecor, coopérative,
-   indépendant, gouvernement. Deux médias d'un même propriétaire comptent pour
-   une seule voix indépendante.
+3. **Montre la propriété, comme une structure.** Société d'État,
+   coopérative, fiducie, organisme sans but lucratif, société cotée en bourse,
+   administration publique : la forme juridique et l'actionnaire, tels que la
+   référence publique de chaque source les énonce, avec la date où nous
+   l'avons lue. Jamais un mot qui juge un média. Deux médias d'un même
+   propriétaire comptent pour une seule origine.
 4. **Montre la langue.** Chaque article porte sa langue ; une couverture
    anglophone seulement est signalée comme telle.
 5. **Montre le silence mesuré.** Quelles institutions suivies n'ont rien publié
@@ -94,8 +97,11 @@ Vigie is a non-commercial project for Québec City, French first.
 2. **Shows origin.** For each article: own reporting, wire copy, relayed press
    release, official document, or "origin unknown" when we do not know. We do
    not guess.
-3. **Shows ownership.** Public broadcaster, Quebecor, cooperative, independent,
-   government. Two outlets with one owner count as one independent voice.
+3. **Shows ownership, as a structure.** Crown corporation, cooperative, trust,
+   non-profit, listed company, public administration: the legal form and the
+   shareholder, as each source's public reference states them, with the date
+   we read it. Never a word that judges an outlet. Two outlets with one owner
+   count as one origin.
 4. **Shows language.** Every article carries its language; English-only
    coverage is labelled as such.
 5. **Shows measured silence.** Which followed institutions published nothing in

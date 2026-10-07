@@ -623,7 +623,8 @@ class MarkupLaw(unittest.TestCase):
             self.assertNotRegex(text, r"<img[^>]*onerror", name)
 
     def test_every_internal_link_targets_a_written_file_or_a_known_surface(self):
-        known = ("/", "/methode/", "/registre.html", "/memoire.html", "/methode/legal.html", "/partir.html")
+        known = ("/", "/methode/", "/registre.html", "/memoire.html", "/methode/legal.html", "/partir.html",
+                 "/methode/sources.html")
         for name, page in html_pages(FILES).items():
             for _t, a in tags_of(page):
                 href = a.get("href", "")

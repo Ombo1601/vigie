@@ -30,7 +30,7 @@ Open http://127.0.0.1:8765/
 | 2 Normalize | `scripts/normalize.py` | `data/normalized/latest_candidates.json` |
 | 3 Enrich | `scripts/enrich.py` | `data/normalized/latest_enriched.json` — **all tags proposed** |
 | 4 Cluster | `scripts/cluster_issues.py` | `data/issues/latest_issues.json` — multi-voice only |
-| 4a Events (shadow) | `scripts/events.py` | `data/events/store.json` (private, packed with the state), `data/events/latest_events.json` (the current-edition view) — one Event per real-world occurrence, ids minted once and sticky (docs/EVENTS.md); full run only, never in `--render-only`; writes nothing under `public/` |
+| 4a Events (shadow) | `scripts/events.py` | `data/events/store.json` (private, packed with the state), `data/events/latest_events.json` (the current-edition view) — one Event per real-world occurrence, ids minted once and sticky (docs/EVENTS.md); full run only, never in `--render-only`; writes nothing under `public/`; a shadow stage while the event surfaces are off, load-bearing once they are on (a crash fails the run: `pipeline.is_shadow`, docs/EVENTS.md section 19) |
 | 4b Edge Atlas | `scripts/edge_atlas.py` | `data/edges/latest_edges.json` — literal street-name joins between the official collection and the dossiers (`edge.md`) |
 | 4c Anomalies | `scripts/compile_anomalies.py` | `data/anomalies/latest_verdict.json` — fixed-threshold structural rules over the official collection (`anomalies.md`) |
 | 4d Brief media | `scripts/fetch_brief_media.py` | `data/media/brief/` + `brief_manifest.json` — publisher images (og:image, else the feed's own media), robots.txt first for every page and image, locally re-hosted and sniffed; every miss diagnosed + `data/ops/media_health.json` ledger |

@@ -1416,13 +1416,36 @@ class Wiring(unittest.TestCase):
             pipeline.main()
         self.assertIn("events.py", [c.args[0] for c in run.call_args_list])
 
-    def test_a_failing_shadow_step_never_stops_the_edition(self):
+    def test_a_failing_shadow_step_never_stops_the_edition_while_the_surfaces_are_off(self):
         import pipeline
+        import surfaces
         with mock.patch.object(pipeline.subprocess, "run", return_value=mock.Mock(returncode=3)), \
                 mock.patch("sys.stdout"):
-            pipeline.run("events.py")
+            with mock.patch.object(surfaces, "mode", return_value="off"):
+                pipeline.run("events.py")
+            pipeline.run("events.py")   # the committed switch (off): still a shadow stage
             with self.assertRaises(SystemExit):
                 pipeline.run("cluster_issues.py")
+
+    def test_with_the_surfaces_on_the_event_builder_is_load_bearing(self):
+        # A builder crash under preview or live used to be passed over, so the
+        # render served last edition's view (an empty or stale event door).
+        import pipeline
+        import surfaces
+        self.assertTrue(pipeline.is_shadow("events.py", "off"))
+        for on in ("preview", "live"):
+            self.assertFalse(pipeline.is_shadow("events.py", on), on)
+        self.assertFalse(pipeline.is_shadow("cluster_issues.py", "off"))
+        self.assertTrue(pipeline.is_shadow("events.py", "Live"), "an invalid position is off, diagnosed")
+        with mock.patch.object(pipeline.subprocess, "run", return_value=mock.Mock(returncode=3)), \
+                mock.patch("sys.stdout"):
+            for on in ("preview", "live"):
+                with mock.patch.object(surfaces, "mode", return_value=on), \
+                        self.assertRaisesRegex(SystemExit, r"events\.py failed with code 3: the event surfaces are on"):
+                    pipeline.run("events.py")
+        with mock.patch.object(pipeline.subprocess, "run", return_value=mock.Mock(returncode=0)), \
+                mock.patch("sys.stdout"), mock.patch.object(surfaces, "mode", return_value="live"):
+            pipeline.run("events.py")   # a builder that succeeds is never in the way
 
     def test_the_state_tarball_carries_the_event_store(self):
         import state_pack

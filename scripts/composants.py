@@ -92,7 +92,9 @@ MemberView::
   language "fr"|"en"  (the declared source language, never guessed),
   published_at (ISO|None), first_seen (ISO), date_suspect (bool),
   origin_class  official|wire|press_release|own_reporting|unknown,
-  ownership_class  public_broadcaster|quebecor|cooperative|independent|government,
+  ownership_class  public_broadcaster|quebecor|cooperative|independent|government|
+                   unverified (codes; printed only as the owner's structure
+                   words of scripts/ownership.py, never as a class word),
   owner_group (code), owner_name (str|{fr,en}, optional group display name),
   url (http(s) only, absent when the source is withdrawn: R10),
   text_gone (bool, current pages: the member's text left the collection;
@@ -204,6 +206,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import i18n  # noqa: E402
+import ownership  # noqa: E402
 from i18n import t, tn  # noqa: E402
 
 SITE_URL = "https://vigieqc.com"
@@ -218,12 +221,17 @@ RW_MAP_URL = "https://carte.ville.quebec.qc.ca/"
 # widens this tuple surface by surface; a surface is linked in English only
 # when it is complete (docs/I18N.md, MIGRATION.md step 10).
 EN_MIRROR = ("/", "/evenements.html", "/evenements/")
+# Where every ownership the pages print is sourced: the sources page's
+# ownership column (scripts/method_site.py, written when the switch is not off).
+OWNERSHIP_PATH = "/methode/sources.html"
+OWNERSHIP_FRAGMENT = "#propriete"
 
 TIERS = ("certain", "probable", "possible")
 # Chip kinds of ranking_events.tier_chip (docs/AUTONOMY.md): "auto" until the
 # measured quality clears the published bar; "none" prints no chip.
 TIER_KINDS = ("auto", "certain", "probable", "possible")
 ORIGINS = ("official", "wire", "press_release", "own_reporting", "unknown")
+# Ownership class codes that carry a colour (OWN_COLOR); codes, never words.
 OWNERSHIPS = ("public_broadcaster", "quebecor", "cooperative", "independent", "government")
 ACTIVITIES = ("new", "developed", "quiet")
 ANCHOR_TYPES = ("official_item", "roadwork", "consultation", "outage", "edition_seal")
@@ -243,7 +251,8 @@ FACT_UNITS = ("persons_dead", "persons_injured", "persons_arrested", "housing_un
 FACT_KINDS = ("count", "amount", "date", "place", "entity")
 
 # Ownership class -> colour class. Colour never carries meaning alone: the
-# class label is always printed next to the swatch.
+# owner's structure words (scripts/ownership.py) are always printed next to
+# the swatch; the class code itself is never printed.
 OWN_COLOR = {
     "public_broadcaster": "c-public",
     "cooperative": "c-coop",
@@ -641,13 +650,26 @@ def activity_chip(activity: object, lang: str) -> str:
     return chip(t(f"act.{activity}", lang), "act", f"act-{activity}")
 
 
-def owner_chip(member: dict, lang: str) -> str:
+def owner_words(member: dict, lang: str) -> str:
+    """The owner of a member in structure words (scripts/ownership.py `words`:
+    the table the sources page prints, /methode/sources.html#propriete), never
+    a class word: the same owner reads the same on both. "" when the view
+    carries no ownership class at all."""
     own = str(member.get("ownership_class") or "")
-    if own not in OWNERSHIPS:
+    if own not in ownership.CLASSES:
         return ""
-    color = OWN_COLOR[own]
+    return ownership.words(own, member.get("owner_group"), member.get("institution"), lang)[0]
+
+
+def owner_chip(member: dict, lang: str) -> str:
+    label = owner_words(member, lang)
+    if not label:
+        return ""
+    color = OWN_COLOR.get(str(member.get("ownership_class") or ""))
+    if not color:   # not established: the words alone, no colour of a class
+        return f'<span class="chip own">{esc(label)}</span>'
     return (f'<span class="chip own {color}"><span class="sw" aria-hidden="true"></span>'
-            f'{esc(t("own." + own, lang))}</span>')
+            f'{esc(label)}</span>')
 
 
 def origin_chip(member: dict, lang: str) -> str:
@@ -1159,8 +1181,14 @@ def _group_label(group: list[dict], lang: str) -> tuple[str, str]:
         name = insts[0]
     else:
         name = " · ".join(insts)
-    own = str(head.get("ownership_class") or "")
-    return name, (t(f"own.{own}", lang) if own in OWNERSHIPS else "")
+    # every owner of the group, in the words of the sources page (a group
+    # joined by a wire credit or a copy may span several owners)
+    owners_words: list[str] = []
+    for m in group:
+        w = owner_words(m, lang)
+        if w and w not in owners_words:
+            owners_words.append(w)
+    return name, " · ".join(owners_words)
 
 
 def origins_panel(ev: dict, lang: str) -> str:
@@ -1181,12 +1209,16 @@ def origins_panel(ev: dict, lang: str) -> str:
     for pair in _dicts(ev.get("language_pairs")):
         if pair.get("same_owner") and str(pair.get("fr")) in by_id and str(pair.get("en")) in by_id:
             a, b = by_id[str(pair["fr"])], by_id[str(pair["en"])]
-            group = loc(a.get("owner_name"), lang) or str(a.get("owner_group") or "")
+            # the owner in the table's words, never its internal code
+            group = loc(a.get("owner_name"), lang) or owner_words(a, lang)
             text = t("orig.same", lang, a=_inst(a, lang), b=_inst(b, lang), g=group)
             note = f'<p class="fact warn mt-m">{esc(text)}</p>'
             break
+    # every ownership claim is one click from its public reference and the
+    # date Vigie read it (the sources page, French only for now)
+    sources = internal_link(lang, OWNERSHIP_PATH, t("orig.note.link", lang), fragment=OWNERSHIP_FRAGMENT)
     body = (f'<p class="orig-sum">{esc(tn("n.articles", len(ms), lang))} → {esc(tn("n.origins", n_origins, lang))}</p>'
-            f'<ul class="orig">{"".join(rows)}</ul>{note}<p class="legend">{esc(t("orig.note", lang))}</p>')
+            f'<ul class="orig">{"".join(rows)}</ul>{note}<p class="legend">{esc(t("orig.note", lang))} {sources}</p>')
     return _panel(t("orig.h", lang), body, hid="op-h")
 
 

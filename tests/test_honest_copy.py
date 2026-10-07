@@ -113,6 +113,59 @@ class NeutralWording(unittest.TestCase):
         self.assertNotIn("answer", " ".join(str(k) + str(v) for k, v in status.items()))
 
 
+class EventCopyNeverAssertsSilence(unittest.TestCase):
+    """The event surfaces word an absence as Vigie measured it: nothing in OUR
+    feeds, never that an institution or a newsroom "stayed silent" (llms.txt:
+    "Vigie never asserts that an institution was silent"; docs/CHARTE.md: an
+    absence in our feeds is never presented as absolute silence)."""
+
+    # folded (composants.fold): lower case, no diacritics, straight apostrophes
+    VERDICTS = (r"s'est tu\b", r"se sont tus\b", r"\bse taire\b", r"\bstayed silent\b", r"\bkept silent\b",
+                r"\b(?:was|were|remained|fell) silent\b", r"\bsilence est un fait\b", r"\bsilence is a fact\b",
+                r"\bn'a rien publie sur\b", r"\bpublished nothing on\b", r"\bn'ont rien publie sur\b",
+                r"\bsilencieu", r"\bmuets?\b")
+
+    def catalogues(self):
+        import i18n
+
+        for lang in i18n.LANGS:
+            for key, text in sorted(i18n.catalogue(lang).items()):
+                yield lang, key, text
+
+    def test_no_catalogue_text_asserts_that_someone_was_silent(self):
+        import composants
+
+        for lang, key, text in self.catalogues():
+            folded = composants.fold(text)
+            for pattern in self.VERDICTS:
+                self.assertNotRegex(folded, pattern, f"{lang}.json {key}: {text!r}")
+
+    def test_every_published_nothing_is_scoped_to_our_feeds(self):
+        import composants
+
+        for lang, key, text in self.catalogues():
+            folded = composants.fold(text)
+            for m in re.finditer(r"n'(?:a|ont) rien publie|published nothing", folded):
+                tail = folded[m.end():m.end() + 16]
+                self.assertRegex(tail, r"^ (?:dans nos flux|in our feeds)", f"{lang}.json {key}: {text!r}")
+
+    def test_silence_is_only_ever_denied_as_absolute(self):
+        import composants
+
+        for lang, key, text in self.catalogues():
+            folded = composants.fold(text)
+            if "silen" in folded:
+                self.assertRegex(folded, r"pas un silence absolu|not absolute silence", f"{lang}.json {key}: {text!r}")
+
+    def test_the_rule_and_the_roster_headings_say_our_feeds(self):
+        import i18n
+
+        self.assertIn("dans nos flux", i18n.t("roster.h", "fr"))
+        self.assertIn("in our feeds", i18n.t("roster.h", "en"))
+        self.assertIn("dans nos flux", i18n.t("rules.3.p", "fr"))
+        self.assertIn("in our feeds", i18n.t("rules.3.p", "en"))
+
+
 class CadenceIsNotPromised(unittest.TestCase):
     def test_docs_do_not_state_a_fixed_cadence(self):
         for name in ("README.md", "AGENTS.md", "TECHNICAL_PROCESS.md"):

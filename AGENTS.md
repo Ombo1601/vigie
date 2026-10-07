@@ -164,8 +164,9 @@ index). No served file names the founder.
   `public/evenements.html` + `public/en/evenements.html` (the events front
   door), one record per event (`public/evenements/<event_id>.html`, English
   under `public/en/`), `public/evenements/latest.json`, `public/qualite.json`.
-  It reads the stored event view (`data/events/`, built by `scripts/events.py`,
-  a shadow stage of every full edition) and never runs the builder, so it also
+  It reads the stored event view (`data/events/`, built by `scripts/events.py`
+  in every full edition: a shadow stage while the switch is off, load-bearing
+  once it is on) and never runs the builder, so it also
   runs in the hourly roads-only re-render; it applies R10 itself
   (`events.apply_takedowns`, then its own filter). Emitted last, and only when
   the switch is not `off`.
@@ -203,7 +204,9 @@ commit, never by a variable, a flag in the data or an opinion per edition.
   `/en/evenements/<id>.html`, `/evenements/latest.json`, `/qualite.json`,
   `/delta/v2/latest.json`), reachable by URL but `noindex, nofollow`, absent
   from the sitemap and from `llms.txt`; `/` is the brief, untouched; the
-  sources page prints ownership as factual structure.
+  sources page prints ownership as factual structure, and the event pages
+  word every owner with the same table (`ownership.STRUCTURE`), never a
+  class word such as "indépendant".
 - **live** — `/` is the French events front door and `/en/` the English one;
   the brief moves to `/le-point.html` (canonical updated) and the front door
   links it as the full river; event pages are indexable; the sitemap lists
@@ -214,9 +217,16 @@ The release gate (`stage_public`) refuses, diagnosed, per mode: a missing
 required artefact, an hreflang target that is not staged, a preview page
 without `noindex` (or `/` no longer the brief), a live page with `noindex`
 (or `/` not the events door, no river link, the brief's canonical not moved),
-a front door over 120 KB. In live mode the previous front door is removed
-before the emitter runs, so a fault blocks the release instead of serving a
-stale page; the previous production release stays up.
+a front door over 120 KB, and **an empty or stale event door**
+(`stage_public.door_errors`: the staged `evenements/latest.json` must say
+`status: "ok"`, name the collection's own `normalized_at`, and show at least
+one card when the collection holds candidates). In live mode the previous
+front door is removed before the emitter runs, so a fault blocks the release
+instead of serving a stale page; the previous production release stays up.
+With the switch on, `events.py` is **load-bearing** in `pipeline.py`
+(`is_shadow`): a builder crash fails the full run (alert issue) instead of
+leaving last edition's view behind. When a release must ship while the
+builder is broken (a takedown, R10), set the switch back to `off`.
 
 **How to flip.** Edit `EVENTS_SURFACES` in `scripts/surfaces.py`, run
 `python -X utf8 scripts/verify.py`, commit, push, then run "Vigie refresh"

@@ -261,5 +261,71 @@ class FailSoft(unittest.TestCase):
         self.assertEqual(out.stdout, again.stdout)
 
 
+class Words(unittest.TestCase):
+    """ranking.md « Propriété des sources »: an owner is worded by its
+    structure, as its public reference states it; the class code
+    `independent` is not a structure and is never printed, on any surface."""
+
+    @staticmethod
+    def _fold(text: str) -> str:
+        import composants
+
+        return composants.fold(text)
+
+    def test_no_catalogue_or_table_word_says_independent(self) -> None:
+        import i18n
+
+        for lang in ("fr", "en"):
+            cat = i18n.catalogue(lang)
+            self.assertNotIn("own.independent", cat, "the class word is gone, not reworded")
+            own = {k: v for k, v in cat.items() if k.startswith("own.")}
+            self.assertEqual(set(own), {f"own.{c}" for c in (*ownership.CLASS_WORDED, "unworded", "unverified")})
+            for key, text in own.items():
+                self.assertNotRegex(self._fold(text), r"independan|independen", f"{lang}.json {key}")
+        for key, entry in ownership.STRUCTURE.items():
+            for part in ("label", "detail"):
+                for lang, text in (entry.get(part) or {}).items():
+                    self.assertTrue(text.strip(), (key, part, lang))
+                    self.assertNotRegex(self._fold(text), r"independan|independen", (key, part, lang))
+            self.assertEqual(set(entry["label"]), {"fr", "en"}, key)
+
+    def test_words_follow_the_table_then_the_class_never_the_independent_class(self) -> None:
+        import i18n
+
+        for lang in ("fr", "en"):
+            self.assertEqual(ownership.words("independent", "le-devoir", "le-devoir", lang),
+                             (ownership.STRUCTURE["le-devoir"]["label"][lang], ""))
+            self.assertEqual(ownership.words("government", "etat-quebec", "hydro-quebec", lang)[1],
+                             ownership.STRUCTURE[("etat-quebec", "hydro-quebec")]["detail"][lang])
+            self.assertEqual(ownership.words("independent", "nobody-worded-this", "x", lang),
+                             (i18n.t("own.unworded", lang), ""), "an unworded independent owner: see the sources")
+            self.assertEqual(ownership.words("cooperative", "nobody-worded-this", "x", lang)[0],
+                             i18n.t("own.cooperative", lang))
+            for junk in (ownership.UNVERIFIED, "", None, "billionaire"):
+                self.assertEqual(ownership.words(junk, "le-devoir", "le-devoir", lang),
+                                 (i18n.t("own.unverified", lang), ""), "never guessed from a group alone")
+        self.assertEqual(ownership.words("independent", "le-devoir", lang="de"),
+                         ownership.words("independent", "le-devoir", lang="fr"))
+
+    def test_an_unsourced_declaration_is_not_established_on_every_surface(self) -> None:
+        import i18n
+
+        rows = _fixture()
+        by_id = {r["id"]: r for r in rows}
+        self.assertEqual(ownership.source_words(by_id["delta"], "fr"), (i18n.t("own.unverified", "fr"), ""))
+        self.assertEqual(ownership.source_words(by_id["epsilon"], "en"), (i18n.t("own.unverified", "en"), ""))
+        self.assertEqual(ownership.source_words(None, "fr")[0], i18n.t("own.unverified", "fr"))
+
+    def test_every_followed_owner_of_the_registry_is_worded_by_the_table(self) -> None:
+        idx = ownership.load()
+        for sid, rec in sorted(idx.items()):
+            if rec.get("enabled") is not True:
+                continue
+            group, inst = rec.get("owner_group"), rec.get("institution")
+            self.assertTrue((group, inst) in ownership.STRUCTURE or group in ownership.STRUCTURE,
+                            f"{sid}: owner group {group!r} has no structure words (add it to ownership.STRUCTURE "
+                            "with its public reference)")
+
+
 if __name__ == "__main__":
     unittest.main()

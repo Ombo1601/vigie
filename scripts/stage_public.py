@@ -169,12 +169,92 @@ def _head(path: Path) -> PageHead:
     return head
 
 
-def surface_errors(directory: Path, mode: str) -> list[str]:
+# The machine view the event emitter writes beside the door, in the same
+# render (scripts/evenements.py `latest_doc`), and the collection it must show.
+EVENTS_LATEST = "evenements/latest.json"
+COLLECTION = Path("normalized") / "latest_enriched.json"
+
+
+def _instant(value: object) -> datetime | None:
+    try:
+        when = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return when if when.tzinfo is not None else when.replace(tzinfo=timezone.utc)
+
+
+def door_errors(directory: Path, data_dir: Path, mode: str) -> list[str]:
+    """The event door shows THIS collection, never an empty or a stale one
+    (preview and live; "off" checks nothing). The emitter is fail-soft: with
+    no usable event view of the collection (none built, unreadable, or left
+    from an earlier collection because the builder failed) it still renders a
+    door, with no card, and says so in `evenements/latest.json`. Shipping that
+    door would replace the front page with nothing (live) or show a preview
+    nobody can judge (preview), so the release is refused, diagnosed, and the
+    previous one stays up. Reads the staged machine view and the collection's
+    own store (`data_dir`/normalized/latest_enriched.json), independently of
+    the emitter's own check:
+
+      status   the machine view says "ok" (the event view of this collection
+               was built and usable);
+      edition  its edition is the collection's clock (`normalized_at`);
+      cards    at least one card when the collection holds candidates."""
+    if mode not in SURFACE_REQUIRED:
+        return []
+    latest = Path(directory) / EVENTS_LATEST
+    if not latest.is_file():
+        return []   # reported as a missing artefact
+    try:
+        doc = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [f"{EVENTS_LATEST}: unreadable ({type(exc).__name__}): the event door cannot be shown to be this edition's"]
+    if not isinstance(doc, dict):
+        return [f"{EVENTS_LATEST}: not an object: the event door cannot be shown to be this edition's"]
+    errors: list[str] = []
+    status = doc.get("status")
+    if status != "ok":
+        errors.append(f"{EVENTS_LATEST}: status {str(status)[:40]!r}, not 'ok': no event view of this collection "
+                      f"was built (absent, unreadable or stale), so the event door would carry no card "
+                      f"(surfaces {mode}); the previous release stays up")
+    try:
+        collection = json.loads((Path(data_dir) / COLLECTION).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        collection = None
+        errors.append(f"{COLLECTION.as_posix()}: unreadable ({type(exc).__name__}): the event door cannot be "
+                      f"shown to be this collection's (surfaces {mode})")
+    if isinstance(collection, dict):
+        clock = _instant(collection.get("normalized_at"))
+        shown = _instant(doc.get("edition"))
+        if clock is None:
+            errors.append(f"{COLLECTION.as_posix()}: no collection clock (normalized_at): the event door cannot be "
+                          f"shown to be this collection's (surfaces {mode})")
+        elif shown != clock:
+            errors.append(f"{EVENTS_LATEST}: edition {str(doc.get('edition'))[:40]!r} is not this collection "
+                          f"({str(collection.get('normalized_at'))[:40]!r}): a stale event door (surfaces {mode})")
+        candidates = collection.get("candidates")
+        n_candidates = len(candidates) if isinstance(candidates, list) else 0
+        counts = doc.get("counts") if isinstance(doc.get("counts"), dict) else {}
+        cards = counts.get("cards")
+        if not isinstance(cards, int) or isinstance(cards, bool) or cards < 0:
+            errors.append(f"{EVENTS_LATEST}: no card count: the event door cannot be checked (surfaces {mode})")
+        elif cards == 0 and n_candidates > 0:
+            errors.append(f"{EVENTS_LATEST}: 0 card while the collection holds {n_candidates} candidate(s): "
+                          f"an empty event door (surfaces {mode})")
+    elif collection is not None:
+        errors.append(f"{COLLECTION.as_posix()}: not an object: the event door cannot be shown to be this "
+                      f"collection's (surfaces {mode})")
+    return errors
+
+
+def surface_errors(directory: Path, mode: str, data_dir: Path | None = None) -> list[str]:
     """The release gate of the event surfaces in `mode` ("preview" | "live";
     "off" checks nothing new). Every problem is a diagnosed refusal:
 
       required   the artefacts of the mode exist (a fault of the event emitter
                  blocks the release, like a missing registre page);
+      door       the event door is this collection's, with cards
+                 (`door_errors`; `data_dir`, default ROOT/data, holds the
+                 collection): never an empty or a stale door;
       hreflang   every hreflang alternate of every page names a staged file;
       robots     preview: every event page says noindex, and / is still the
                  brief; live: no event page says noindex, / is the events front
@@ -190,6 +270,7 @@ def surface_errors(directory: Path, mode: str) -> list[str]:
     for rel in SURFACE_REQUIRED[mode]:
         if not (base / rel).is_file():
             errors.append(f"{rel}: required event-surface artefact missing (surfaces {mode})")
+    errors.extend(door_errors(base, ROOT / "data" if data_dir is None else Path(data_dir), mode))
     for path in sorted(base.rglob("*.html")):
         rel = path.relative_to(base).as_posix()
         head = _head(path)
@@ -237,9 +318,10 @@ def surface_errors(directory: Path, mode: str) -> list[str]:
     return errors
 
 
-def validate_site(directory: Path, mode: str = "off") -> list[str]:
+def validate_site(directory: Path, mode: str = "off", data_dir: Path | None = None) -> list[str]:
     """Check local navigation and anchors without making network requests;
-    with an event-surface `mode` other than "off", also `surface_errors`."""
+    with an event-surface `mode` other than "off", also `surface_errors`
+    (`data_dir`: where the collection the event door must show lives)."""
     base = directory.resolve()
     pages: dict[Path, PageLinks] = {}
     errors: list[str] = []
@@ -274,7 +356,7 @@ def validate_site(directory: Path, mode: str = "off") -> list[str]:
             elif link.fragment and target in pages and unquote(link.fragment) not in pages[target].ids:
                 errors.append(f"{path.relative_to(base)}: missing anchor {raw}")
     if mode != "off":
-        errors.extend(surface_errors(base, mode))
+        errors.extend(surface_errors(base, mode, data_dir))
     return sorted(set(errors))
 
 
@@ -572,7 +654,7 @@ def stage(root: Path = ROOT, output: Path = OUT, *, mode: str | None = None) -> 
         # run stages the same bytes as GitHub Actions
         (temporary / "robots.txt").write_text(ROBOTS_TEXT, encoding="utf-8", newline="\n")
         (temporary / "sitemap.xml").write_text(sitemap_xml(temporary, current), encoding="utf-8", newline="\n")
-        errors = validate_site(temporary, current)
+        errors = validate_site(temporary, current, root / "data")
         if errors:
             raise ValueError("Invalid static site:\n" + "\n".join(errors))
         withdrawn = takedown_violations(temporary, root)

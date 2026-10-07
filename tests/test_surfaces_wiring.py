@@ -460,17 +460,91 @@ class Modes(unittest.TestCase):
             self.assertNotRegex(words, r"\bind[ée]pendant", "a structure, never the word independent")
 
 
+    def test_the_event_pages_word_each_owner_as_the_sources_page_does(self):
+        # ranking.md « Propriété des sources »: one table of structure words
+        # (scripts/ownership.py) for every surface, never the class word.
+        import composants
+        import i18n
+
+        chip_re = re.compile(r'<span class="chip own[^"]*">(?:<span class="sw" aria-hidden="true"></span>)?([^<]*)</span>')
+        fallbacks = {i18n.t(f"own.{c}", "fr") for c in ("public_broadcaster", "cooperative", "quebecor", "government")}
+        for mode in ("preview", "live"):
+            sources_page = self.releases[mode]["methode/sources.html"].decode("utf-8")
+            self.assertIn('id="propriete"', sources_page)
+            sources_text = html.unescape(re.sub(r"<[^>]+>", " ", sources_page))
+            chips_fr: set[str] = set()
+            for name, page in self.event_pages(mode).items():
+                for words in map(html.unescape, chip_re.findall(page)):
+                    self.assertNotRegex(composants.fold(words), r"independan|independen", f"{mode} {name}: {words}")
+                    if not name.startswith("en/"):
+                        chips_fr.add(words)
+                # every ownership claim is one click from its public reference and date
+                if '<ul class="orig">' in page:
+                    self.assertIn('href="/methode/sources.html#propriete"', page, f"{mode} {name}")
+            self.assertIn("Société d’État fédérale", chips_fr, "the invented cbc-radio-canada group is worded by the table")
+            self.assertIn(i18n.t("own.unworded", "fr"), chips_fr, "the invented `independent` owner reads 'see the sources'")
+            for words in sorted(chips_fr - fallbacks - {i18n.t("own.unworded", "fr")}):
+                # an owner of the real registry: the sources page of the same release words it the same
+                self.assertIn(words, sources_text, f"{mode}: the chip {words!r} as /methode/sources.html words it")
+            latest = json.loads(self.releases[mode]["evenements/latest.json"])
+            for inst, row in latest["institutions"].items():
+                self.assertEqual(set(row["ownership_words"]), {"fr", "en"}, inst)
+                for words in row["ownership_words"].values():
+                    self.assertNotRegex(composants.fold(words), r"independan|independen", inst)
+
+
 class OwnershipWords(unittest.TestCase):
-    def test_every_enabled_source_is_worded_without_the_word_independent(self):
+    """The same owner reads the same on /methode/sources.html and on every
+    event page: one table (scripts/ownership.py), never a class word."""
+
+    def test_every_enabled_source_is_worded_by_the_table_without_the_word_independent(self):
+        import i18n
         import ingest_rss
+        import ownership
 
         for src in ingest_rss.load_sources(ROOT / "sources.yaml"):
             words = method_site.ownership_structure(src)
             self.assertNotRegex(words.lower(), r"ind[ée]pendan", src.get("id"))
             if src.get("enabled") is True:
-                self.assertNotEqual(words, method_site.OWNERSHIP_UNSTATED_FR, f"{src.get('id')}: worded by the table")
-        self.assertEqual(method_site.ownership_structure({"ownership_class": "independent", "owner_group": "zz"}),
-                         method_site.OWNERSHIP_UNSTATED_FR)
+                self.assertNotIn(words, (i18n.t("own.unworded", "fr"), i18n.t("own.unverified", "fr")),
+                                 f"{src.get('id')}: worded by the table")
+        self.assertEqual(method_site.ownership_structure({"ownership_class": "independent", "owner_group": "zz",
+                                                          "ownership_ref": "https://example.org/x",
+                                                          "ownership_asof": "2026-10-06"}),
+                         i18n.t("own.unworded", "fr"))
+        self.assertEqual(method_site.ownership_structure({"ownership_class": "independent"}),
+                         i18n.t("own.unverified", "fr"), "an unsourced declaration is not established, never guessed")
+        self.assertIn(("etat-quebec", "hydro-quebec"), ownership.STRUCTURE)
+
+    def test_the_chip_of_every_real_source_is_the_sources_page_label(self):
+        # Before this fix the chip printed the class word ("Indépendant" on
+        # Le Devoir and La Presse) while the sources page printed a structure.
+        import composants
+        import ingest_rss
+        import ownership
+
+        page = method_site._sources_html(ownership=True)
+        rows = re.findall(r"<tr>(.*?)</tr>", page, re.S)
+        checked = 0
+        for src in ingest_rss.load_sources(ROOT / "sources.yaml"):
+            if src.get("enabled") is not True or src.get("type") != "rss":
+                continue
+            decl = ownership.declaration(src["id"], ingest_rss.load_sources(ROOT / "sources.yaml"))
+            member = {"ownership_class": decl["ownership_class"], "owner_group": decl["owner_group"] or "",
+                      "institution": src.get("institution")}
+            name = html.escape(str(src.get("name")), quote=True)
+            row = next(r for r in rows if f">{name}</a>" in r or f"<td>{name}<" in r)
+            cell = html.unescape(re.findall(r"<td>(.*?)</td>", row, re.S)[3])
+            for lang in ("fr", "en"):
+                chip = composants.owner_chip(member, lang)
+                words = html.unescape(re.sub(r"<[^>]+>", "", chip))
+                self.assertTrue(words, src["id"])
+                self.assertNotRegex(composants.fold(words), r"independan|independen", src["id"])
+                if lang == "fr":
+                    self.assertTrue(cell.startswith(words + " (") or cell.startswith(words + " — "),
+                                    f"{src['id']}: chip {words!r}, sources page {cell[:80]!r}")
+            checked += 1
+        self.assertGreaterEqual(checked, 8)
 
 
 # --------------------------------------------------------------------------- #
@@ -509,6 +583,83 @@ class ReleaseGate(unittest.TestCase):
         self.assertFalse((self.site.public / "index.html").exists(), "no stale front door is left at /")
         with self.assertRaises(ValueError):
             self.site.stage("live")
+
+    # The emitter is fail-soft: with no usable event view of THIS collection it
+    # still renders a door, with no card ("0 événement"). Before this gate
+    # that door shipped: at / in live, over the full brief. Each case below
+    # is refused in preview and in live, and the previous release stays up.
+    def _refused_after_a_good_release(self, damage, pattern: str) -> None:
+        for mode in ("preview", "live"):
+            with self.subTest(mode=mode):
+                site = Site()
+                try:
+                    site.render(mode)
+                    good = site.stage(mode)   # a good release ships first
+                    damage(site)
+                    site.render(mode)
+                    self.assertEqual(site.result["status"], "ok", "the emitter itself never raises")
+                    with self.assertRaisesRegex(ValueError, pattern):
+                        site.stage(mode)
+                    self.assertEqual(tree(site.out), good, "the previous release stays up, byte for byte")
+                finally:
+                    site.close()
+
+    def test_an_absent_event_view_blocks_the_release_never_an_empty_door(self):
+        def damage(site):
+            shutil.rmtree(site.root / "data" / "events")
+        self._refused_after_a_good_release(damage, r"evenements/latest\.json: status 'not_built', not 'ok'")
+
+    def test_an_unreadable_event_view_blocks_the_release(self):
+        def damage(site):
+            for name in ("latest_events.json", "store.json"):
+                (site.root / "data" / "events" / name).write_text("{garbage", encoding="utf-8")
+        self._refused_after_a_good_release(damage, r"evenements/latest\.json: status 'not_built', not 'ok'")
+
+    def test_a_stale_event_view_blocks_the_release_never_last_editions_door(self):
+        # the builder failed on a new collection (pipeline.py kept going while
+        # events.py was a shadow stage): the collection moved on, the view did not
+        def damage(site):
+            path = site.root / "data" / "normalized" / "latest_enriched.json"
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            doc["normalized_at"] = "2026-09-22T18:00:00+00:00"
+            path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        self._refused_after_a_good_release(damage, r"evenements/latest\.json: status 'not_built', not 'ok'")
+
+    def test_an_empty_view_while_the_collection_has_candidates_blocks_the_release(self):
+        def damage(site):
+            path = site.root / "data" / "events" / "latest_events.json"
+            view = json.loads(path.read_text(encoding="utf-8"))
+            view.update({"events": [], "event_count": 0})
+            path.write_text(json.dumps(view, ensure_ascii=False), encoding="utf-8")
+        self._refused_after_a_good_release(damage, r"0 card while the collection holds \d+ candidate")
+
+    def test_the_gate_reads_the_collection_clock_itself(self):
+        # independent of the emitter's own check: a door whose machine view
+        # names another edition is refused even when it says "ok"
+        for mode in ("preview", "live"):
+            with self.subTest(mode=mode):
+                site = Site()
+                try:
+                    site.render(mode)
+                    path = site.public / "evenements" / "latest.json"
+                    doc = json.loads(path.read_text(encoding="utf-8"))
+                    self.assertEqual(doc["status"], "ok")
+                    doc["edition"] = te.E1_CLOCK
+                    path.write_text(json.dumps(doc), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, r"edition '2026-09-20T12:00:00\+00:00' is not this collection"):
+                        site.stage(mode)
+                    (site.root / "data" / "normalized" / "latest_enriched.json").unlink()
+                    with self.assertRaisesRegex(ValueError, r"latest_enriched\.json: unreadable"):
+                        site.stage(mode)
+                finally:
+                    site.close()
+
+    def test_the_door_gate_is_silent_when_off(self):
+        self.site.render("preview")
+        shutil.rmtree(self.site.root / "data" / "events")
+        self.site.render("off")
+        self.assertNotIn("evenements.html", self.site.stage("off"))
+        self.assertEqual(stage_public.door_errors(self.site.out, self.site.root / "data", "off"), [])
 
     def test_a_preview_page_without_noindex_blocks_preview(self):
         self.site.render("preview")

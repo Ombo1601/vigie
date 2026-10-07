@@ -267,36 +267,17 @@ def _rules_scalars() -> dict:
 
 # Ownership as FACTUAL STRUCTURE (who owns, in what legal form), as each row's
 # public reference (sources.yaml `ownership_ref`, read on `ownership_asof`)
-# states it. Never a judgement of the source: the word "indépendant" is not a
-# structure and is never printed. Keyed by sources.yaml `owner_group`, then
-# (owner_group, institution) where one owner holds bodies of different forms.
-OWNERSHIP_STRUCTURE_FR = {
-    "cbc-radio-canada": "Société d’État fédérale (Loi sur la radiodiffusion)",
-    "quebecor": "Société par actions cotée en bourse (Québecor)",
-    "cn2i": "Coopérative (CN2i)",
-    "le-devoir": "Contrôle détenu par une fiducie",
-    "la-presse": "Organisme sans but lucratif",
-    "ville-quebec": "Administration municipale (Ville de Québec)",
-    ("etat-quebec", "gouv-quebec"): "Gouvernement du Québec",
-    ("etat-quebec", "hydro-quebec"): "Société d’État ; actionnaire unique : le gouvernement du Québec",
-}
-# A group the table does not word yet: the declared class, in structure words
-# (never "indépendant": that class is worded by its reference only).
-OWNERSHIP_CLASS_FR = {
-    "public_broadcaster": "Diffuseur public",
-    "cooperative": "Coopérative",
-    "quebecor": "Groupe Québecor",
-    "government": "Organisme public",
-}
-OWNERSHIP_UNSTATED_FR = "Structure non établie : voir la référence publique"
-
-
+# states it. Never a judgement of the source: the class code "independent" is
+# not a structure and is never printed. The words come from ONE table,
+# scripts/ownership.py (`STRUCTURE`, `words`), which the event pages print on
+# their ownership chips too: the same owner reads the same on both.
 def ownership_structure(src: dict) -> str:
-    """The structure words of one sources.yaml record (see the table)."""
-    group = str(src.get("owner_group") or "")
-    inst = str(src.get("institution") or "")
-    return (OWNERSHIP_STRUCTURE_FR.get((group, inst)) or OWNERSHIP_STRUCTURE_FR.get(group)
-            or OWNERSHIP_CLASS_FR.get(str(src.get("ownership_class") or "")) or OWNERSHIP_UNSTATED_FR)
+    """The structure words of one sources.yaml record: the label the event
+    pages print, then the table's detail in parentheses when it gives one."""
+    import ownership  # noqa: PLC0415 - lazy: the method pages render without it when off
+
+    label, detail = ownership.source_words(src, "fr")
+    return f"{label} ({detail})" if detail else label
 
 
 def _ownership_cell(src: dict) -> str:
@@ -359,8 +340,9 @@ def _sources_html(ownership: bool = False) -> str:
             '<p id="propriete">La colonne <strong>Propriété</strong> décrit la structure de propriété '
             "de chaque source telle que sa référence publique l’énonce (forme juridique, actionnaire), "
             "avec la date où Vigie l’a lue : un fait vérifiable, jamais un jugement sur la source. "
-            "Les articles de sources qui partagent un même propriétaire comptent pour une seule "
-            "origine dans les événements.</p>" + table
+            "Les pages des événements décrivent chaque propriétaire avec les mêmes mots (ceux qui "
+            "précèdent la parenthèse). Les articles de sources qui partagent un même propriétaire "
+            "comptent pour une seule origine dans les événements.</p>" + table
         )
     cut_rows = []
     for src in deferred:

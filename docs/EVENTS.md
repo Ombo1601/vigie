@@ -1,7 +1,8 @@
 # EVENTS.md — the Event object
 
 Status: **built, wired behind a switch, off** (2026-10-06). The event builder
-(`scripts/events.py`) runs in every full edition as a shadow stage; the event
+(`scripts/events.py`) runs in every full edition, as a shadow stage while the
+switch is off and load-bearing once it is on (section 19); the event
 chain is sealed in the private state only; the event surfaces
 (`scripts/evenements.py`) are wired into the render and the release behind
 the three-position switch of `scripts/surfaces.py`, committed `off`: until the
@@ -229,6 +230,19 @@ publisher text at processing time; only the class code and the rule id are kept.
 Each row cites a public ownership source in `sources.yaml` (`ownership_ref`).
 The founder confirms the table before it ships (Hydro-Québec grouped with the
 State: a decision, section 16).
+
+The class is a code for grouping, never a reader-facing word: `independent`
+only means "none of the other classes" and reads as a verdict. Every page
+words an owner by its **structure** (legal form, shareholder), from one table,
+`scripts/ownership.py` `STRUCTURE` (`words`, `source_words`): the sources page
+(`/methode/sources.html#propriete`, label then detail, with the reference and
+the date it was read), the ownership chip and the origins panel of the event
+pages (the label, linked to that page), and `latest.json`
+(`institutions.*.ownership_words`). An owner the table does not word yet
+falls back to the catalogue's structure words of its class (`own.*`; none
+exists for `independent`, which reads "Propriété : voir les sources"); an
+unsourced declaration reads "Propriété non établie" (ranking.md, « Propriété
+des sources »).
 
 ## 8. Independence (counted, never judged)
 
@@ -795,7 +809,8 @@ is `off`, printed as a diagnosis.
 | `/delta/v2/latest.json` | not written | written, not listed | written, listed in `llms.txt`, delta-v1 deprecated |
 | sitemap | as before | as before (omits them) | `/`, `/en/` with xhtml hreflang alternates, `/le-point.html` |
 | sources page | as before | + ownership as structure | + ownership as structure |
-| release gate (`stage_public`) | nothing new | required files, hreflang targets, noindex, `/` is the brief, front door ≤ 120 KB | required files, hreflang targets, indexable, `/` is the events door and links the river, the brief's canonical, sitemap targets, front door ≤ 120 KB |
+| `events.py` in `pipeline.py` | shadow: a crash is diagnosed, the edition goes on | load-bearing: a crash fails the run | load-bearing: a crash fails the run |
+| release gate (`stage_public`) | nothing new | required files, the door is this collection's and not empty, hreflang targets, noindex, `/` is the brief, front door ≤ 120 KB | required files, the door is this collection's and not empty, hreflang targets, indexable, `/` is the events door and links the river, the brief's canonical, sitemap targets, front door ≤ 120 KB |
 | `vercel.json` (staged) | the config of before (event rules left out) | full | full |
 
 - The emitter runs in the full edition and in the hourly roads-only
@@ -818,6 +833,23 @@ is `off`, printed as a diagnosis.
   front door is removed before it runs), so the release is refused,
   diagnosed, and the previous production release stays up; setting the
   switch back to `off` restores the brief at `/` on the next run.
+- **Never an empty or a stale door** (preview and live). The emitter is
+  fail-soft: with no usable event view of the current collection (none
+  built, unreadable, or left from an earlier collection because the builder
+  failed) it still renders a door with no card ("0 événement") and writes
+  `status: "not_built"` in `evenements/latest.json`. Two rules keep that door
+  from shipping: (1) with the switch on, `pipeline.py` no longer treats
+  `events.py` as a shadow stage (`pipeline.is_shadow`): a crash fails the
+  full run, and the failed refresh opens the alert issue; (2) the release
+  gate (`stage_public.door_errors`) reads the staged
+  `evenements/latest.json` and the collection itself
+  (`data/normalized/latest_enriched.json`) and refuses, diagnosed, unless the
+  status is `ok`, the edition is the collection's `normalized_at`, and at
+  least one card is shown when the collection holds candidates. The previous
+  release stays up. The hourly roads lane re-renders from the stored view of
+  the last full run (same collection), so it passes; a full run whose
+  builder failed is refused until a run builds the view again. A release that
+  must ship anyway (a takedown, R10) ships with the switch back to `off`.
 - Known follow-ups, not done here: the record-layer pages (registre, mémoire,
   départ, récits, affiche, méthode) still call `/` "Le point"; in live mode it
   is the events front door and the brief is one link away (the river link,
@@ -881,3 +913,48 @@ Python 3.14; nothing deployed).
   carry `rel="describedby" href="/llms.txt"` (the brief does); staging takes
   12 to 22 s in preview and live on Windows (about 4 ms per file open), 2 s
   off.
+
+### 19.2 Fix round after the adversarial review (2026-10-06)
+
+Three blocking findings, each fixed at its root with tests that fail on
+`phase1/d-e2e` and pass here:
+
+- **Ownership words** (law). The event pages printed the class code
+  `independent` as "Indépendant" / "Independent" on Le Devoir and La Presse,
+  a verdict word the published method forbids, while the sources page of the
+  same release worded those owners as structures. One table now
+  (`ownership.STRUCTURE`, section 7) feeds the sources page, the ownership
+  chip, the origins panel (every owner of a group, not only the first), the
+  same-owner note (no more raw `owner_group` code) and `latest.json`
+  (`ownership_words`); the origins panel links
+  `/methode/sources.html#propriete`, where the reference and its date are;
+  the catalogue has no `own.independent`.
+- **Absence, not silence** (law). The front door's third rule ("Le silence
+  est un fait") and the roster heading ("qui s'est tu" / "who stayed
+  silent") asserted the silence of real institutions, which llms.txt and
+  docs/CHARTE.md forbid. They now read "L'absence est inscrite" and "qui n'a
+  rien publié dans nos flux"; `tests/test_honest_copy.py` refuses any
+  catalogue text that asserts silence, or a "published nothing" not scoped
+  to our feeds.
+- **Never an empty or stale door** (systems): section 19 above.
+
+Proof on the same live-state copy (edition 2026-10-06T00:03Z, 325
+candidates, 194 events), frozen clock, old code against new:
+
+- **off**: 166 files, the same bytes except `ranking.md`,
+  `methode/classement.html` (three changelog rows) and the manifest.
+  **preview** 559 and **live** 561 files, the same set; what changed: the
+  388 event pages that carry an origins panel, the doors, `latest.json`,
+  `methode/sources.html`, the two method files and the manifest.
+- No ownership chip on any event page folds to "independent"; Le Devoir
+  reads "Contrôlé par une fiducie" (35 voice cards in each language), La
+  Presse "Organisme sans but lucratif" (10), as `/methode/sources.html`
+  words them; all 388 origins panels link that page; no visible text of any
+  event page asserts silence.
+- With the event view absent, unreadable, stale (edition rewritten to
+  2026-10-05T18:02Z) or emptied, `pipeline.py --render-only --stage` exits 1
+  in preview and in live with the diagnosis ("status 'not_built'", "0 card
+  while the collection holds 325 candidate(s)"), and the previous
+  `deploy/public` is byte-identical; off ships regardless. An `events.py`
+  that cannot start (`pipeline.py --offline`): off diagnoses it and renders
+  the edition, live stops at `events.py` before any render.

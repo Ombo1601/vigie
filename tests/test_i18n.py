@@ -11,6 +11,7 @@ import harness  # noqa: F401 - puts scripts/ on sys.path
 
 import composants
 import i18n
+import ownership
 
 NBSP = " "
 CAT = harness.ROOT / "scripts" / "i18n"
@@ -65,7 +66,9 @@ class CataloguePair(unittest.TestCase):
         literal = set(re.findall(r"""\bt\(\s*f?["']([a-z0-9_.-]+)["']""", source))
         plural = {k + s for k in re.findall(r"""\btn\(\s*["']([a-z0-9_.]+)["']""", source) for s in (".one", ".other")}
         families = {
-            "tier": composants.TIERS, "act": composants.ACTIVITIES, "own": composants.OWNERSHIPS,
+            "tier": composants.TIERS, "act": composants.ACTIVITIES,
+            # the class fallbacks of scripts/ownership.py `words` (never a word for `independent`)
+            "own": (*ownership.CLASS_WORDED, "unworded", "unverified"),
             "origin": composants.ORIGINS, "anchor": composants.ANCHOR_TYPES, "sil": composants.SILENCE_STATES,
             "neigh.reason": composants.NEIGHBOUR_REASONS, "roster": composants.ROSTER_STATES[3:],
             "ed.title": composants.PERIODS, "ed.end": composants.PERIODS, "impact": composants.IMPACTS,

@@ -25,6 +25,14 @@ DECLARATIONS, counted apart from media reporting (events.py keys them
 official source can neither inflate nor deflate a media origin count.
 `declares(source_id)` says which side of that line a source stands on.
 
+How readers see it (ranking.md, « Propriété des sources »): an owner is
+worded by its STRUCTURE (legal form, shareholder) as its public reference
+states it, from one table (`STRUCTURE`), read by the sources page
+(scripts/method_site.py) and by the event pages (scripts/composants.py) alike,
+so the same owner reads the same everywhere. The class code `independent`
+only means "none of the other classes": it is not a structure, has no words
+of its own, and is never printed (`words`).
+
 Fail-soft: a missing or malformed registry prints one diagnosis and yields
 empty facts (every source `unverified`), never an exception. No network.
 
@@ -198,6 +206,65 @@ def declaration(source_id, sources=None) -> dict:
         "ownership_ref": str(rec.get("ownership_ref")) if ok else None,
         "source_id": sid,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Words: ownership as factual structure, one table for every surface
+# --------------------------------------------------------------------------- #
+# Who owns, in what legal form, as each owner's public reference (sources.yaml
+# `ownership_ref`, read on `ownership_asof`) states it. Never a judgement of a
+# source. Keyed by `owner_group`, then (owner_group, institution) where one
+# owner holds bodies of different forms. `label` is printed on the event
+# pages (the ownership chip, the origins panel) and first on the sources page,
+# followed there by `detail` in parentheses, with the reference and its date.
+STRUCTURE: dict = {
+    "cbc-radio-canada": {"label": {"fr": "Société d’État fédérale", "en": "Federal Crown corporation"},
+                         "detail": {"fr": "Loi sur la radiodiffusion", "en": "Broadcasting Act"}},
+    "quebecor": {"label": {"fr": "Québecor (société cotée)", "en": "Quebecor (listed company)"}},
+    "cn2i": {"label": {"fr": "Coopérative (CN2i)", "en": "Cooperative (CN2i)"}},
+    "le-devoir": {"label": {"fr": "Contrôlé par une fiducie", "en": "Controlled by a trust"}},
+    "la-presse": {"label": {"fr": "Organisme sans but lucratif", "en": "Non-profit organization"}},
+    "ville-quebec": {"label": {"fr": "Administration municipale", "en": "Municipal administration"},
+                     "detail": {"fr": "Ville de Québec", "en": "Québec City"}},
+    ("etat-quebec", "gouv-quebec"): {"label": {"fr": "Gouvernement du Québec", "en": "Government of Quebec"}},
+    ("etat-quebec", "hydro-quebec"): {"label": {"fr": "Société d’État", "en": "Crown corporation"},
+                                      "detail": {"fr": "actionnaire unique : le gouvernement du Québec",
+                                                 "en": "sole shareholder: the Government of Quebec"}},
+}
+# A sourced owner the table does not word yet is worded by its class, in the
+# catalogue's structure words (scripts/i18n: own.<class>); `independent` has
+# none (it is not a structure): it reads "see the sources" (own.unworded). A
+# declaration that is not complete and sourced reads "not established"
+# (own.unverified), never guessed.
+CLASS_WORDED = ("public_broadcaster", "cooperative", "quebecor", "government")
+
+
+def words(ownership_class, owner_group=None, institution=None, lang: str = "fr") -> tuple[str, str]:
+    """(label, detail) of one owner in `lang` ("fr" | "en"; anything else is
+    French). Inputs are a member's or a declaration's stored fields: the class
+    (already `unverified` when the declaration is not sound), the owner group
+    and the institution. `detail` is "" when the table gives none."""
+    import i18n  # noqa: PLC0415 - lazy: the registry helpers stay importable alone
+
+    code = lang if lang in LANGUAGES else "fr"
+    cls = str(ownership_class or "")
+    if cls not in CLASSES or cls == UNVERIFIED:
+        return i18n.t("own.unverified", code), ""
+    group, inst = str(owner_group or ""), str(institution or "")
+    entry = STRUCTURE.get((group, inst)) or STRUCTURE.get(group)
+    if isinstance(entry, dict):
+        return entry["label"][code], (entry.get("detail") or {}).get(code, "")
+    if cls in CLASS_WORDED:
+        return i18n.t(f"own.{cls}", code), ""
+    return i18n.t("own.unworded", code), ""
+
+
+def source_words(rec: dict | None, lang: str = "fr") -> tuple[str, str]:
+    """`words` for one sources.yaml record, through the same soundness check
+    as every other helper (an unsourced declaration reads "not established")."""
+    if not _verified(rec):
+        return words(UNVERIFIED, lang=lang)
+    return words(rec["ownership_class"], rec.get("owner_group"), rec.get("institution"), lang)
 
 
 def validate(sources=None) -> list[str]:

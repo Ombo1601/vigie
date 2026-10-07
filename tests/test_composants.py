@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import html
 import os
 import re
 import subprocess
@@ -335,6 +336,38 @@ class Panels(unittest.TestCase):
         self.assertIn("Radio Fleuve and Fleuve News have the same owner", en)
         solo = PAGES["evenements/ev-3c4d5e6f70819203.html"]
         self.assertIn("1 article → 1 origine", solo)
+
+    def test_owners_are_worded_by_structure_never_by_class_or_code(self):
+        # ranking.md « Propriété des sources »: the chip, the origins panel and
+        # the same-owner note use scripts/ownership.py's words, linked to the
+        # sources page; never "Indépendant", never an owner_group code.
+        def member(iid, inst, name, cls, group, lang):
+            return {"item_id": iid, "institution": inst, "institution_name": name, "ownership_class": cls,
+                    "owner_group": group, "language": lang, "published_at": "2026-10-06T13:00:00Z",
+                    "origin_class": "own_reporting"}
+        ev = {"event_id": "ev-0123456789abcdef", "label": {"fr": "Essai", "en": "Test"},
+              "members": [member("a", "inst-a", "Quotidien A", "independent", "le-devoir", "fr"),
+                          member("b", "inst-b", "Quotidien B", "independent", "zz-unworded", "fr"),
+                          member("c", "inst-c", "Radio C", "public_broadcaster", "cbc-radio-canada", "fr"),
+                          member("d", "inst-d", "Radio D", "public_broadcaster", "cbc-radio-canada", "en"),
+                          member("e", "inst-e", "Feuille E", "unverified", "", "fr")],
+              "independence": {"groups": [["a"], ["b"], ["c", "d"], ["e"]], "count": 4},
+              "language_pairs": [{"fr": "c", "en": "d", "rule": "x", "same_owner": True}]}
+        fr, en = ck.event_page(ev, "fr"), ck.event_page(ev, "en")
+        for page, lang in ((fr, "fr"), (en, "en")):
+            visible = ck.fold(html.unescape(re.sub(r"<[^>]+>", " ", page)))
+            self.assertNotRegex(visible, r"\bindependant\b|\bindependent\b(?! reporting)", lang)
+            self.assertNotIn("cbc-radio-canada", visible, lang)
+            self.assertIn('href="/methode/sources.html#propriete"', page, lang)
+        for words in ("Contrôlé par une fiducie", "Propriété : voir les sources", "Société d’État fédérale",
+                      "Propriété non établie", "appartiennent au même propriétaire (Société d’État fédérale)"):
+            self.assertIn(words, html.unescape(fr).replace(" ", " "))
+        for words in ("Controlled by a trust", "Ownership: see the sources", "Federal Crown corporation",
+                      "Ownership not established", "have the same owner (Federal Crown corporation)"):
+            self.assertIn(words, html.unescape(en))
+        self.assertIn('lang="fr" hreflang="fr-CA"', en.split('href="/methode/sources.html#propriete"', 1)[1][:40],
+                      "the English page says the sources page is in French")
+        self.assertIn('<span class="chip own">Propriété non établie</span>', fr, "no class colour without a class")
 
     def test_numbers_are_side_by_side_never_reconciled(self):
         page = PAGES["evenements/ev-2b3c4d5e6f708192.html"]
@@ -815,7 +848,7 @@ class EditionPage(unittest.TestCase):
         page = PAGES["evenements.html"]
         for needle in ("Édition du matin · mardi 6 octobre 2026", "L’essentiel pour Québec", "5 événements · 9 institutions suivies · collectée à 10 h 12",
                        "Copié, jamais réécrit", "Sans compte, sans traceur", "Vous êtes à jour.", "Fin de l’édition du matin : 5 événements.",
-                       "Prochaine collecte vers 16 h 10.", "Qui a parlé, qui s’est tu", "Scellée au Registre :", "n° 57", "0a8246b0c1d2…",
+                       "Prochaine collecte vers 16 h 10.", "Qui a parlé, qui n’a rien publié dans nos flux", "Scellée au Registre :", "n° 57", "0a8246b0c1d2…",
                        "Le sceau ne contient aucun texte d’éditeur.", "Déclaré par les autorités", "dans 2 événements", "18 articles collectés, aucun dans un événement affiché",
                        "notre collecte a échoué", "aucun article collecté", "4 communiqués collectés, aucun lié à un événement"):
             self.assertIn(needle, page)

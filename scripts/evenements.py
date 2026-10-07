@@ -143,6 +143,7 @@ if str(SCRIPTS) not in sys.path:
 
 import composants as ck  # noqa: E402
 import i18n  # noqa: E402
+import ownership  # noqa: E402
 import store_io  # noqa: E402
 import surfaces  # noqa: E402
 import takedown  # noqa: E402
@@ -381,11 +382,15 @@ class Law:
         return []
 
     def declaration(self, source_id: str) -> dict:
+        """The source's ownership declaration, and the words every page prints
+        for it (`ownership_words`, scripts/ownership.py: the owner's structure
+        as /methode/sources.html states it; the class code is never printed)."""
         rec = self.by_id.get(source_id) or {}
-        out = {}
+        out: dict = {}
         for key in ("ownership_class", "owner_group", "ownership_ref", "ownership_asof"):
             if isinstance(rec.get(key), str) and rec.get(key):
                 out[key] = rec[key]
+        out["ownership_words"] = {lang: ownership.source_words(rec, lang)[0] for lang in LANGS}
         return out
 
 
@@ -1395,7 +1400,7 @@ def latest_doc(r: Render, entries: list[dict], pages: dict[str, str], ranking_na
             "cards_max": CARDS_MAX, "pages_max": PAGES_MAX, "official_max": OFFICIAL_MAX,
             "official_window_hours": OFFICIAL_WINDOW_HOURS,
             "pages": {lang: i18n.t("rule.pages", lang, n=i18n.fmt_int(PAGES_MAX, lang)) for lang in LANGS},
-            "ownership": "ownership_class, owner_group and ownership_ref are the declarations of sources.yaml, each with its public reference; members sharing an owner_group count as one origin",
+            "ownership": "ownership_class, owner_group and ownership_ref are the declarations of sources.yaml, each with its public reference; ownership_words are the only ownership words the pages print (the owner's structure, as /methode/sources.html states it; a class code is never printed); members sharing an owner_group count as one origin",
         },
         "counts": counts,
         "institutions": dict(sorted(institutions.items())),
