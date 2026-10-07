@@ -477,3 +477,28 @@ class Determinism(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ActivityChipWording(unittest.TestCase):
+    """An event that is in the current collection and gained no article reads
+    "Sans nouveauté", never "Absent de cette collecte" (true only off the page)."""
+
+    def test_current_quiet_event_is_not_called_absent(self) -> None:
+        import composants
+        fr = composants.activity_chip("quiet", "fr", current=True)
+        en = composants.activity_chip("quiet", "en", current=True)
+        self.assertIn("Sans nouveauté", fr)
+        self.assertNotIn("Absent", fr)
+        self.assertIn("No new coverage", en)
+        self.assertNotIn("Absent", en)
+
+    def test_a_permanent_view_keeps_the_absence_wording(self) -> None:
+        import composants
+        self.assertIn("Absent de cette collecte", composants.activity_chip("quiet", "fr"))
+        self.assertIn("Absent from this collection", composants.activity_chip("quiet", "en", current=False))
+
+    def test_new_and_developed_are_unchanged(self) -> None:
+        import composants
+        for act, word in (("new", "Nouveau"), ("developed", "Développé")):
+            self.assertIn(word, composants.activity_chip(act, "fr", current=True))
+            self.assertIn(word, composants.activity_chip(act, "fr"))

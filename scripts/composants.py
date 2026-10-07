@@ -650,11 +650,16 @@ def event_tier_chip(ev: dict, lang: str) -> str:
     return tier_view_chip(view, lang) if view is not None else tier_chip(ev.get("tier"), lang)
 
 
-def activity_chip(activity: object, lang: str) -> str:
+def activity_chip(activity: object, lang: str, current: bool = False) -> str:
+    """The activity chip. "quiet" means no new article this edition: for an
+    event that IS in the current collection (`current`) that reads "no news",
+    never "absent from this collection" (which is true only of an event the
+    collection no longer carries, as on a permanent page)."""
     activity = str(activity or "")
     if activity not in ACTIVITIES:
         return ""
-    return chip(t(f"act.{activity}", lang), "act", f"act-{activity}")
+    key = "act.quiet.current" if (activity == "quiet" and current) else f"act.{activity}"
+    return chip(t(key, lang), "act", f"act-{activity}")
 
 
 def owner_words(member: dict, lang: str) -> str:
@@ -1077,7 +1082,7 @@ def event_card(ev: dict, lang: str) -> str:
     where = place_text(ev, lang) if is_unclassified(ev) else ""
     top = "".join(x for x in (
         chip(kind, "kind") if kind else "", chip(where) if where else "",
-        activity_chip(ev.get("activity"), lang), event_tier_chip(ev, lang),
+        activity_chip(ev.get("activity"), lang, current=not perm), event_tier_chip(ev, lang),
     ) if x)
     label = plain_name(ev, lang)
     # what a screen reader hears after the button: the label, or for an
@@ -1651,7 +1656,7 @@ def event_page(ev: dict, lang: str, *, edition: dict | None = None, followed: in
         place = place_text(ev, lang)   # no "Lieu non établi" chip: the "Pourquoi ici ?" row says it
     chips = "".join(x for x in (
         chip(kind, "kind") if kind else "",
-        activity_chip(ev.get("activity"), lang), event_tier_chip(ev, lang),
+        activity_chip(ev.get("activity"), lang, current=not perm), event_tier_chip(ev, lang),
         chip(place) if place else "", event_lang_chip(langs, lang) if langs == ["en"] else "",
     ) if x)
     if any(p.get("same_owner") for p in _dicts(ev.get("language_pairs"))):
