@@ -59,6 +59,14 @@ in integer arithmetic. So a quiet week and an election night each rank on
 their own distribution; no constant here is an opinion. The five criteria and
 their order are the only fixed things, and they are the rule.
 
+The mid-rank percentile only places the band (a tie counts half below). It is
+never printed as "more than N %": that sentence would be false for every tie
+(on a quiet night most events share the lowest count, and half of them would
+read as beaten). What the page prints is the exact standing: how many events
+of the edition are strictly below, how many others are equal, out of how many
+(`standing_of`). An event without a known instant has no freshness standing,
+and an undated event is never counted as "older" than a dated one there.
+
 An event is shown when its key is at or above the edition's median key
 (upper median) and it is one of the first CAP in display order. The rest are
 not hidden: each carries the recorded reason (`below-median`, `over-cap`,
@@ -190,6 +198,22 @@ def band_of(value: object, population: list) -> tuple[int, int]:
     percent = (100 * num) // (2 * n)
     band = min(BANDS - 1, (BANDS * num) // (2 * n))
     return band, percent
+
+
+def standing_of(value: object, population: list) -> dict:
+    """The exact place of `value` among the KNOWN values of `population`, as the
+    page states it: {"below": strictly lower, "tied": others equal (the value
+    itself is not counted), "known": values compared, "percent_below":
+    floor(100 * below / known)}. `None` is unknown: it is never below or equal
+    to anything, and an unknown value has no standing (all zero but `known`).
+    `population` is expected to hold `value` once (the event itself)."""
+    known = [x for x in population if x is not None]
+    n = len(known)
+    if value is None or n == 0:
+        return {"below": 0, "tied": 0, "known": n, "percent_below": 0}
+    below = sum(1 for x in known if x < value)
+    tied = max(0, sum(1 for x in known if x == value) - 1)
+    return {"below": below, "tied": tied, "known": n, "percent_below": (100 * below) // n}
 
 
 # --------------------------------------------------------------------------- #
@@ -487,6 +511,9 @@ def _rank(events: object, ctx: object) -> list[dict]:
         f_band, f_pct = band_of(stamp, stamps)
         scored[eid] = {"o_band": o_band, "o_pct": o_pct, "c_band": c_band, "c_pct": c_pct,
                        "f_band": f_band, "f_pct": f_pct,
+                       "o_at": standing_of(f["origins"]["reporting"], reporting),
+                       "c_at": standing_of(f["continuity"]["count"], continuity),
+                       "f_at": standing_of(stamp, stamps),
                        "key": (0 if f["now"]["impact"] else 1, f["geo_rank"], -o_band, -c_band, -f_band)}
     # inside one key the newest event comes first (the exact instant, not its band),
     # then the id: equal events always come out in the same order
@@ -526,14 +553,20 @@ def _row(eid: str, pos: int, f: dict, s: dict, decided: str, reason: str, compar
          now: datetime | None) -> dict:
     e_now = f["now"]
     age = _age_hours(f["last"], now)
+    o_at, c_at, f_at = s["o_at"], s["c_at"], s["f_at"]
     criteria = {
         "now": dict(e_now),
         "geo": {"scope": f["geo"], "rank": f["geo_rank"], "basis": f["geo_basis"]},
-        "origins": {**f["origins"], "percent_below": s["o_pct"], "band": s["o_band"], "events_compared": compared},
-        "continuity": {**f["continuity"], "related_bar_e4": RELATED_BAR_E4, "percent_below": s["c_pct"],
+        "origins": {**f["origins"], "below": o_at["below"], "tied": o_at["tied"],
+                    "percent_below": o_at["percent_below"], "percentile": s["o_pct"], "band": s["o_band"],
+                    "events_compared": compared},
+        "continuity": {**f["continuity"], "related_bar_e4": RELATED_BAR_E4, "below": c_at["below"],
+                       "tied": c_at["tied"], "percent_below": c_at["percent_below"], "percentile": s["c_pct"],
                        "band": s["c_band"], "events_compared": compared},
         "fresh": {"last_instant": _iso(f["last"]), "source": f["last_source"], "age_hours": age,
-                  "percent_older": s["f_pct"], "band": s["f_band"], "events_compared": compared},
+                  "older": f_at["below"], "tied": f_at["tied"], "events_dated": f_at["known"],
+                  "percent_older": f_at["percent_below"], "percentile": s["f_pct"], "band": s["f_band"],
+                  "events_compared": compared},
         "decided_by": decided,
         "bands": BANDS,
     }
@@ -551,15 +584,24 @@ def _row(eid: str, pos: int, f: dict, s: dict, decided: str, reason: str, compar
             explain.append({"key": "rank.now.none", "values": {}})
     explain.append({"key": "rank.geo.quebec-city.anchor" if f["geo_basis"] == "anchor" else f"rank.geo.{f['geo']}",
                     "values": {}})
+    # the standing is printed as exact counts (strictly below, others tied, out
+    # of how many), never as the mid-rank percentile that places the band
     explain.append({"key": "rank.origins", "values": {
-        "n": f["origins"]["reporting"], "d": f["origins"]["declarations"], "pct": s["o_pct"]}})
+        "n": f["origins"]["reporting"], "d": f["origins"]["declarations"],
+        "below": o_at["below"], "tied": o_at["tied"], "total": o_at["known"]}})
     c = f["continuity"]
     explain.append({"key": "rank.continuity", "values": {
-        "n": c["count"], "f": c["follow_ups"], "r": c["related"], "a": c["records"], "pct": s["c_pct"]}})
+        "n": c["count"], "f": c["follow_ups"], "r": c["related"], "a": c["records"],
+        "below": c_at["below"], "tied": c_at["tied"], "total": c_at["known"]}})
     if f["last"] is None:
         explain.append({"key": "rank.fresh.unknown", "values": {}})
+    elif age is None:
+        # without a reference time the age is unknown: never printed as "0 h ago"
+        explain.append({"key": "rank.fresh.noclock", "values": {
+            "below": f_at["below"], "tied": f_at["tied"], "total": f_at["known"]}})
     else:
-        explain.append({"key": "rank.fresh", "values": {"h": age if age is not None else 0, "pct": s["f_pct"]}})
+        explain.append({"key": "rank.fresh", "values": {
+            "h": age, "below": f_at["below"], "tied": f_at["tied"], "total": f_at["known"]}})
     explain.append({"key": f"rank.decided.{decided}", "values": {}})
     if reason == "":
         explain.append({"key": "rank.shown", "values": {"cap": CAP, "n": compared}})
@@ -574,11 +616,12 @@ def _row(eid: str, pos: int, f: dict, s: dict, decided: str, reason: str, compar
 def _row_withdrawn(e: dict, eid: str, pos: int, f: dict, now: datetime | None) -> dict:
     criteria = {
         "now": dict(f["now"]), "geo": {"scope": f["geo"], "rank": f["geo_rank"], "basis": f["geo_basis"]},
-        "origins": {**f["origins"], "percent_below": 0, "band": 0, "events_compared": 0},
+        "origins": {**f["origins"], "below": 0, "tied": 0, "percent_below": 0, "percentile": 0, "band": 0,
+                    "events_compared": 0},
         "continuity": {"count": 0, "follow_ups": 0, "related": 0, "records": 0, "related_bar_e4": RELATED_BAR_E4,
-                       "percent_below": 0, "band": 0, "events_compared": 0},
-        "fresh": {"last_instant": "", "source": "none", "age_hours": None, "percent_older": 0, "band": 0,
-                  "events_compared": 0},
+                       "below": 0, "tied": 0, "percent_below": 0, "percentile": 0, "band": 0, "events_compared": 0},
+        "fresh": {"last_instant": "", "source": "none", "age_hours": None, "older": 0, "tied": 0,
+                  "events_dated": 0, "percent_older": 0, "percentile": 0, "band": 0, "events_compared": 0},
         "decided_by": "none", "bands": BANDS,
     }
     return {"event_id": eid, "position": pos, "shown": False, "hidden_reason": HIDDEN_NO_MEMBER,
