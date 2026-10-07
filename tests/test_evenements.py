@@ -196,6 +196,22 @@ def roadworks(fetched, street="Rue Quirion-Tabarnouche", n=3):
             "dataset_url": "https://donnees.example.org/entraves"}
 
 
+def paired_roadworks(fetched, street="Rue Quirion-Tabarnouche"):
+    """INVENTED: one work declared once per direction (identical but for the
+    direction), one declared in one direction only."""
+    def decl(eid, road, direction):
+        return {"event_id": eid, "road_names": [road], "direction": direction,
+                "description": f"{road} entre la rue Alpha et la rue Bêta, travaux d'aqueduc.",
+                "event_type": "road-work", "event_status": "active",
+                "start_date": "2026-09-18T00:00:00Z", "end_date": "2026-10-30T00:00:00Z",
+                "start_date_accuracy": "verified", "end_date_accuracy": "estimated",
+                "vehicle_impact": "all-lanes-closed", "update_date": "2026-09-21T00:00:00Z"}
+    return {"fetched_at": fetched, "institution_name": "Ville Xénon",
+            "events": [decl("RW-N", street, "northbound"), decl("RW-S", street, "southbound"),
+                       decl("RW-Z", "Avenue Zéphir", "eastbound")],
+            "dataset_url": "https://donnees.example.org/entraves"}
+
+
 def registre_state() -> dict:
     seals, prev = [], ""
     for seq, clock in enumerate((E1_CLOCK, MID_CLOCK, E2_CLOCK), start=1):
@@ -763,6 +779,25 @@ class RoadsLane(unittest.TestCase):
             self.assertNotIn("Pélican-Zinzolin", before[name])
         self.assertIn('datetime="2026-09-22T17:45:00Z"', after["evenements.html"])
 
+    def test_the_directions_of_one_work_are_one_row_and_the_counts_stay_declarations(self):
+        public, _ = FX.emit("roads-paired", {"roadworks": paired_roadworks("2026-09-22T13:30:00+00:00")})
+        files = files_of(public)
+        for lang, name, both, counts, caption in (
+            ("fr", "evenements.html", "dans les deux sens", "3 entraves déclarées, dont 3 avec toutes les voies fermées",
+             "1 ligne regroupe 2 déclarations"),
+            ("en", "en/evenements.html", "both directions", "3 obstructions declared, 3 with all lanes closed",
+             "1 row groups 2 City declarations"),
+        ):
+            block = html.unescape(roads_block_of(files[name]))
+            self.assertEqual(block.count("<li data-rw>"), 2, lang)
+            self.assertEqual(block.count("entre la rue Alpha et la rue Bêta, travaux d'aqueduc"), 2, lang + ": once per row")
+            self.assertEqual(block.count("Rue Quirion-Tabarnouche entre"), 1, "the verbatim text of the pair is printed once")
+            self.assertIn(both, block)
+            self.assertIn(counts, block)
+            self.assertIn(caption, block)
+        again = files_of(FX.emit("roads-paired-2", {"roadworks": paired_roadworks("2026-09-22T13:30:00+00:00")})[0])
+        self.assertEqual(files, again, "identical inputs, identical bytes")
+
 
 class FailSoft(unittest.TestCase):
     def test_absent_inputs_render_an_honest_front_door(self):
@@ -970,6 +1005,14 @@ class RankingContract(unittest.TestCase):
         finally:
             fx.close()
 
+    def test_the_ranking_still_sees_every_declaration_of_a_grouped_row(self):
+        mod, seen = self.stub()
+        FX.emit("stub-paired", {"ranking_module": mod, "roadworks": paired_roadworks("2026-09-22T13:30:00+00:00")})
+        rows = seen["ctx"]["roadworks_view"]["rows"]
+        self.assertEqual([r["id"] for r in rows], ["RW-N", "RW-S", "RW-Z"], "declarations, not display rows")
+        self.assertTrue(all(r["impact"] == "all-lanes-closed" and r["status"] == "active" for r in rows))
+        self.assertEqual(seen["ctx"]["roadworks_view"]["total"], 3)
+
     def test_a_withdrawn_roadworks_lane_never_reaches_the_ranking(self):
         mod, seen = self.stub()
         FX.emit("stub-rw", {"ranking_module": mod, "events_view": view_with_anchor(FX, STRIKE, RW_ANCHOR)})
@@ -1171,6 +1214,25 @@ class LaneTakedowns(unittest.TestCase):
             self.assertEqual(result["status"], "ok")
             self.assert_roadworks_gone(files_of(public))
             self.assertTrue(any("roadworks (wzdx) lane withdrawn" in d for d in result["diagnosis"]), result)
+        finally:
+            fx.close()
+
+    def test_a_withdrawn_lane_with_grouped_directions_prints_nothing_of_them(self):
+        fx = Fixture(takedowns=[("source", "wzdx-x")])
+        try:
+            paired = paired_roadworks("2026-09-22T17:45:00+00:00")
+            public, _ = fx.emit("paired", {"roadworks": paired})
+            files = files_of(public)
+            for name in ("evenements.html", "en/evenements.html"):
+                block = roads_block_of(files[name])
+                self.assertNotIn("data-rw-grouped", block)
+                self.assertNotIn("<li", block)
+                self.assertNotIn("dans les deux sens", block)
+                self.assertNotIn("both directions", block)
+            for name, text in files.items():
+                for s in RW_STRINGS:
+                    self.assertNotIn(s, html.unescape(text), name)
+            self.assertEqual(files, files_of(fx.emit("plain")[0]), "the withdrawn lane renders the same whatever it stored")
         finally:
             fx.close()
 

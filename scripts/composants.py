@@ -171,9 +171,15 @@ may be newer than the edition; it is never derived from the EditionView)::
                               so skew is a tolerated, labelled case
   rows            [{"id", "street", "places", "text", "direction", "what",
                     "status": active|planned|pending, "from", "to",
-                    "estimated": bool, "impact": the City's vehicle_impact code}]
+                    "estimated": bool, "impact": the City's vehicle_impact code,
+                    optional "n" (declarations behind the row, default 1),
+                    "directions" (fixed-order list of the directions a merged
+                    row covers), "ids", "members"}]
                   already ordered by the published rule (most restrictive
-                  first); the kit never reorders
+                  first); the kit never reorders. A row with n > 1 stands for
+                  declarations that differ only by direction: it prints
+                  "both directions" (or the exact set) and the block adds a
+                  caption saying that rows are grouped by direction
   attribution, dataset_url   optional
   map_url         str         optional; when the key is present it replaces the
                               City's map link, and "" prints no map link (a
@@ -1731,6 +1737,23 @@ def _rw_label(kind: str, code: object, lang: str) -> str:
     return t(key, lang) if (code and _has(key, lang)) else ""
 
 
+def _rw_merged(row: dict) -> bool:
+    """A row that stands for several declarations differing only by direction."""
+    return _int(row.get("n")) > 1 and len(row.get("directions") or []) > 1
+
+
+def _rw_direction(row: dict, lang: str) -> str:
+    """The direction text of a row: the City's own label for one declaration; for
+    a merged row, "both directions" when it holds two opposite directions, else
+    the exact set in the fixed order."""
+    if _rw_merged(row):
+        dirs = [d for d in RW_GROUP_DIRECTIONS if d in row["directions"]]
+        if frozenset(dirs) in RW_OPPOSITE_PAIRS:
+            return t("roads.dir_both", lang)
+        return ", ".join(_rw_label("dir", d, lang) or d for d in dirs)
+    return _rw_label("dir", row.get("direction"), lang) or loc(row.get("direction"), lang)
+
+
 def _rw_dates(row: dict, lang: str) -> str:
     start, end = i18n.fmt_ymd(row.get("from"), lang), i18n.fmt_ymd(row.get("to"), lang)
     if start and end:
@@ -1796,6 +1819,7 @@ def roadworks_block(rw: dict | None, lang: str, *, anchor: str = "") -> str:
     elif rw.get("clock_skew"):
         stale = f'<p class="fact warn mt-s" data-rw-skew>{esc(t("roads.skew", lang))}</p>'
     items = []
+    grouped_rows = grouped_decl = 0
     for r in rows:
         status = str(r.get("status") or "")
         impact = str(r.get("impact") or "")
@@ -1812,7 +1836,10 @@ def roadworks_block(rw: dict | None, lang: str, *, anchor: str = "") -> str:
             closed_chip = chip(impact_text, "closed") if impact == "all-lanes-closed" else chip(impact_text, "impact")
         status_text = _rw_label("status", status, lang)
         status_chip = chip(status_text) if status_text else ""
-        direction = _rw_label("dir", r.get("direction"), lang) or loc(r.get("direction"), lang)
+        direction = _rw_direction(r, lang)
+        if _rw_merged(r):
+            grouped_rows += 1
+            grouped_decl += _int(r.get("n"))
         dates = _rw_dates(r, lang)
         meta = " · ".join(x for x in (direction, dates) if x)
         detail_html = f'<span class="bt" lang="fr">{esc(detail)}</span>' if detail else ""
@@ -1824,7 +1851,11 @@ def roadworks_block(rw: dict | None, lang: str, *, anchor: str = "") -> str:
         )
     if items:
         shown = tn("roads.shown", len(items), lang)
-        listing = f'<ul class="rw" data-rw-list>{"".join(items)}</ul><p class="small muted mt-s">{esc(shown)}</p>'
+        grouped = ""
+        if grouped_rows:
+            note = tn("roads.grouped", grouped_rows, lang, d=i18n.fmt_int(grouped_decl, lang))
+            grouped = f' <span data-rw-grouped>{esc(note)}</span>'
+        listing = f'<ul class="rw" data-rw-list>{"".join(items)}</ul><p class="small muted mt-s">{esc(shown)}{grouped}</p>'
     elif parsed is None:
         listing = f'<p class="small m0">{esc(t("roads.nodata", lang))}</p>'
     else:
@@ -2044,6 +2075,96 @@ RW_SEVERITY = {
 RW_ROWS_DEFAULT = 6
 
 
+# The four directions the City declares, in the one fixed order used whenever a
+# set of them is printed. Two opposite directions read "both directions"; any
+# other set is listed exactly. (Anything else the feed may say, "both-directions"
+# or an unknown value, is never merged with a neighbour.)
+RW_GROUP_DIRECTIONS = ("northbound", "southbound", "eastbound", "westbound")
+RW_OPPOSITE_PAIRS = (frozenset(("northbound", "southbound")), frozenset(("eastbound", "westbound")))
+
+
+def _rw_row(e: dict) -> dict:
+    names = [str(x).strip() for x in (e.get("road_names") if isinstance(e.get("road_names"), (list, tuple)) else []) if str(x or "").strip()]
+    accuracy = (str(e.get("start_date_accuracy") or ""), str(e.get("end_date_accuracy") or ""))
+    return {
+        "id": str(e.get("event_id")),
+        "street": names[0] if names else "",
+        "places": " · ".join(names[:3]),
+        "text": " ".join(str(e.get("description") or "").split())[:200],
+        "direction": str(e.get("direction") or ""),
+        "what": str(e.get("event_type") or ""),
+        "status": str(e.get("event_status") or ""),
+        "from": str(e.get("start_date") or "")[:10],
+        "to": str(e.get("end_date") or "")[:10],
+        "estimated": "estimated" in accuracy,
+        "impact": str(e.get("vehicle_impact") or "unknown"),
+    }
+
+
+def _rw_group_key(e: dict) -> tuple:
+    """Everything a reader can see or act on, EXCEPT the direction. Declarations
+    that share this key and differ only by direction are one piece of work
+    declared once per direction. The full description, the full instants, their
+    accuracy, the type, the status, the impact, the lane restrictions and every
+    road name are part of the key: any difference keeps the rows apart."""
+    names = e.get("road_names") if isinstance(e.get("road_names"), (list, tuple)) else []
+    restrictions = e.get("restrictions")
+    return (
+        tuple(" ".join(str(x or "").split()) for x in names),
+        " ".join(str(e.get("description") or "").split()),
+        str(e.get("start_date") or ""), str(e.get("end_date") or ""),
+        str(e.get("start_date_accuracy") or ""), str(e.get("end_date_accuracy") or ""),
+        str(e.get("event_type") or ""), str(e.get("event_status") or ""),
+        str(e.get("vehicle_impact") or "unknown"),
+        json.dumps(restrictions, sort_keys=True, ensure_ascii=True, default=str) if restrictions else "",
+    )
+
+
+def _rw_group_rows(ordered: list[dict], limit: int) -> tuple[list[dict], int]:
+    """Rows of the departure block: one per piece of work, not one per direction.
+
+    `ordered` is already in the published order (severity, newest update, id).
+    A group takes the position of its first member in that order, so the order
+    and the cap apply to the grouped rows; a declaration whose direction is not
+    one of the four cardinals is never grouped, and neither is a second
+    declaration of a direction the group already holds (a duplicate is not a
+    second direction). Returns (the first `limit` rows, rows before the cap).
+    Each row carries `directions` (the fixed-order set, [] when not a
+    cardinal), `n` (declarations behind it), `ids` and `members`."""
+    groups: list[dict] = []
+    open_by_key: dict[tuple, list[dict]] = {}
+    for e in ordered:
+        row = _rw_row(e)
+        d = row["direction"]
+        placed = None
+        if d in RW_GROUP_DIRECTIONS:
+            for g in open_by_key.get(_rw_group_key(e), []):
+                if d not in g["_dirs"]:
+                    placed = g
+                    break
+        if placed is None:
+            placed = {"row": row, "_dirs": set(), "_members": []}
+            groups.append(placed)
+            if d in RW_GROUP_DIRECTIONS:
+                open_by_key.setdefault(_rw_group_key(e), []).append(placed)
+        if d in RW_GROUP_DIRECTIONS:
+            placed["_dirs"].add(d)
+        placed["_members"].append({"id": row["id"], "status": row["status"], "impact": row["impact"],
+                                   "from": row["from"], "to": row["to"], "direction": d})
+    rows = []
+    for g in groups[: max(0, int(limit))]:
+        row = dict(g["row"])
+        dirs = [d for d in RW_GROUP_DIRECTIONS if d in g["_dirs"]]
+        row["directions"] = dirs
+        row["n"] = len(g["_members"])
+        row["ids"] = [m["id"] for m in g["_members"]]
+        row["members"] = g["_members"]
+        if len(g["_members"]) > 1:
+            row["direction"] = ""
+        rows.append(row)
+    return rows, len(groups)
+
+
 def roadworks_view(store: dict | None, *, limit: int = RW_ROWS_DEFAULT, stale_after_hours: float = 6.0,
                    render_clock: str = "") -> dict:
     """Build the RoadworksView from `data/roadworks/latest_roadworks.json`.
@@ -2052,29 +2173,22 @@ def roadworks_view(store: dict | None, *, limit: int = RW_ROWS_DEFAULT, stale_af
     wants the `stale` flag; with none, `stale` stays False. Ordering is the
     departure screen's rule, not a second ranking: severity, then newest
     update, then event id. A foreign or corrupt store yields an empty view
-    (collected_at empty: the block prints that the time is unknown)."""
+    (collected_at empty: the block prints that the time is unknown).
+
+    One row per piece of work: declarations of the same road(s), the same
+    description, the same instants and accuracy, the same type, status, impact
+    and restrictions that differ only by direction (two or more of north-,
+    south-, east-, westbound) are ONE row (`_rw_group_rows`), listed at the
+    position of their first member; the cap `limit` applies to those rows.
+    `total`, `closed` and `planned` stay counts of DECLARATIONS as the City
+    publishes them; `row_count` is the number of rows before the cap, and each
+    row carries `n`, `ids`, `directions` and `members` (one entry per declaration)."""
     doc = store if isinstance(store, dict) else {}
     events = [e for e in _dicts(doc.get("events")) if e.get("event_id")]
     ordered = sorted(events, key=lambda e: str(e.get("event_id") or ""))
     ordered.sort(key=lambda e: str(e.get("update_date") or ""), reverse=True)
     ordered.sort(key=lambda e: RW_SEVERITY.get(str(e.get("vehicle_impact") or ""), 6))
-    rows = []
-    for e in ordered[: max(0, int(limit))]:
-        names = [str(x).strip() for x in (e.get("road_names") if isinstance(e.get("road_names"), (list, tuple)) else []) if str(x or "").strip()]
-        accuracy = (str(e.get("start_date_accuracy") or ""), str(e.get("end_date_accuracy") or ""))
-        rows.append({
-            "id": str(e.get("event_id")),
-            "street": names[0] if names else "",
-            "places": " · ".join(names[:3]),
-            "text": " ".join(str(e.get("description") or "").split())[:200],
-            "direction": str(e.get("direction") or ""),
-            "what": str(e.get("event_type") or ""),
-            "status": str(e.get("event_status") or ""),
-            "from": str(e.get("start_date") or "")[:10],
-            "to": str(e.get("end_date") or "")[:10],
-            "estimated": "estimated" in accuracy,
-            "impact": str(e.get("vehicle_impact") or "unknown"),
-        })
+    rows, grouped_total = _rw_group_rows(ordered, limit)
     closed = sum(1 for e in events if e.get("vehicle_impact") == "all-lanes-closed")
     planned = sum(1 for e in events if e.get("event_status") in ("planned", "pending"))
     collected = str(doc.get("fetched_at") or "")
@@ -2092,6 +2206,7 @@ def roadworks_view(store: dict | None, *, limit: int = RW_ROWS_DEFAULT, stale_af
         "collected_at": collected if a is not None else "",
         "institution_name": str(doc.get("institution_name") or ""),
         "total": len(events), "closed": closed, "planned": planned, "stale": stale, "clock_skew": skew, "rows": rows,
+        "row_count": grouped_total,
         "dataset_url": str(doc.get("dataset_url") or ""),
     }
 
