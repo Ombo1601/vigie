@@ -50,7 +50,7 @@ from typing import Mapping
 MODES = ("off", "preview", "live")
 
 # The switch. Founder act: flip by commit (see the module docstring).
-EVENTS_SURFACES = "off"
+EVENTS_SURFACES = "live"
 
 ENV_VAR = "VIGIE_EVENTS_SURFACES"
 SITE_URL = "https://vigieqc.com"

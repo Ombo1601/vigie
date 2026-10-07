@@ -192,7 +192,7 @@ recomputed every edition. What stays human is the act of approving what
 production serves: flipping this switch is that act, done by a reviewed
 commit, never by a variable, a flag in the data or an opinion per edition.
 
-`EVENTS_SURFACES = "off" | "preview" | "live"` (committed `off`):
+`EVENTS_SURFACES = "off" | "preview" | "live"` (committed `live` since 2026-10-06, founder decision):
 
 - **off** — nothing new is emitted, staged, linked, sitemapped or validated:
   the release is byte-identical to the one before the wiring for the same
