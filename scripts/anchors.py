@@ -617,7 +617,10 @@ def roadworks_view(roadworks_doc: object, edition_clock: object, *, limit: int =
     (declarations whose status is active), `closed_active`,
     `collected_local` / `edition_local` ("YYYY-MM-DD HH:MM", America/Toronto),
     `edition_clock`. Rows keep the departure screen's published order: most
-    restrictive impact first, then most recently updated, then event id.
+    restrictive impact first, then most recently updated, then event id; a work
+    declared once per direction is one row ("both directions"), the cap counts
+    rows, and `total`/`active`/`closed_active` stay counts of declarations
+    (see `composants.roadworks_view`).
     Pure: no clock of its own; a corrupt document yields an empty, honest view.
     """
     import composants

@@ -1310,6 +1310,26 @@ def suggestions(cards: list[dict]) -> list[str]:
     return out
 
 
+def _declaration_view(view: dict) -> dict:
+    """A copy of the RoadworksView whose rows are DECLARATIONS again, for the
+    ranking: the block groups declarations that differ only by direction into
+    one row, but an event anchored to the declaration of the other direction is
+    still anchored to a declaration the page shows. Every grouped row is
+    expanded to its members, in the same order."""
+    out = copy.deepcopy(view)
+    rows = []
+    for row in out.get("rows") or []:
+        members = row.get("members") if isinstance(row, dict) else None
+        if not members:
+            rows.append(row)
+            continue
+        for m in members:
+            rows.append({"id": m.get("id"), "status": m.get("status"), "impact": m.get("impact"),
+                         "from": m.get("from"), "to": m.get("to")})
+    out["rows"] = rows
+    return out
+
+
 def roadworks_view(r: Render) -> tuple[dict, str]:
     """(RoadworksView, collection clock). anchors.roadworks_view measures the
     age against the later of the edition clock and the collection.
@@ -1491,7 +1511,8 @@ def build_site(r: Render) -> tuple[dict[str, str], dict]:
     rw_view, rw_clock = roadworks_view(r)
     later = max((c for c in (r.clock, rw_clock) if _instant(c) is not None), key=lambda c: _epoch(c) or 0.0, default=None)
     # a withdrawn roadworks lane is not available to the ranking either (R10)
-    rank_ctx = {"edition_clock": r.clock, "roadworks_view": None if r.roadworks_state else copy.deepcopy(rw_view),
+    rank_ctx = {"edition_clock": r.clock,
+                "roadworks_view": None if r.roadworks_state else _declaration_view(rw_view),
                 "now": later}
     rows, ranking_name = rank(rank_input, rank_ctx, r.ranking, diag) if rank_input else ([], FALLBACK_RANKING)
     pos = {row["event_id"]: row for row in rows}
