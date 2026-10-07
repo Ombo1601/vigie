@@ -43,6 +43,8 @@ def _day(value: object) -> str:
 
 def _story(r: dict) -> str:
     src = esc(r.get("source_name") or r.get("source_id") or "")
+    author = brief.author_of(r)
+    byline = f"Par {esc(author)} · " if author else ""
     url = brief.safe_url(r.get("url"))
     title = esc(r.get("title"))
     # Attribution/link-out is house law on every surface: a sheet read on a
@@ -53,7 +55,7 @@ def _story(r: dict) -> str:
         if url else title
     )
     return (f'<li><span class="af-title">{inner}</span>'
-            f'<span class="af-src">{src} · {_day(r.get("published"))}</span></li>')
+            f'<span class="af-src">{byline}{src} · {_day(r.get("published"))}</span></li>')
 
 
 def area_blocks(rows: list[dict]) -> list[tuple[str, list[dict]]]:
@@ -116,7 +118,21 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
     register = registre.institution_register(state)
     spoke = [r for r in register if r["current"] == registre.STATE_SPOKE]
     published = [r for r in register if r["current"] == registre.STATE_PUBLISHED]
-    missed = [r for r in register if r["current"] in (registre.STATE_COLLECTION_GAP, registre.STATE_NO_ITEMS)]
+    missed = [r for r in register if r["current"] == registre.STATE_COLLECTION_GAP]
+    no_items = [r for r in register if r["current"] == registre.STATE_NO_ITEMS]
+    # R10: withdrawn on the publisher's request is its own fact - neither a gap
+    # of ours nor a silence - and is named rather than dropped from the sheet.
+    withdrawn = [r for r in register if r["current"] == registre.STATE_WITHDRAWN]
+    withdrawn_names = ", ".join(esc(r["institution_name"]) for r in withdrawn[:SILENT_NAMES_CAP])
+    if len(withdrawn) > SILENT_NAMES_CAP:
+        rest = len(withdrawn) - SILENT_NAMES_CAP
+        withdrawn_names += f" et {rest} autre" + ("s" if rest != 1 else "")
+    # A source Vigie cut itself (sources.yaml) is our decision, never a silence.
+    cut = [r for r in register if r["current"] == registre.STATE_CUT]
+    cut_names = ", ".join(esc(r["institution_name"]) for r in cut[:SILENT_NAMES_CAP])
+    if len(cut) > SILENT_NAMES_CAP:
+        rest = len(cut) - SILENT_NAMES_CAP
+        cut_names += f" et {rest} autre" + ("s" if rest != 1 else "")
     missed_names = ", ".join(esc(r["institution_name"]) for r in missed[:SILENT_NAMES_CAP])
     if len(missed) > SILENT_NAMES_CAP:
         rest = len(missed) - SILENT_NAMES_CAP
@@ -129,6 +145,12 @@ def render_affiche(ranked: list[dict], issues: list[dict], roadworks: dict | Non
         f'<strong>{len(published)}</strong> {"ont" if len(published) != 1 else "a"} publié sans entrer dans un dossier'
         + (f' · <strong>{len(missed)}</strong> collecte{"s" if len(missed) != 1 else ""} manquée{"s" if len(missed) != 1 else ""} par Vigie : {missed_names}.'
            if missed else ".")
+        + (f' {len(no_items)} institution{"s" if len(no_items) != 1 else ""} : flux répondus, aucun article collecté dans la fenêtre de 7 jours (ce n’est pas une lacune).'
+           if no_items else "")
+        + (f' {esc(registre.state_heading_fr(registre.STATE_WITHDRAWN))} : {withdrawn_names}.'
+           if withdrawn else "")
+        + (f' {esc(registre.state_heading_fr(registre.STATE_CUT))} : {cut_names}.'
+           if cut else "")
         + "</p>"
         if register else "<p>Registre des voix : pas encore d’édition scellée.</p>"
     )

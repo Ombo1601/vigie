@@ -271,5 +271,17 @@ class ReleaseNavigation(unittest.TestCase):
             self.assertNotIn("/morning.html", xml)
 
 
+class Withdrawn(unittest.TestCase):
+    def test_record_page_names_an_institution_withdrawn_on_request(self):
+        iss = issue()
+        iss["silence"] = {**iss["silence"], "withdrawn": [
+            {"institution_id": "cbc", "institution_name": "Voix Retirée"}]}
+        html = recits.render_recit(iss, {}, {}, slug="aa11bb22cc33dd44", rw_ok=False,
+                                   edge_streets={}, edge_issues={})
+        self.assertIn("dv-withdrawn", html)
+        self.assertIn("retirée à la demande de l’éditeur", html)
+        self.assertIn("1 retirée à la demande de l’éditeur", html)
+
+
 if __name__ == "__main__":
     unittest.main()

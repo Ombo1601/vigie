@@ -62,6 +62,55 @@ class AtomicWrite(unittest.TestCase):
         self.assertEqual(list(self.dir.glob("*.tmp")), [])
 
 
+class LineEndings(unittest.TestCase):
+    """House law: text is LF. Python's text mode writes CRLF on Windows (the
+    optional local fallback collector); store_io must not, or a Windows-built
+    file differs, byte for byte, from the one GitHub Actions builds."""
+
+    TEXT = "ligne un\nligne deux — é\n\nfin\n"
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "page.html"
+
+    def assert_lf(self) -> None:
+        data = self.path.read_bytes()
+        self.assertNotIn(b"\r", data)
+        self.assertEqual(data, self.TEXT.encode("utf-8"))
+
+    def test_the_atomic_path_writes_lf(self) -> None:
+        store_io.write_text_atomic(self.path, self.TEXT)
+        self.assert_lf()
+
+    def test_the_fallback_direct_write_writes_lf(self) -> None:
+        with mock.patch.object(store_io.os, "replace", side_effect=PermissionError("locked")):
+            store_io.write_text_atomic(self.path, self.TEXT)
+        self.assert_lf()
+
+    def test_json_stores_are_lf_and_their_bytes_do_not_depend_on_the_platform(self) -> None:
+        doc = {"b": [1, 2], "a": "é"}
+        store_io.write_json_atomic(self.path, doc)
+        self.assertNotIn(b"\r", self.path.read_bytes())
+        self.assertEqual(self.path.read_bytes(),
+                         json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
+
+    def test_both_writes_ask_for_lf_explicitly(self) -> None:
+        # The behaviour above would also hold on POSIX without the fix: pin
+        # the call itself, so the Windows behaviour is tested on every OS.
+        seen = []
+        real = Path.write_text
+
+        def spy(self, data, *args, **kwargs):
+            seen.append(kwargs.get("newline"))
+            return real(self, data, *args, **kwargs)
+
+        with mock.patch.object(Path, "write_text", spy), \
+                mock.patch.object(store_io.os, "replace", side_effect=PermissionError("locked")):
+            store_io.write_text_atomic(self.path, self.TEXT)
+        self.assertEqual(seen, ["\n", "\n"])
+
+
 class DedupWrite(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()

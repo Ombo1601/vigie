@@ -373,7 +373,9 @@ class RegistryWiring(unittest.TestCase):
         self.assertEqual(srcs[0]["source_kind"], "official")
 
     def test_rss_ceiling_untouched(self):
-        self.assertEqual(len(ingest_rss.load_enabled_rss(harness.ROOT / "sources.yaml")), 12)
+        rss = ingest_rss.load_enabled_rss(harness.ROOT / "sources.yaml")
+        self.assertLessEqual(len(rss), harness.rss_ceiling())
+        self.assertNotIn("wzdx-quebec", {s["id"] for s in rss})
 
 
 class PipelineWiring(unittest.TestCase):

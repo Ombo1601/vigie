@@ -241,6 +241,8 @@ def safe_int(value: object, default: int = 0) -> int:
 
 
 TITLE_CAP = resident_brief.TITLE_CAP
+author_of = resident_brief.author_of
+by_html = resident_brief.by_html
 
 
 def title_html(value: object, cap: int = TITLE_CAP) -> str:
@@ -313,14 +315,14 @@ def build_continuity(issues: list[dict], ranked: list[dict]) -> dict:
     return {"by_id": by_id, "id_to_issues": id_to_issues}
 
 
-def same_fight_links(c: dict, continuity: dict, *, limit: int = 3) -> list[tuple[str, str]]:
+def same_fight_links(c: dict, continuity: dict, *, limit: int = 3) -> list[tuple[str, str, str]]:
     """Scar brothers only — share an issue_id / named scar on disk. Never bare topic."""
     if not isinstance(c, dict):
         return []
     cid = str(c.get("id") or "")
     by_id = continuity["by_id"]
     seen = {cid}
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, str]] = []
     for iss in continuity["id_to_issues"].get(cid, []):
         for other in issue_candidate_ids(iss):
             if other in seen:
@@ -329,10 +331,68 @@ def same_fight_links(c: dict, continuity: dict, *, limit: int = 3) -> list[tuple
             if not oc:
                 continue
             seen.add(other)
-            out.append((oc.get("title") or "(no title)", oc.get("url") or "#"))
+            out.append((oc.get("title") or "(no title)", oc.get("url") or "#",
+                        author_of(oc)))
             if len(out) >= limit:
                 return out
     return out
+
+
+def author_chip(c: dict) -> str:
+    """R1: the byline beside every relayed title - "Par {author}" when the feed gave one."""
+    author = author_of(c)
+    return f"<span class='chip author'>Par {esc(author)}</span>" if author else ""
+
+
+def backfill_dossier_authors(issues: list, candidates: list) -> list:
+    """R1 for a dossier store clustered before items carried `author`.
+
+    The render-only lanes re-render the stores of the last full edition; a
+    store written by an older cluster step has no `author` key on its dossier
+    items, so those rows would show a title without its byline. The byline is
+    taken from the same collection's candidate with the same URL - the
+    publisher's own feed, never guessed - and only where the key is absent (an
+    explicit empty or None stays as the feed gave it). Returns new dicts: the
+    store, and so the registre's input, is never mutated.
+    """
+    by_url: dict[str, str] = {}
+    for c in candidates or []:
+        if isinstance(c, dict) and isinstance(c.get("url"), str):
+            author = author_of(c)
+            if author:
+                by_url.setdefault(c["url"], author)
+    if not by_url or not isinstance(issues, list):
+        return issues
+
+    def _fill(entry: object) -> object:
+        if isinstance(entry, dict) and "author" not in entry and by_url.get(entry.get("url")):
+            return {**entry, "author": by_url[entry["url"]]}
+        return entry
+
+    out: list = []
+    for iss in issues:
+        if not isinstance(iss, dict):
+            out.append(iss)
+            continue
+        tensions = [
+            {**t, "items": [_fill(it) for it in t["items"]]}
+            if isinstance(t, dict) and isinstance(t.get("items"), list) else t
+            for t in (iss.get("tensions") or [])
+        ]
+        label = _fill(iss.get("label_source"))
+        if tensions != (iss.get("tensions") or []) or label is not iss.get("label_source"):
+            iss = {**iss, "tensions": tensions, **({"label_source": label} if "label_source" in iss else {})}
+        out.append(iss)
+    return out
+
+
+def same_fight_bits(links: list[tuple[str, str, str]], cap: int) -> list[str]:
+    """Same-fight links with their author, the one renderer for every Stage/card."""
+    return [
+        f"<a class='same' href=\"{esc(link_url(u))}\" target=\"_blank\" rel=\"noopener\">{esc(t[:cap])}</a>"
+        + by_html(a)
+        for t, u, a in links
+    ]
 
 
 def chip_topics(c: dict) -> str:
@@ -772,10 +832,7 @@ def card_html(c: dict, continuity: dict | None = None) -> str:
     if continuity is not None:
         links = same_fight_links(c, continuity)
         if links:
-            bits = [
-                f"<a class='same' href=\"{esc(link_url(u))}\" target=\"_blank\" rel=\"noopener\">{esc(t[:72])}</a>"
-                for t, u in links
-            ]
+            bits = same_fight_bits(links, 72)
             cont = (
                 "<div class='same-fight'>"
                 "<span class='same-label'>Same fight / Même combat</span> "
@@ -785,7 +842,7 @@ def card_html(c: dict, continuity: dict | None = None) -> str:
     return (
         "<article class='card'>"
         f"<a class='card-title' href=\"{url}\" target=\"_blank\" rel=\"noopener\">{title}</a>"
-        f"<div class='card-meta'><span class='chip source'>{source}</span>"
+        f"<div class='card-meta'><span class='chip source'>{source}</span>{author_chip(c)}"
         f"<span class='chip geo'>{geo}</span>{chips}"
         f"<span class='score'>score {score:.3f}</span></div>"
         f"{cont}"
@@ -894,7 +951,9 @@ def fight_theater_arc_html(iss: dict) -> str:
 def issue_stage_html(iss: dict, continuity: dict | None = None, *, panel_id: str = "", faces: dict | None = None) -> str:
     """Fight theater: calm confrontation — institution voices + silence arc first."""
     iss = iss if isinstance(iss, dict) else {}
-    q = esc(iss.get("question") or "Issue")
+    q = title_html(iss.get("question") or "Issue")
+    attrib = resident_brief.label_attribution(iss)
+    attrib_note = f"<p class='rule'>{esc(attrib)}</p>" if attrib else ""
     topic_obj = iss.get("topic") or {}
     topic = topic_obj.get("topic") if isinstance(topic_obj, dict) else topic_obj
     topic = topic or "other"
@@ -960,7 +1019,8 @@ def issue_stage_html(iss: dict, continuity: dict | None = None, *, panel_id: str
                 claims_html = "<ul class='claims'>" + "".join(claim_bits) + "</ul>"
             items_html.append(
                 f"<a class='voice-link' href=\"{esc(link_url(it.get('url')))}\" "
-                f"target=\"_blank\" rel=\"noopener\">{esc(it.get('title') or '(no title)')}</a>"
+                f"target=\"_blank\" rel=\"noopener\">{title_html(it.get('title'))}</a>"
+                f"{by_html(author_of(it), 'voice-by')}"
                 f"{claims_html}"
                 f"{vface}"
             )
@@ -975,10 +1035,8 @@ def issue_stage_html(iss: dict, continuity: dict | None = None, *, panel_id: str
     for cid in list(issue_candidate_ids(iss))[:4]:
         oc = by_id.get(cid)
         if oc:
-            related.append(
-                f"<a class='same' href=\"{esc(link_url(oc.get('url')))}\" target=\"_blank\" rel=\"noopener\">"
-                f"{esc((oc.get('title') or '')[:72])}</a>"
-            )
+            related.extend(same_fight_bits(
+                [(oc.get("title") or "", oc.get("url") or "#", author_of(oc))], 72))
     same = ""
     if related:
         same = (
@@ -992,7 +1050,7 @@ def issue_stage_html(iss: dict, continuity: dict | None = None, *, panel_id: str
     return (
         f"<article class='issue-stage fight-theater'{pid} data-kind='issue'>"
         "<div class='kind-chip'>Fight</div>"
-        f"<h2 class='stage-title'>{q}</h2>"
+        f"<h2 class='stage-title'>{q}</h2>{attrib_note}"
         f"<div class='card-meta fight-glance'>"
         f"<span class='chip'>{esc(topic)}</span>"
         f"<span class='chip voices'>{spoke_n} spoke</span>"
@@ -1027,10 +1085,7 @@ def near_rail_item(c: dict, continuity: dict | None = None, faces: dict | None =
     if continuity is not None:
         links = same_fight_links(c, continuity, limit=2)
         if links:
-            bits = [
-                f"<a class='same' href=\"{esc(link_url(u))}\" target=\"_blank\" rel=\"noopener\">{esc(t[:48])}</a>"
-                for t, u in links
-            ]
+            bits = same_fight_bits(links, 48)
             cont = (
                 "<div class='same-fight'>"
                 "<span class='same-label'>Same fight</span> "
@@ -1044,7 +1099,7 @@ def near_rail_item(c: dict, continuity: dict | None = None, faces: dict | None =
         f"<article class='near-item'{pin_attr}>"
         f"{face}"
         f"<a class='near-title' href=\"{url}\" target=\"_blank\" rel=\"noopener\">{title}</a>"
-        f"<div class='card-meta'><span class='chip source'>{source}</span>"
+        f"<div class='card-meta'><span class='chip source'>{source}</span>{author_chip(c)}"
         f"{kind_chip}"
         f"<span class='chip geo'>{geo}</span>{chips}</div>"
         f"{cont}"
@@ -1068,10 +1123,7 @@ def news_deck_html(c: dict, continuity: dict | None = None) -> str:
     if continuity is not None:
         links = same_fight_links(c, continuity)
         if links:
-            bits = [
-                f"<a class='same' href=\"{esc(link_url(u))}\" target=\"_blank\" rel=\"noopener\">{esc(t[:72])}</a>"
-                for t, u in links
-            ]
+            bits = same_fight_bits(links, 72)
             cont = (
                 "<div class='same-fight'>"
                 "<span class='same-label'>Same fight / Même combat</span> "
@@ -1082,7 +1134,7 @@ def news_deck_html(c: dict, continuity: dict | None = None) -> str:
         "<article class='deck-card news-card' data-kind='near'>"
         "<div class='kind-chip'>Near me</div>"
         f"<a class='deck-title' href=\"{url}\" target=\"_blank\" rel=\"noopener\">{title}</a>"
-        f"<div class='card-meta'><span class='chip source'>{source}</span>"
+        f"<div class='card-meta'><span class='chip source'>{source}</span>{author_chip(c)}"
         f"<span class='chip geo'>{geo}</span>{chips}"
         f"<span class='score'>score {score:.3f}</span></div>"
         f"<p class='lede-act'><a class='read' href=\"{url}\" target=\"_blank\" rel=\"noopener\">Read the approach</a></p>"
@@ -1324,18 +1376,19 @@ def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None
         for c in demoted_booth_items:
             cid = str(c.get("id") or "").strip()
             title = title_html(c.get("title"), 72)
+            by = by_html(author_of(c))
             if cid and cid in pinned_ids:
                 moved_bits.append(
-                    f"<li><a class='moved-pin' href=\"#pin-{esc(cid)}\">{title}</a></li>"
+                    f"<li><a class='moved-pin' href=\"#pin-{esc(cid)}\">{title}</a>{by}</li>"
                 )
                 continue
             url = esc(link_url(c.get("url")))
             if url:
                 moved_bits.append(
-                    f"<li><a href=\"{url}\" target=\"_blank\" rel=\"noopener\">{title}</a></li>"
+                    f"<li><a href=\"{url}\" target=\"_blank\" rel=\"noopener\">{title}</a>{by}</li>"
                 )
             else:
-                moved_bits.append(f"<li>{title}</li>")
+                moved_bits.append(f"<li>{title}{by}</li>")
         moved_list = (
             "<ul class='moved-list'>" + "".join(moved_bits) + "</ul>"
             if moved_bits
@@ -1741,6 +1794,8 @@ def render_html(ranked: list[dict], generated_at: str, issues: list[dict] | None
       border-radius: 4px; padding: .1rem .45rem; font-size: .7rem;
     }}
     .chip.source {{ background: var(--accent-soft); color: var(--accent); font-weight: 600; }}
+    .by {{ color: var(--muted); font-size: .72rem; margin-left: .35rem; }}
+    .voice-by {{ display: block; color: var(--muted); font-size: .72rem; margin: -.1rem 0 .25rem; }}
     .chip.geo {{ background: #dce6ec; color: var(--accent); }}
     .chip.unit {{ background: #e8f0e9; color: #1e4d2b; font-weight: 600; }}
     .chip.official {{ background: #e8f0e9; color: #1e4d2b; font-weight: 700; }}
@@ -2525,6 +2580,25 @@ def main() -> None:
     if candidates is None:
         raise SystemExit(f"No readable candidates in {CANDIDATES}. Run normalize first.")
     print(f"rank input: {src}")
+    # R10 at the display step too: the hourly roads lane re-renders existing
+    # stores without normalize, so a takedown pushed between two editions must
+    # still take effect here (articles, dossier items, preview images).
+    import takedown
+
+    rules = takedown.load_rules()
+    candidates, withdrawn_n = takedown.filter_items(candidates, rules)
+    if rules:
+        try:
+            # A source takedown reaches stored previews through the articles
+            # of that source (the roads-only lane skips takedown.py).
+            hint = (takedown.source_article_urls(set(rules.sources), takedown.ARTICLE_STORES)
+                    if rules.sources else None)
+            purged = takedown.purge_media(rules, article_urls=hint)
+        except OSError as exc:
+            purged = {"files": 0, "entries": 0}
+            print(f"takedowns: media purge FAILED ({type(exc).__name__}: {exc}); staging will refuse matches")
+        print(f"takedowns: {len(rules.entries)} active; {withdrawn_n} article(s) withheld, "
+              f"{purged['files']} image file(s) deleted")
     now = datetime.now(timezone.utc)
     ranked = []
     for c in candidates:
@@ -2562,6 +2636,12 @@ def main() -> None:
             issues_doc = loaded
             issues = loaded.get("issues") if isinstance(loaded.get("issues"), list) else []
             ledger = loaded.get("change_ledger") if isinstance(loaded.get("change_ledger"), dict) else {}
+            # Views read the withdrawn-free dossiers; the registre seals the
+            # store as collected (IDs and counts only), so no seal ever moves.
+            issues = takedown.filter_issues(issues, rules)
+            ledger = takedown.filter_ledger(ledger, rules)
+            # R1 on a store clustered before dossier items carried `author`.
+            issues = backfill_dossier_authors(issues, candidates)
             print(f"issues: {len(issues)} from {ISSUES}")
         else:
             # A corrupt/partial dossier store renders no dossier section instead
@@ -2604,6 +2684,8 @@ def main() -> None:
         return loaded if isinstance(loaded, dict) else {}
 
     edges = _load_sidecar(EDGES)
+    if rules:
+        edges = takedown.filter_edges(edges, {str(i.get("issue_id")) for i in issues if isinstance(i, dict)})
     anomalies = _load_sidecar(ANOMALIES)
     if edges:
         print(f"edges: {edges.get('street_count', 0)} streets, "
@@ -2634,10 +2716,16 @@ def main() -> None:
     import recits
     import registre
     import substrate
+    import surfaces
+
+    # The three-position switch of the event surfaces (scripts/surfaces.py):
+    # read once, so every view of this render agrees on what ships.
+    mode = surfaces.mode()
 
     # Each emitter is independently fail-soft: one fault is printed and the
     # others still run, so a registre fault can never leave a fresh brief
-    # beside a stale memory/index (the "all seven are fail-soft" house law).
+    # beside a stale memory/index (the "all eight are fail-soft" house law;
+    # the eighth, the event surfaces, runs only when the switch is not off).
     def _emit(name, fn):
         try:
             return fn()
@@ -2658,17 +2746,17 @@ def main() -> None:
         OUT_HTML.parent / "explorer.html",
         render_html(ranked, now.isoformat(), issues, clock, clustered_at=store_clustered_at),
     )
-    store_io.write_text_atomic(
-        OUT_HTML,
+    brief_target = write_brief(
         resident_brief.render_brief(ranked, now.isoformat(), issues, ledger=ledger,
                                     roadworks=roadworks, anomalies=anomalies, edges=edges,
                                     civic=civic, register=register),
+        mode, OUT_HTML.parent,
     )
     near = sum(1 for c in ranked if section_for(c) == "near")
     prov = sum(1 for c in ranked if section_for(c) == "province")
     linked = sum(1 for c in ranked if section_for(c) == "linked")
     print(f"ranked {len(ranked)} -> {OUT_JSON}")
-    print(f"lookout -> {OUT_HTML}")
+    print(f"lookout -> {brief_target}")
     print(f"nests: near={near} province={prov} linked={linked}")
     print(f"display: province/linked cap={30} (full set in ranked JSON)")
     booth_n = sum(1 for c in ranked if section_for(c) == "near" and is_booth_or_brief(c))
@@ -2692,11 +2780,62 @@ def main() -> None:
     # Idempotent on the collection clock, so the hourly roads-only re-render
     # never mints a new edition seal.
     _emit("memoire", lambda: memoire.emit(state, issues))
-    _emit("substrate", lambda: substrate.emit(ranked, issues, ledger, roadworks, state, now.isoformat()))
+    _emit("substrate", lambda: substrate.emit(ranked, issues, ledger, roadworks, state, now.isoformat(),
+                                              events_mode=mode))
     _emit("recits", lambda: recits.emit(issues, ranked, ledger, roadworks, edges))
-    _emit("methode", method_site.emit)
+    _emit("methode", lambda: method_site.emit(mode=mode))
     _emit("depart", lambda: depart.emit(roadworks, issues, ledger, state, now.isoformat()))
     _emit("affiche", lambda: affiche.emit(ranked, issues, roadworks, state, now.isoformat()))
+    # The event surfaces, last: they read this edition's seal (registre) and
+    # link the memoire pages. Off: nothing at all. In the hourly roads-only
+    # lane too (render-only), so the roadworks block and R10 stay fresh
+    # between editions; it reads the stored event view and never runs the
+    # event builder (events.py is a full-run stage).
+    if mode != "off":
+        _emit("evenements", lambda: emit_event_surfaces(mode))
+
+
+def write_brief(html: str, mode: str, public_dir: Path) -> Path:
+    """Write the brief where `mode` serves it: index.html, or /le-point.html
+    in live mode (its canonical and og:url say so; the release gate refuses
+    another canonical there). In live mode the previous front door files are
+    removed first, so an event emitter that faults leaves no stale page at /
+    and the release is refused, diagnosed (index.html missing), instead of
+    serving an old one."""
+    import surfaces
+
+    target = surfaces.brief_path(public_dir, mode)
+    if mode == "live":
+        html, problems = surfaces.relocate_brief(html)
+        for problem in problems:
+            print(f"brief: {problem}")
+        for stale in (public_dir / "index.html", public_dir / "en" / "index.html"):
+            try:
+                stale.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                print(f"brief: could not remove the previous front door {stale.name} ({type(exc).__name__})")
+    store_io.write_text_atomic(target, html)
+    return target
+
+
+def emit_event_surfaces(mode: str, *, public_dir: Path | None = None, data_dir: Path | None = None,
+                        sources_path: Path | None = None, takedowns_path: Path | None = None) -> dict:
+    """The record layer's event emitter (scripts/evenements.py), for `mode`
+    "preview" or "live" (scripts/surfaces.py). Reads only stored files (the
+    event view and store, the edition's enriched candidates, roadworks,
+    consultations, registre state, takedowns.yaml) and applies R10 itself;
+    never runs events.py. Fail-soft: evenements.emit never raises."""
+    import evenements
+
+    return evenements.emit(
+        public_dir=public_dir if public_dir is not None else OUT_HTML.parent,
+        data_dir=data_dir if data_dir is not None else ROOT / "data",
+        sources_path=sources_path if sources_path is not None else ROOT / "sources.yaml",
+        takedowns_path=takedowns_path if takedowns_path is not None else ROOT / "takedowns.yaml",
+        mode=mode,
+    )
 
 
 if __name__ == "__main__":

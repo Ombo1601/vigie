@@ -22,6 +22,23 @@ ROOT = harness.ROOT
 NOW = datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc)
 
 
+def generated_brief(public: Path | None = None) -> Path:
+    """The generated brief, wherever the render put it: public/index.html, or
+    public/le-point.html when index.html is the events front door (switch
+    "live", scripts/surfaces.py). The release chain runs these checks after a
+    real render, so they read the tree as rendered; the switch itself is not
+    asked (harness pins it to the committed constant, while a local render may
+    have used VIGIE_EVENTS_SURFACES)."""
+    public = ROOT / "public" if public is None else Path(public)
+    index = public / "index.html"
+    try:
+        text = index.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return index
+    head = text[: text.find("</head>")] if "</head>" in text else text
+    return public / "le-point.html" if 'name="vigie-view"' in head else index
+
+
 def _rows(local: int = 2, province: int = 1) -> list[dict]:
     return [{"geo": "quebec-city"}] * local + [{"geo": "quebec"}] * province
 
@@ -118,7 +135,9 @@ class SelfHostedType(unittest.TestCase):
             text = (ROOT / name).read_text(encoding="utf-8")
             self.assertNotIn("fonts.googleapis", text)
             self.assertNotIn("fonts.gstatic", text)
-        for name in ("index.html", "explorer.html", "morning.html"):
+        # The brief wherever the switch puts it, and the event front doors.
+        for name in ("index.html", "le-point.html", "explorer.html", "morning.html",
+                     "evenements.html", "en/evenements.html", "en/index.html"):
             path = ROOT / "public" / name
             if not path.is_file():
                 continue
@@ -128,9 +147,33 @@ class SelfHostedType(unittest.TestCase):
             self.assertIn("/assets/fonts.css", html)
 
 
+class GeneratedBriefFollowsTheRender(unittest.TestCase):
+    """Live mode moves the brief to /le-point.html and puts the events front
+    door at /: the checks of the generated brief must follow it, or the
+    release gate (verify.py after a live render) fails on the front door
+    (measured: 1 failure and 1 error on a live render of the live state)."""
+
+    def test_brief_location_follows_the_rendered_tree(self) -> None:
+        import tempfile
+
+        import composants as ck
+        import surfaces
+
+        with tempfile.TemporaryDirectory() as tmp:
+            public = Path(tmp)
+            self.assertEqual(generated_brief(public), public / "index.html")  # nothing rendered
+            (public / "index.html").write_text('<!doctype html><head><title>Vigie</title></head><body>'
+                                               '<p>name="vigie-view"</p></body>', encoding="utf-8")
+            self.assertEqual(generated_brief(public), public / "index.html")  # the brief (off, preview)
+            door = ck.edition_page({"clock": "", "events": [], "roster": []}, "fr", roadworks=None,
+                                   fr_path="/", robots=surfaces.ROBOTS["live"], home="/")
+            (public / "index.html").write_text(door, encoding="utf-8")
+            self.assertEqual(generated_brief(public), public / "le-point.html")  # the events door (live)
+
+
 class WayfindingAndContinuity(unittest.TestCase):
     def test_index_carries_palette_and_continuity_hooks(self) -> None:
-        path = ROOT / "public" / "index.html"
+        path = generated_brief()
         if not path.is_file():
             self.skipTest("no generated index")
         html = path.read_text(encoding="utf-8")
@@ -153,7 +196,7 @@ class WayfindingAndContinuity(unittest.TestCase):
         self.assertNotIn("rows.some", js)
 
     def test_roadworks_never_in_the_masthead(self) -> None:
-        path = ROOT / "public" / "index.html"
+        path = generated_brief()
         if not path.is_file():
             self.skipTest("no generated index")
         html = path.read_text(encoding="utf-8")

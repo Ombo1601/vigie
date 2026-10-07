@@ -17,7 +17,9 @@ import ingest_rss
 
 class InstitutionCollapse(unittest.TestCase):
     def test_cbc_sister_feeds_one_institution(self) -> None:
-        srcs = ingest_rss.load_enabled_rss(harness.ROOT / "sources.yaml")
+        # Fixture registry: the chancellery with both CBC desks followed (as of 2026-10-05).
+        with tempfile.TemporaryDirectory() as tmp:
+            srcs = ingest_rss.load_enabled_rss(harness.sources_with_reenabled(Path(tmp), *harness.CBC_DESKS))
         by_id = {s["id"]: s for s in srcs}
         self.assertEqual(by_id["cbc-montreal"]["institution"], "cbc")
         self.assertEqual(by_id["cbc-politics"]["institution"], "cbc")
@@ -27,7 +29,7 @@ class InstitutionCollapse(unittest.TestCase):
         insts = cluster_issues.collapse_institutions(srcs)
         ids = [i["institution_id"] for i in insts]
         self.assertEqual(len(srcs), 12)
-        # 12 feeds → 9 institutions (CBC×2 + Radio-Canada×3 collapsed)
+        # Fixture registry: 12 feeds → 9 institutions (CBC×2 + Radio-Canada×3 collapsed)
         self.assertEqual(len(insts), 9)
         self.assertEqual(len(ids), len(set(ids)))
         cbc = next(i for i in insts if i["institution_id"] == "cbc")
@@ -77,13 +79,20 @@ class SilenceMapUnit(unittest.TestCase):
         self.assertNotIn("cbc-montreal", silent_ids)
 
     def test_live_chancellery_load(self) -> None:
-        srcs = ingest_rss.load_enabled_rss(harness.ROOT / "sources.yaml")
-        self.assertEqual(len(srcs), 12)
+        # The live registry: never above its documented ceiling, one seat per
+        # institution, and sister desks (Radio-Canada) still share theirs.
+        srcs = ingest_rss.load_enabled_rss(harness.SOURCES)
+        self.assertLessEqual(len(srcs), harness.rss_ceiling())
         insts = cluster_issues.collapse_institutions(srcs)
-        self.assertEqual(len(insts), 9)
+        self.assertEqual(len(insts), len({s["institution"] for s in srcs}))
+        self.assertLess(len(insts), len(srcs))
 
 
 class SilenceOnIssue(unittest.TestCase):
+    def setUp(self) -> None:
+        # The mechanism under test needs both CBC desks followed (fixture registry).
+        harness.use_cbc_chancellery(self)
+
     def tearDown(self) -> None:
         cluster_issues.IN_PATH = harness.ROOT / "data" / "normalized" / "latest_enriched.json"
         cluster_issues.OUT_ISSUES = harness.ROOT / "data" / "issues" / "latest_issues.json"

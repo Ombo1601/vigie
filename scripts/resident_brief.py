@@ -100,6 +100,47 @@ def plain(value: object) -> str:
     return re.sub(r"\s+", " ", sanitize(html.unescape(raw))).strip()
 
 
+AUTHOR_CAP = 120    # byline names, as the publisher's feed gives them
+
+
+def author_of(item: object) -> str:
+    """The author name the publisher's own feed gave for this item, or "".
+
+    Attribution law (LEGAL_RISK.md R1): s. 29.2 requires source AND author for
+    news reporting, so every surface that shows a publisher title shows this
+    beside it, in the byline style "Par {author}"."""
+    author = item.get("author") if isinstance(item, dict) else None
+    return plain(author)[:AUTHOR_CAP] if isinstance(author, str) else ""
+
+
+def by_html(author: str, cls: str = "by") -> str:
+    """The "Par {author}" tag for a list row, empty when the feed gave no author."""
+    return f'<span class="{cls}">Par {esc(author)}</span>' if author else ""
+
+
+def capped_title(value: object, cap: int | None = None) -> str:
+    """A relayed title as plain words, truncated (never reworded) to the
+    published cap; the ellipsis counts, so the result never exceeds `cap`."""
+    cap = TITLE_CAP if cap is None else cap
+    title = plain(value)
+    return title[:cap - 1].rstrip() + "…" if len(title) > cap else title
+
+
+def label_attribution(issue: object) -> str:
+    """Plain-text publisher note for a dossier whose label is a publisher's own
+    headline (label_kind=attributed_headline); "" for Vigie's own labels.
+
+    "Titre d’un éditeur, cité tel quel — Par {author} · {source}." The same
+    words on the brief, the record page, the departure screen and the sheet."""
+    if not isinstance(issue, dict) or str(issue.get("label_kind") or "") != "attributed_headline":
+        return ""
+    source = issue.get("label_source") if isinstance(issue.get("label_source"), dict) else {}
+    owner = plain(source.get("source_name") or source.get("source_id"))[:120]
+    author = author_of(source)
+    who = " · ".join(part for part in ((f"Par {author}" if author else ""), owner) if part)
+    return "Titre d’un éditeur, cité tel quel" + (f" — {who}" if who else "") + "."
+
+
 # Folding law: ligatures and typographic apostrophes are mapped before the
 # diacritics are stripped, so the client fold in brief.js and this server-side
 # search index agree (searching "oeuvre" must match a stored "œuvre").
@@ -190,12 +231,21 @@ def load_brief_media() -> dict:
     media = doc.get("media")
     if not isinstance(media, dict):
         return {}
+    try:
+        import takedown  # noqa: PLC0415 - lazy: keeps the render import cheap
+
+        rules = takedown.load_rules()
+    except Exception:  # noqa: BLE001 - the release gate diagnoses a bad file
+        rules = None
     out = {}
     for uid, entry in media.items():
         if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
             continue
         if not _MEDIA_FILE.fullmatch(entry["file"]):
             continue
+        if rules and (rules.match_image(entry.get("image_url"), file=entry["file"])
+                      or rules.match_url(entry.get("article_url"))):
+            continue  # withdrawn on the publisher's request (R10): never shown
         credit = entry.get("credit")
         row = {
             "file": entry["file"],
@@ -218,11 +268,9 @@ def prepare_items(ranked: list[dict], now: datetime) -> tuple[list[dict], int]:
             excluded += 1
             continue
         url = safe_url(item.get("url"))
-        title = plain(item.get("title"))
-        if len(title) > TITLE_CAP:
-            # The ellipsis counts: the relayed title stays within the published
-            # cap (LEGAL_RISK.md "≤300 chars"), never one over.
-            title = title[:TITLE_CAP - 1].rstrip() + "…"
+        # The ellipsis counts: the relayed title stays within the published
+        # cap (LEGAL_RISK.md "≤300 chars"), never one over.
+        title = capped_title(item.get("title"))
         when = parse_date(item.get("published_at"))
         if not title or not url:
             excluded += 1
@@ -365,7 +413,8 @@ def _headline_rows(issue: dict) -> list[dict]:
             rows.append({
                 "inst": inst,
                 "url": url,
-                "title": str(entry.get("title") or "Sans titre"),
+                "title": capped_title(entry.get("title")) or "Sans titre",
+                "author": author_of(entry),
                 "published": entry.get("published_at"),
                 "when": when,
                 "geo": geo,
@@ -390,7 +439,7 @@ def _headline_li(row: dict) -> str:
         f'<li data-url="{esc(row["url"])}" data-official="{row["official"]}" '
         f'data-date="{esc(date_attr)}" data-nest-rank="{row["nest_rank"]}" '
         f'data-inst="{esc(folded(row["inst"]))}">'
-        f'<span class="dossier-inst">{esc(row["inst"])}</span>'
+        f'<span class="dossier-inst">{esc(row["inst"])}{by_html(row.get("author") or "", "dossier-by")}</span>'
         f'<a href="{esc(row["url"])}" rel="noopener noreferrer">{esc(row["title"])}'
         f'<span class="arrow" aria-hidden="true"> ↗</span></a>{time_html}</li>'
     )
@@ -490,17 +539,28 @@ def dossier_timeline_html(issue: dict) -> str:
         entries.append(f'<li>{when} — {" · ".join(bits)}</li>')
     # Field-level revisions: when the dossier question was reformulated. The
     # initial question and up to two later revisions, quoted verbatim — a
-    # wording change, never a change of meaning.
-    revisions = [
-        (date_html(t.get("ts"), fallback="date non précisée"), str(t.get("question")).strip())
-        for t in rows if isinstance(t.get("question"), str) and t.get("question").strip()
-    ]
+    # wording change, never a change of meaning. A dossier named after a
+    # publisher's headline never replays that headline from the history (it may
+    # even have changed outlet between editions): only the outlet is listed.
+    attributed = str(issue.get("label_kind") or "") == "attributed_headline"
+    revisions = []
+    for t in rows:
+        when = date_html(t.get("ts"), fallback="date non précisée")
+        question = str(t.get("question")).strip() if isinstance(t.get("question"), str) else ""
+        outlet = plain(t.get("label_source"))[:120] if isinstance(t.get("label_source"), str) else ""
+        if question and not attributed:
+            revisions.append((when, "question", f"« {esc(question)} »"))
+        elif outlet:
+            revisions.append((when, "outlet", esc(outlet)))
     revisions_html = ""
     if revisions:
-        shown = [("Question initiale", revisions[0])]
-        shown += [("Question révisée", rev) for rev in revisions[1:][-2:]]
-        items = "".join(f'<li>{label} le {when} : « {esc(text)} »</li>' for (label, (when, text)) in shown)
-        revisions_html = f'<ul class="dossier-revisions">{items}</ul>'
+        def _rev(index: int, rev: tuple) -> str:
+            when, kind, text = rev
+            if kind == "outlet":
+                return f"<li>Titre d’un éditeur le {when} : {text}</li>"
+            return f"<li>{'Question initiale' if index == 0 else 'Question révisée'} le {when} : {text}</li>"
+        shown = [(0, revisions[0])] + [(i, rev) for i, rev in enumerate(revisions[1:][-2:], start=1)]
+        revisions_html = f'<ul class="dossier-revisions">{"".join(_rev(i, rev) for i, rev in shown)}</ul>'
     return (
         '<details class="dossier-timeline"><summary>Repères de collecte '
         f'({len(rows)} éditions)</summary><ul>{"".join(entries)}</ul>{revisions_html}'
@@ -560,6 +620,20 @@ def dossier_voices_html(issue: dict) -> str:
             f'<li class="dv-row dv-quiet">{chip}<span class="dv-inst">{esc(row["name"])}</span>'
             '<span class="dv-state">absente de ce dossier</span></li>'
         )
+    # Withdrawn on the publisher's request (R10): neither followed nor silent,
+    # and never dropped from the roster without a word.
+    withdrawn_names: list[str] = []
+    for entry in (silence.get("withdrawn") or []):
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("institution_name") or entry.get("institution_id") or "").strip()
+        if name and name not in spoke_names and name not in quiet_names and name not in withdrawn_names:
+            withdrawn_names.append(name)
+    for name in sorted(withdrawn_names, key=str.casefold):
+        rows.append(
+            f'<li class="dv-row dv-withdrawn"><span class="dv-inst">{esc(name)}</span>'
+            '<span class="dv-state">retirée à la demande de l’éditeur</span></li>'
+        )
     if not rows:
         return ""
     n_spoke, n_quiet = len(spoke_names), len(quiet_names)
@@ -593,7 +667,12 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
     A malformed store entry is skipped, never fatal.
     """
     issue = issue if isinstance(issue, dict) else {}
-    question = esc(issue.get("question") or "Sujet suivi")
+    # A dossier named after one outlet's headline is that publisher's text: it is
+    # relayed as plain capped words and carries the same publisher note as the
+    # record page (R1/R8).
+    question = esc(capped_title(issue.get("question")) or "Sujet suivi")
+    attrib = label_attribution(issue)
+    attrib_html = f'<p class="dossier-attrib fine">{esc(attrib)}</p>' if attrib else ""
     nest = dossier_nest(issue.get("geo_focus"))
     tensions = [t for t in (issue.get("tensions") or []) if isinstance(t, dict)]
     spoke_names = {
@@ -679,7 +758,7 @@ def dossier_html(issue: dict, eligible: dict, edge_streets: dict | None = None,
         f'<span class="dossier-count">{spoke_count} dans ce dossier · '
         f'{silent_count} absente{"s" if silent_count != 1 else ""}</span>'
         f'<a class="recit-more" href="{esc(dossier_page_path(issue))}">Récit complet ↗</a></div>'
-        f'<h3 class="dossier-q">{question}</h3>{why}{promesse.html_of(issue)}'
+        f'<h3 class="dossier-q">{question}</h3>{attrib_html}{why}{promesse.html_of(issue)}'
         f"{tracking_html(issue)}{dossier_timeline_html(issue)}"
         f"{headlines}{sources}{dossier_voices_html(issue)}"
         f"{silence_line}{remix_line}{units_line}{edge_line}"
@@ -1260,6 +1339,11 @@ def _rw_sketch(rw: dict, events: list[dict]) -> str:
     )
 
 
+def _stale_phrase(age: float) -> str:
+    """Why a collection stamp is flagged: genuinely old, or a stamp from the future."""
+    return "plus de six heures" if age > 6 * 3600 else "horodatage incohérent"
+
+
 def roadworks_section(rw: dict | None, now: datetime, anomalies: dict | None = None,
                       edges: dict | None = None) -> str:
     """Official road obstructions — structured change data, never articles.
@@ -1282,7 +1366,8 @@ def roadworks_section(rw: dict | None, now: datetime, anomalies: dict | None = N
     events = [e for e in events if isinstance(e, dict) and e.get("event_id")]
     diff = rw.get("diff") if isinstance(rw.get("diff"), dict) else {}
     has_previous = bool(diff.get("has_previous"))
-    stale = (now - fetched).total_seconds() > 6 * 3600 or (now - fetched).total_seconds() < -300
+    rw_age = (now - fetched).total_seconds()
+    stale = rw_age > 6 * 3600 or rw_age < -300
     # Stable three-pass sort: severity first, then most recently updated, then id.
     ordered = sorted(events, key=lambda e: str(e.get("event_id")))
     ordered.sort(key=lambda e: str(e.get("update_date") or ""), reverse=True)
@@ -1363,8 +1448,9 @@ def roadworks_section(rw: dict | None, now: datetime, anomalies: dict | None = N
                 "pas une vérification sur le terrain.</span></p>"
             )
     stale_html = (
-        '<p class="rw-stale warning">Collecte à actualiser : ces données ont plus de six '
-        "heures. Vérifiez la carte officielle avant de partir.</p>" if stale else ""
+        '<p class="rw-stale warning">Collecte à actualiser : ces données ont '
+        f"{'plus de six heures' if rw_age > 6 * 3600 else 'un horodatage incohérent'}. "
+        "Vérifiez la carte officielle avant de partir.</p>" if stale else ""
     )
     institution = esc(str(rw.get("institution_name") or "Ville de Québec").strip())
     dataset = safe_url(rw.get("dataset_url"))
@@ -1412,7 +1498,7 @@ def civic_section(store: dict | None, now: datetime) -> str:
         count_note = "Aucune consultation<br>listée cette collecte."
     age = (now - fetched).total_seconds()
     stale_html = (
-        '<p class="fine">Collecte à actualiser — la Ville a pu modifier le calendrier depuis.</p>'
+        f'<p class="fine">Collecte à actualiser : {_stale_phrase(age)} ; la Ville a pu modifier le calendrier depuis.</p>'
         if age > 6 * 3600 or age < -300 else ""
     )
     diff = store.get("diff") if isinstance(store.get("diff"), dict) else {}
@@ -1542,9 +1628,9 @@ def article_html(item: dict, index: int, related: list[dict], media: dict | None
     excerpt_html = f'<p class="excerpt">{esc(excerpt)}</p><span class="excerpt-label">Extrait du flux de {source}</span>' if excerpt else '<p class="excerpt-label">Le flux ne fournit pas de résumé. Consultez l’article original.</p>'
     # Attribution law (LEGAL_RISK.md R1): the author name when the publisher's
     # feed gives one - s. 29.2 requires source AND author for news reporting.
-    author = plain(item.get("author"))[:120]
+    author = author_of(item)
     byline_author = f'Par {esc(author)}<span aria-hidden="true"> · </span>' if author else ""
-    peers = "".join(f'<li><span>{esc(r.get("source_name") or r.get("source_id"))}</span><a href="{esc(safe_url(r.get("url")))}" rel="noopener noreferrer">{esc(r.get("title"))}</a>{date_html(r.get("published"))}</li>' for r in related)
+    peers = "".join(f'<li><span>{esc(r.get("source_name") or r.get("source_id"))}{by_html(author_of(r))}</span><a href="{esc(safe_url(r.get("url")))}" rel="noopener noreferrer">{esc(r.get("title"))}</a>{date_html(r.get("published"))}</li>' for r in related)
     related_html = f'<p class="evidence-label">Autres articles du dossier proposé</p><ul class="source-list">{peers}</ul><p class="fine">Rapprochement automatique à vérifier. Plusieurs médias ne constituent pas plusieurs confirmations indépendantes.</p>' if peers else '<p class="fine">Aucun autre article rapproché dans cette collecte. Cela ne dit rien de la couverture ailleurs.</p>'
     kind = '<span class="official">Source officielle</span>' if item.get("source_kind") == "official" else ''
     why = why_here_line(item)
@@ -1607,7 +1693,7 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
             if active or stale:
                 text = (f"<strong>{active}</strong> entrave{'s' if active != 1 else ''} "
                         f"déclarée{'s' if active != 1 else ''} par la Ville"
-                        + (", collecte à actualiser." if stale else " dans la dernière collecte."))
+                        + (f", collecte : {_stale_phrase(age)}." if stale else " dans la dernière collecte."))
                 items.append(_glance_item("Travaux", text, "#travaux"))
     civic_fetched = parse_date(civic.get("fetched_at")) if isinstance(civic, dict) else None
     if (isinstance(civic, dict) and civic.get("method") == "civic-html-v1"
@@ -1623,12 +1709,12 @@ def digest_html(rows: list[dict], status: dict, ledger: dict | None, roadworks: 
             text = (
                 f"<strong>{civic_n}</strong> consultation{'s' if civic_n != 1 else ''} "
                 f"listée{'s' if civic_n != 1 else ''} par la Ville"
-                + (", collecte à actualiser." if civic_stale else " dans la dernière collecte.")
+                + (f", collecte : {_stale_phrase(civic_age)}." if civic_stale else " dans la dernière collecte.")
             )
         else:
             text = (
                 "Aucune consultation listée par la Ville"
-                + (", collecte à actualiser." if civic_stale else " dans cette collecte.")
+                + (f", collecte : {_stale_phrase(civic_age)}." if civic_stale else " dans cette collecte.")
             )
         items.append(_glance_item("Consultations", text, "#participation"))
     if has_changes and isinstance(ledger, dict) and ledger.get("has_previous"):
@@ -1710,9 +1796,12 @@ def silence_bar(issues: list[dict], register: list[dict] | None = None) -> str:
         by = lambda st: [r for r in rows if r.get("current") == st]  # noqa: E731
         spoke = by(_registre.STATE_SPOKE)
         published = by(_registre.STATE_PUBLISHED)
-        missed = by(_registre.STATE_COLLECTION_GAP) + by(_registre.STATE_NO_ITEMS)
+        missed = by(_registre.STATE_COLLECTION_GAP)
+        no_items = by(_registre.STATE_NO_ITEMS)
         undetermined = by(_registre.STATE_NOT_ESTABLISHED)
-        if len(spoke) + len(published) + len(missed) + len(undetermined) < 2:
+        withdrawn = by(_registre.STATE_WITHDRAWN)
+        cut = by(_registre.STATE_CUT)
+        if len(spoke) + len(published) + len(missed) + len(no_items) + len(undetermined) < 2:
             return ""
         items = sum(safe_int(r.get("items_collected")) for r in published)
         parts = [f'<strong>{len(spoke)}</strong> institution{"s" if len(spoke) != 1 else ""} dans un dossier']
@@ -1721,17 +1810,23 @@ def silence_bar(issues: list[dict], register: list[dict] | None = None) -> str:
                          + (f' ({items} articles collectés)' if items else ""))
         if missed:
             parts.append(f'<strong>{len(missed)}</strong> collecte{"s" if len(missed) != 1 else ""} manquée{"s" if len(missed) != 1 else ""} par Vigie')
+        if no_items:
+            parts.append(f'<strong>{len(no_items)}</strong> sans article collecté (flux répondus)')
         if undetermined:
             parts.append(f'<strong>{len(undetermined)}</strong> non établi{"s" if len(undetermined) != 1 else ""}')
         summary = " · ".join(parts) + "."
         ledger_rows = (
-            _row("Dans un dossier", spoke, "sb-spoke")
-            + _row("Publié, hors dossier", published, "sb-published")
-            + _row("Collecte manquée par Vigie", missed, "sb-missed")
-            + _row("Non établi", undetermined, "sb-unknown")
+            _row(_registre.state_heading_fr(_registre.STATE_SPOKE), spoke, "sb-spoke")
+            + _row(_registre.state_heading_fr(_registre.STATE_PUBLISHED), published, "sb-published")
+            + _row(_registre.state_heading_fr(_registre.STATE_NO_ITEMS), no_items, "sb-unknown")
+            + _row(_registre.state_heading_fr(_registre.STATE_COLLECTION_GAP), missed, "sb-missed")
+            + _row(_registre.state_heading_fr(_registre.STATE_NOT_ESTABLISHED), undetermined, "sb-unknown")
+            + _row(_registre.state_heading_fr(_registre.STATE_WITHDRAWN), withdrawn, "sb-withdrawn")
+            + _row(_registre.state_heading_fr(_registre.STATE_CUT), cut, "sb-cut")
         )
         note = ("« Publié, hors dossier » n’est pas un silence : un dossier exige un sujet nommé et deux "
-                "institutions. Une collecte manquée est notre lacune, jamais l’absence d’une institution. ")
+                "institutions. Une collecte manquée est notre lacune, jamais l’absence d’une institution ; "
+                "« sans article collecté » : les flux ont répondu, rien dans la fenêtre de 7 jours. ")
         return (
             '<section class="silence-bar" id="silence" aria-label="Les voix suivies de cette édition" data-cmdk="Voix des institutions">'
             '<div class="bar-header"><p class="eyebrow">LES VOIX SUIVIES · MESURÉES, PAS PRÉSUMÉES</p>'

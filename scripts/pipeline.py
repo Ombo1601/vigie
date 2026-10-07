@@ -1,7 +1,8 @@
 """Vigie v0 - one-command Critical Path.
 
-Runs: ingest (RSS + official WZDX roadworks + civic HTML) -> feed health -> normalize ->
-enrich -> cluster -> edge atlas + anomaly rules -> brief media -> rank/display
+Runs: ingest (RSS + official WZDX roadworks + civic HTML) -> takedowns (R10 purge)
+-> feed health -> normalize ->
+enrich -> cluster -> events (shadow store) -> edge atlas + anomaly rules -> brief media -> rank/display
 -> edition metrics -> watchdog. Stdlib only. Does not start the server (open a
 second terminal for that). Offline mode reuses raw snapshots and makes no
 network requests.
@@ -25,10 +26,15 @@ SCRIPTS = [
     "ingest_rss.py",
     "ingest_wzdx.py",
     "ingest_civic.py",
+    "takedown.py",
     "feed_health.py",
     "normalize.py",
     "enrich.py",
     "cluster_issues.py",
+    # Shadow (docs/MIGRATION.md step 5) while the switch is off: the event
+    # store, beside the dossiers; load-bearing in preview and live (`is_shadow`).
+    # Full and offline runs only; it writes nothing under public/.
+    "events.py",
     "edge_atlas.py",
     "compile_anomalies.py",
     "fetch_brief_media.py",
@@ -42,6 +48,25 @@ SCRIPTS = [
 RENDER_ONLY = ("rank_display.py",)
 OFFLINE_SKIP = frozenset({"ingest_rss.py"})
 OFFLINE_FLAGGED = frozenset({"ingest_wzdx.py", "ingest_civic.py", "fetch_brief_media.py"})
+# Shadow stages feed no page while the event surfaces are off
+# (scripts/surfaces.py): a crash there (even one that escapes the stage's own
+# fail-soft, such as an import error) is diagnosed and the edition goes on,
+# rendered from the dossiers as before. With the switch on (preview or live)
+# events.py feeds the event pages, so it is load-bearing: a crash fails the
+# run loudly (the refresh alert) instead of leaving last edition's view
+# behind for an empty or stale event door.
+SHADOW = frozenset({"events.py"})
+
+
+def is_shadow(script: str, mode: str | None = None) -> bool:
+    """Whether a failure of `script` is diagnosed and passed over: only a
+    shadow stage, and only while the event surfaces are off (`mode`: the
+    switch's position; None reads it, scripts/surfaces.py)."""
+    if script not in SHADOW:
+        return False
+    import surfaces  # noqa: PLC0415 - lazy: the switch is read when a stage fails
+
+    return (surfaces.mode() if mode is None else surfaces.validate(mode, "pipeline mode")) == "off"
 
 
 def run(script: str, *extra: str) -> None:
@@ -50,6 +75,13 @@ def run(script: str, *extra: str) -> None:
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
     proc = subprocess.run([sys.executable, str(path), *extra], cwd=str(ROOT), env=env)
     if proc.returncode != 0:
+        if is_shadow(script):
+            print(f"{script} (shadow) failed with code {proc.returncode}: diagnosed; the edition continues", flush=True)
+            return
+        if script in SHADOW:
+            raise SystemExit(f"{script} failed with code {proc.returncode}: the event surfaces are on "
+                             "(scripts/surfaces.py), so the event builder is load-bearing; no edition is "
+                             "rendered over a view it did not build")
         raise SystemExit(f"{script} failed with code {proc.returncode}")
 
 

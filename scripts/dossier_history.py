@@ -142,17 +142,33 @@ def update_history(history: dict, issues: list[dict], edition_ts: str) -> dict:
             "items": _safe_int(issue.get("item_count")),
             "official": _safe_int(issue.get("official_voice_count")),
         }
-        # Field-level revision: the dossier question is stored only when it
-        # changes (the first edition stores it as the initial question). A
-        # reformulated headline is a wording change, never a change of meaning.
-        question = " ".join(str(issue.get("question") or "").split())[:140]
-        previous_question = next(
-            (str(e.get("question")) for e in reversed(prior)
-             if isinstance(e, dict) and e.get("question")),
-            "",
-        )
-        if question and question != previous_question:
-            entry["question"] = question
+        if str(issue.get("label_kind") or "") == "attributed_headline":
+            # The question is one outlet's headline: publisher text is never
+            # kept in the durable history (R1/R8, same rule as the registre and
+            # the change ledger). Only the outlet is stored, when it changes,
+            # and any headline stored by an earlier version is scrubbed.
+            prior = [
+                {k: v for k, v in e.items() if k != "question"}
+                for e in prior if isinstance(e, dict)
+            ]
+            source = issue.get("label_source") if isinstance(issue.get("label_source"), dict) else {}
+            outlet = " ".join(str(source.get("source_name") or source.get("source_id") or "").split())[:120]
+            previous_outlet = next(
+                (str(e.get("label_source")) for e in reversed(prior) if e.get("label_source")), "")
+            if outlet and outlet != previous_outlet:
+                entry["label_source"] = outlet
+        else:
+            # Field-level revision: the dossier question is stored only when it
+            # changes (the first edition stores it as the initial question). A
+            # reformulated headline is a wording change, never a change of meaning.
+            question = " ".join(str(issue.get("question") or "").split())[:140]
+            previous_question = next(
+                (str(e.get("question")) for e in reversed(prior)
+                 if isinstance(e, dict) and e.get("question")),
+                "",
+            )
+            if question and question != previous_question:
+                entry["question"] = question
         if rec is None:
             dossiers[iid] = {
                 "scar": issue.get("scar"),
@@ -168,7 +184,7 @@ def update_history(history: dict, issues: list[dict], edition_ts: str) -> dict:
         rec["last_seen"] = edition_ts
         rec["editions_seen"] = _safe_int(rec.get("editions_seen")) + 1
         rec["absent_streak"] = 0  # present: the dormancy clock restarts
-        timeline = list(rec.get("timeline") or [])
+        timeline = prior  # already scrubbed of publisher headlines when attributed
         timeline.append(entry)
         rec["timeline"] = timeline[-TIMELINE_CAP:]
         dossiers[iid] = rec
@@ -224,6 +240,8 @@ def tracking_of(history: dict, issue_id: str) -> dict | None:
                 row[key] = _safe_int(entry.get(key))
         if entry.get("question"):
             row["question"] = str(entry.get("question"))[:140]
+        if isinstance(entry.get("label_source"), str) and entry["label_source"]:
+            row["label_source"] = entry["label_source"][:120]
         compact.append(row)
     return {
         "status": "proposed",

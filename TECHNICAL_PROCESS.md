@@ -30,18 +30,24 @@ Open http://127.0.0.1:8765/
 | 2 Normalize | `scripts/normalize.py` | `data/normalized/latest_candidates.json` |
 | 3 Enrich | `scripts/enrich.py` | `data/normalized/latest_enriched.json` — **all tags proposed** |
 | 4 Cluster | `scripts/cluster_issues.py` | `data/issues/latest_issues.json` — multi-voice only |
+| 4a Events (shadow) | `scripts/events.py` | `data/events/store.json` (private, packed with the state), `data/events/latest_events.json` (the current-edition view) — one Event per real-world occurrence, ids minted once and sticky (docs/EVENTS.md); full run only, never in `--render-only`; writes nothing under `public/`; a shadow stage while the event surfaces are off, load-bearing once they are on (a crash fails the run: `pipeline.is_shadow`, docs/EVENTS.md section 19) |
 | 4b Edge Atlas | `scripts/edge_atlas.py` | `data/edges/latest_edges.json` — literal street-name joins between the official collection and the dossiers (`edge.md`) |
 | 4c Anomalies | `scripts/compile_anomalies.py` | `data/anomalies/latest_verdict.json` — fixed-threshold structural rules over the official collection (`anomalies.md`) |
-| 4d Brief media | `scripts/fetch_brief_media.py` | `data/media/brief/` + `brief_manifest.json` — publisher images (og:image, else the feed's own media), locally re-hosted and sniffed; every miss diagnosed + `data/ops/media_health.json` ledger |
+| 4d Brief media | `scripts/fetch_brief_media.py` | `data/media/brief/` + `brief_manifest.json` — publisher images (og:image, else the feed's own media), robots.txt first for every page and image, locally re-hosted and sniffed; every miss diagnosed + `data/ops/media_health.json` ledger |
 | 5 Rank+HTML | `scripts/rank_display.py` | `latest_ranked.json` + `public/index.html` (French brief, incl. roadworks/civic/beacon/joins) + `explorer.html` + ambient twin via `ambient_pulse` |
 | 5b Ambient | `scripts/ambient_pulse.py` | `data/pulse/latest_morning.{json,txt}` + `public/morning.html` (same Approaches; no second rank; store order — no facets, no beacon) |
 | 5c Récits | `scripts/recits.py` | `public/dossiers.html` + `public/dossiers/<issue_id>.html` — one complete, addressable record page per current-edition dossier (every voice, every verbatim headline, collection timeline, silence roster, measured evidence); linked from the brief, the machine substrate and the sitemap; pages exist only for the current edition (a quiet dossier keeps its counters in the history and the registre, never its page) |
 | 5d Méthode | `scripts/method_site.py` | `public/methode/<slug>.html` + `public/methode/index.html` — every published method file rendered as a first-class page (house chrome, zero JS, print-first, internal cross-links remapped to pages; the sources page is data, not raw YAML). The .md/.yaml sources stay staged as the machine twins (llms.txt, Markdown twin, tests); human surfaces never point at raw files again — the only .md link left is the labelled `/index.html.md` twin. No served file names the founder |
 | 5e Mémoire | `scripts/memoire.py` | `public/memoire.html` + `public/memoire/<seq>.html` — the sealed chain made readable, edition by edition: dossiers (Vigie's labels only; attributed headlines stay empty in the record), the voice roster, and the change ledger. Zero JavaScript; pages exist for the published seals only |
 | 5f Départ | `scripts/depart.py` | `public/partir.html` — the departure instrument: the most restrictive declared obstructions, the reader's corridors marked on-device (streets island + literal folding; no account, no position), what changed since the last edition, the seal. One small self-hosted script (`/assets/depart.js`) is the only enhancement, so every page carries a strict `script-src 'self'` CSP; the page is complete without it. `scripts/promesse.py` feeds the official-presence line ("Aucun document officiel dans les N éditions suivies") on the brief's dossiers, the récit pages and the departure screen — counted only over editions whose record actually carried the official counter, never a verdict |
+| 5g Événements | `scripts/evenements.py` | behind the switch `scripts/surfaces.py` (`off` \| `preview` \| `live`, committed `off`): nothing while off; otherwise `public/evenements.html`, `public/en/evenements.html`, `public/evenements/<id>.html` (+ `en/`), `public/evenements/latest.json`, `public/qualite.json`, and in `live` the front door at `public/index.html` + `public/en/index.html` (the brief moves to `public/le-point.html`). Last emitter of the render, in the full edition and the roads-only re-render; reads the stored event view, never runs `events.py`; R10 at every render (`events.apply_takedowns`, then its own filter); preview pages are `noindex` |
 | 6 Edition metrics | `scripts/compile_metrics.py` | `data/ops/edition_metrics.json` — per-edition snapshot: items, top-30 churn, per-source yield, dossier population, roadworks diff volume, image coverage; capped 120-edition history; idempotent per edition; observes the machine, never steers the ranking |
 | 6b Watchdog | `scripts/compile_watchdog.py` | `data/ops/watchdog.{md,json}` — the weekly human read: fixed-threshold attention rules over the three ledgers + refresh log + disk usage; same-week recompiles replace; capped 26-week history |
 | Serve | `scripts/serve.py` | local static server |
+
+Stage 5 is not read-only: `rank_display.main` also mutates `data/` during the render step
+(`takedown.purge_media` deletes withdrawn preview files and rewrites `brief_manifest.json`;
+fail-soft on `OSError`).
 
 ## Published method files
 
@@ -80,6 +86,7 @@ form of the edition itself).
 - Status always `proposed`
 - Same-language event buckets: complete-link, ≥3 shared headline tokens, Jaccard ≥0.55, 72h, road-name intersection
 - FR/EN event buckets: same complete-link plus a shared place or proper name, then bilingual-canonical tokens (≥2 shared, Jaccard ≥0.40). Precision over recall. Lévis is not télévision.
+  Since the CBC cut (2026-10-06) no English feed is followed; the rule stays for any future one.
 
 ## Ranking (see ranking.md)
 
@@ -103,14 +110,25 @@ house law, not defaults to be "fixed" by a future feature.
   that very feed image — never guessed for an og:image). s. 29.2 fair dealing for news
   reporting requires source **and** author; both Canadian aggregation cases were lost on
   missing author names.
-- **Never circumvent (R9)**: an HTTP refusal (403/406/410/429) is respected — never retried
-  under another identity, never routed around, no paywall or bot wall ever touched. Collection
-  identity is honest (`Vigie/0.2 (+https://vigieqc.com/legal.md)`); a disclosed browser
-  identity is used only for hosts that stall automated readers at *transport* level (recorded
-  in `data/raw/_ua_policy.json`, published in legal.md). Silence is diagnosed, never filled.
-- **Honor opt-outs (R10)**: a publisher asking to leave → `enabled: false` + `cut_reason` in
-  `sources.yaml`, same day (one edition). The silence map then reports the cut honestly —
-  never silently.
+- **Never circumvent (R9)**: an HTTP refusal (any 4xx: 403/406/410/429…) is respected — it
+  ends that feed's collection for the run: never retried (a 412 to a conditional request is answered by one plain request: the validators were refused, not the feed), never sent to an alternate URL,
+  never under another identity; no paywall or bot wall ever touched. `URL_ALTERNATES` are
+  tried only when the origin gave no HTTP answer at all (timeout, reset, DNS/TLS), and a host
+  that never answered is not asked again in the same run. Collection identity is honest and
+  single: `Vigie/0.2 (+https://vigieqc.com/methode/legal.html; news aggregator; non-commercial)`
+  for feeds, article pages, images and robots.txt — no browser identity, no Referer. A host
+  that cannot be read honestly is a recorded collection gap (registre: « collecte en échec —
+  lacune de Vigie »). Article pages and images are fetched only after the host's robots.txt
+  (read once per host per run): Disallow for `Vigie` or `*` → `robots_disallow`; absent (404)
+  → allowed; any other failure → `robots_unreachable` (fail closed). Both reasons land in the
+  media manifest and `data/ops/media_health.json`. Silence is diagnosed, never filled.
+- **Honor opt-outs (R10)**: **On receipt of a request, the removal is applied the same day by a hand-triggered edition; failing that, at the next scheduled run (about every 6 h, sometimes up to about ten hours). A release that still contains the withdrawn item is refused.** A publisher's or rights-holder's request becomes an entry in `takedowns.yaml`
+  (`source` | `host` | `url` | `image`; their name only, never personal data), enforced by
+  `scripts/takedown.py` at collection, normalize, render, media and staging, with a purge of
+  a withdrawn source's raw snapshots and bodies. Emergency path: edit `takedowns.yaml`, push,
+  run the refresh workflow manually (`workflow_dispatch`). The sources page lists the
+  requests (publisher, scope, date — never the content) and the silence map / registre
+  report a withdrawn institution as « retirée à la demande de l'éditeur » — never silently.
 - **Retention (R6)**: raw feed snapshots are pruned after 30 days (newest per source always
   survives for offline rebuilds); preview images are deleted when an article leaves the local
   brief scope.
@@ -149,15 +167,16 @@ Doctrine: **every silence is a diagnosed fact, and every diagnosis feeds a fixed
 - `data/ops/` ledgers are capped by design (media 28 runs, feed/edition
   windows, watchdog 26 weeks) and written atomically; internal, never staged.
 - `data/` and `deploy/` are unversioned: a git-built edition starts without
-  cross-edition memory, and the six-hour refresh restores it.
+  cross-edition memory, and the scheduled refresh restores it.
 
 ## Release law (hardening)
 
-- **The collector runs on GitHub Actions**, not a laptop (`.github/workflows/vigie-refresh.yml`, every 6 h). It restores the cross-edition state tarball from the private `Ombo1601/vigie-state` store (`scripts/state_pack.py`), runs `refresh.py`, and persists it back. Vercel git auto-deploy is disabled (`vercel.json` `git.deploymentEnabled: false`), so the verified chain is the only production writer and a bare push cannot publish a data-less build. The public repo never carries publisher content.
-- A second schedule (`vigie-roads.yml`, hourly) refreshes only the real-time WZDX reading via `refresh.py --roads-only`: ingest → anomalies/edges → `pipeline --render-only` → verify → deploy **only when the declarations changed** (content signal ignores collection clocks and presence counters). It never runs normalize/enrich/cluster, so no edition, diff, history or metric is created.
-- `stage_public.py` serializes the release swap with an `O_EXCL` lock in `deploy/` (reclaimed after 10 min) and retries transient Windows sharing violations (`winerror` 5/32/33 only), so the six-hour refresh and a manual `verify.py` can never rename `deploy/public` at the same instant.
+- **The collector runs on GitHub Actions**, not a laptop (`.github/workflows/vigie-refresh.yml`, scheduled about every 6 h; GitHub drops scheduled runs — measured roughly 3-4 full editions a day, gaps up to ~10 h; every page states the age of its data). It restores the cross-edition state tarball from the private `Ombo1601/vigie-state` store (`scripts/state_sync.py`, fail closed and verified against the git anchor; `scripts/state_pack.py` packs it), runs `refresh.py`, and persists it back. Vercel git auto-deploy is disabled (`vercel.json` `git.deploymentEnabled: false`), so the verified chain is the only production writer and a bare push cannot publish a data-less build. The public repo never carries publisher content.
+- A second schedule (`vigie-roads.yml`, scheduled about hourly; measured roughly every 5-9 h) refreshes only the real-time WZDX reading via `refresh.py --roads-only`: ingest → anomalies/edges → `pipeline --render-only` → verify → deploy **only when the declarations changed** (content signal ignores collection clocks and presence counters). It never runs normalize/enrich/cluster, so no edition, diff, history or metric is created.
+- `stage_public.py` serializes the release swap with an `O_EXCL` lock in `deploy/` (reclaimed after 10 min) and retries transient Windows sharing violations (`winerror` 5/32/33 only), so the scheduled refresh and a manual `verify.py` can never rename `deploy/public` at the same instant.
 - `verify.py` refuses to stage an empty edition (0 candidates) on every path, not only `--rebuild`: one surviving source that yields nothing cannot overwrite a good production site. The previous release stays up.
-- Pipeline stores are written with unique-temp atomic replacement (`store_io`); a crash, a full disk or overlapping writers never expose a truncated handoff file.
+- Pipeline stores are written with unique-temp atomic replacement (`store_io`); a crash, a full disk or overlapping writers never expose a truncated handoff file. Text is written LF on every platform.
+- **The event surfaces ship only through the switch** (`scripts/surfaces.py`, read by the render, the machine layer, the method pages and `stage_public` alike). `off`: the release is byte-identical to the one before the wiring (no event file staged, delta-v2 not written, the staged `vercel.json` without the event rules). `preview`: staged, `noindex`, never sitemapped, `/` stays the brief. `live`: `/` and `/en/` are the events front door, the brief is at `/le-point.html`, the sitemap carries hreflang alternates. `stage_public` refuses, diagnosed, a missing required artefact of the mode, an hreflang target that is not staged, a robots or front-door mismatch, a front door over 120 KB. `VIGIE_EVENTS_SURFACES` can only lower the committed mode (never raise it), so it is also a kill switch.
 - A feed network/DNS failure is diagnosed as transient, never as a permanent guard rejection, so one resolver blip does not blind an article or image forever.
 
 ## Success / failure

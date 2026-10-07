@@ -23,9 +23,14 @@ House law:
   * every missing image carries a diagnosed reason (article_http_403,
     article_timeout, image_too_large with its byte count, ...) - "no image"
     is a fact Vigie can explain, not a shrug.
+  * honest identity only, no Referer, and the host's robots.txt is read
+    before any article page or image (once per host per run): a Disallow is
+    robots_disallow, an unreadable robots.txt (anything but a 404) is
+    robots_unreachable - the fetch is skipped, never guessed open.
   * the wallet is protected from itself: dead articles (404/410) and guard
     rejections are permanent; bot walls become permanent after two attempts;
-    transient failures back off to one retry per day after four attempts.
+    a robots Disallow is re-read once a day; transient failures back off to
+    one retry per day after four attempts.
   * each run leaves a health ledger (data/ops/media_health.json): reason
     histogram, per-domain failures, capped run history - the machine room
     learns which publishers block, which go quiet, and what the fixes cost.
@@ -62,12 +67,11 @@ if str(SCRIPTS) not in sys.path:
 import fetch_media  # noqa: E402  (fetch_html, extract_og, safe_image_url, TIMEOUT)
 import resident_brief as brief  # noqa: E402  (safe_url - identity must match the renderer)
 from ingest_rss import (  # noqa: E402
-    MAX_FEED_BYTES, public_http_url, public_opener,
-    choose_user_agent, mark_browser_identity, is_transport_stall,
-    USER_AGENT, FALLBACK_USER_AGENT,
+    MAX_FEED_BYTES, public_http_url, public_opener, robots_verdict, USER_AGENT,
 )
 import ingest_rss  # noqa: E402  (_item_credit - one attribution parser, one law)
 import store_io  # noqa: E402  (unique-temp atomic writes for the manifest/health)
+import takedown  # noqa: E402  (R10: withdrawn articles/images are never fetched or re-hosted)
 
 RANKED = ROOT / "data" / "normalized" / "latest_ranked.json"
 ENRICHED = ROOT / "data" / "normalized" / "latest_enriched.json"
@@ -95,6 +99,7 @@ BLOCKED_REASONS = frozenset({"article_http_403", "image_http_403"})
 BLOCKED_ATTEMPTS_CAP = 2     # a bot wall that stood twice stands
 TRANSIENT_ATTEMPTS_CAP = 4   # timeouts/network: retry every run, then back off
 QUIET_ATTEMPTS_CAP = 2       # publisher silent on both channels: check daily
+ROBOTS_DISALLOW_CAP = 1      # robots.txt said no: re-read daily, never pressed
 BACKOFF_HOURS = 24
 
 # Feed-media fallback: the publisher's own RSS/Atom attachments, read from
@@ -188,14 +193,18 @@ def image_dimensions(raw: bytes) -> tuple[int | None, int | None]:
     return (None, None)
 
 
-def fetch_image(url: str, referer: str = "", *, retries: int = 2,
+def fetch_image(url: str, *, retries: int = 2,
                 diag: dict | None = None) -> tuple[bytes, str] | None:
     """Guarded image GET -> (bytes, true extension) or None. Never raises.
+
+    Honest identity, no Referer, the image host's robots.txt read first
+    (once per run); any 4xx answer is a refusal - final, never retried.
 
     When `diag` is a dict it receives {"reason", "detail"} classifying the
     rejection: image_http_403/404/410/4xx/5xx, image_timeout,
     image_network_error, image_guard_rejected, image_too_large (with the
-    measured size), image_unsupported_format (with the declared type).
+    measured size), image_unsupported_format (with the declared type),
+    robots_disallow, robots_unreachable.
     """
     last: tuple[str, str] = ("image_rejected", "")
 
@@ -214,13 +223,14 @@ def fetch_image(url: str, referer: str = "", *, retries: int = 2,
         # than marking the image permanently unavailable.
         fail("image_network_error", f"{type(exc).__name__}: {exc}")
         return None
-    ua = choose_user_agent(url)
+    allowed, robots_reason, robots_detail = robots_verdict(url)
+    if not allowed:
+        fail(robots_reason or "robots_unreachable", robots_detail)
+        return None
     headers = {
-        "User-Agent": ua,
+        "User-Agent": USER_AGENT,
         "Accept": "image/avif,image/webp,image/png,image/jpeg,image/*,*/*;q=0.8",
     }
-    if referer:
-        headers["Referer"] = referer
     opener = public_opener()
     attempts = max(1, min(retries, 3))
     for attempt in range(attempts):
@@ -239,19 +249,15 @@ def fetch_image(url: str, referer: str = "", *, retries: int = 2,
             return None  # a guarded redirect failure is never retried
         except urllib.error.HTTPError as exc:
             last = (fetch_media._classify_http_error(exc.code, "image"), f"HTTP {exc.code}")
+            if 400 <= exc.code < 500:
+                break  # a refusal is final: never retried, never another identity
             if attempt + 1 < attempts:
                 time.sleep(0.35 * (attempt + 1))
-            continue  # an HTTP refusal is respected - never identity-switched
+            continue
         except (OSError, urllib.error.URLError, http.client.HTTPException) as exc:
+            # A stall stays a diagnosed miss under the same honest identity.
             reason = "image_timeout" if fetch_media._is_timeout(exc) else "image_network_error"
             last = (reason, f"{type(exc).__name__}: {exc}")
-            if ua == USER_AGENT and is_transport_stall(exc):
-                # Server-side stall of the honest identity: mark the host and
-                # continue under the disclosed browser identity. Local failures
-                # and HTTP refusals never switch identity.
-                mark_browser_identity(url, type(exc).__name__)
-                ua = FALLBACK_USER_AGENT
-                headers["User-Agent"] = ua
             if attempt + 1 < attempts:
                 time.sleep(0.35 * (attempt + 1))
             continue
@@ -395,6 +401,8 @@ def _apply_policy(entry: dict, reason: str, attempts: int, now: datetime) -> Non
         cap = BLOCKED_ATTEMPTS_CAP
     elif reason == "no_publisher_image":
         cap = QUIET_ATTEMPTS_CAP
+    elif reason == "robots_disallow":
+        cap = ROBOTS_DISALLOW_CAP
     else:
         cap = TRANSIENT_ATTEMPTS_CAP
     if attempts >= cap:
@@ -527,10 +535,16 @@ def update_media(scope: list[dict], *, offline: bool = False,
     raw_root = Path(raw_dir) if raw_dir is not None else RAW_DIR
     health_file = Path(health_path) if health_path is not None else HEALTH
     previous = load_manifest(manifest_path)
+    # R10: an article, domain or image withdrawn on the publisher's request is
+    # never scoped, never fetched, never re-hosted; a stored copy is not reused
+    # and so is pruned as an orphan below.
+    rules = takedown.load_rules()
     scoped: list[tuple[str, dict]] = []
     seen: set[str] = set()
     for cand in scope or []:
         if not isinstance(cand, dict):
+            continue
+        if rules and rules.match_item(cand):
             continue
         uid = brief_uid(cand.get("url"))
         if uid and uid not in seen:
@@ -546,6 +560,8 @@ def update_media(scope: list[dict], *, offline: bool = False,
         if not isinstance(prev, dict):
             continue
         file = prev.get("file")
+        if rules and rules.match_image(prev.get("image_url"), file=file if isinstance(file, str) else None):
+            continue  # withdrawn: dropped from the manifest, its file pruned below
         if isinstance(file, str) and FILE_RE.fullmatch(file) and (media_dir / file).is_file():
             # Backfill the intrinsic size for images stored before dimensions
             # were measured: reading a header is free and the browser then
@@ -615,10 +631,18 @@ def update_media(scope: list[dict], *, offline: bool = False,
             # Article page unreachable (bot wall, timeout) but the publisher's
             # own feed attaches an image - same provenance, honest fallback.
             image_url, source = feed_img, "feed"
-        if image_url:
+        if image_url and rules and rules.match_image(image_url):
+            # Never fetched: the request covers this image wherever it appears.
+            entry.update(reason="image_withdrawn_on_request", image_source=source)
+            _apply_policy(entry, "image_withdrawn_on_request", attempts, now)
+        elif image_url:
             img_diag: dict = {}
-            got = fetch_image(image_url, referer=url, diag=img_diag)
-            if got is None:
+            got = fetch_image(image_url, diag=img_diag)
+            if got is not None and rules and rules.match_image(sha=hashlib.sha256(got[0]).hexdigest()):
+                # Same bytes under another URL: never stored, never re-hosted.
+                entry.update(reason="image_withdrawn_on_request", image_source=source)
+                _apply_policy(entry, "image_withdrawn_on_request", attempts, now)
+            elif got is None:
                 reason = img_diag.get("reason") or "image_rejected"
                 entry.update(reason=reason, image_url=image_url, image_source=source,
                              last_error=img_diag.get("detail", ""))

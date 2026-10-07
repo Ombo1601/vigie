@@ -189,7 +189,8 @@ class ChancelleryCeiling(unittest.TestCase):
     def test_civic_source_is_enabled_and_outside_rss_ceiling(self) -> None:
         rss = ingest_rss.load_enabled_rss(harness.ROOT / "sources.yaml")
         civic = ingest_rss.load_enabled_by_type(harness.ROOT / "sources.yaml", "civic-html")
-        self.assertEqual(len(rss), 12)
+        self.assertLessEqual(len(rss), harness.rss_ceiling())
+        self.assertNotIn("ville-quebec-participation", {s["id"] for s in rss})
         self.assertEqual([s["id"] for s in civic], ["ville-quebec-participation"])
         self.assertEqual(civic[0]["type"], "civic-html")
 

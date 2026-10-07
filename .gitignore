@@ -31,6 +31,11 @@ Thumbs.db
 /public/dossiers/
 /public/methode/
 /public/memoire/
+# The event surfaces (scripts/evenements.py, behind scripts/surfaces.py): their
+# current pages carry publisher text, which the public repo never holds
+/public/evenements/
+/public/en/
+/public/qualite.json
 
 # Historical one-off patch scripts and execution logs
 /_*.py

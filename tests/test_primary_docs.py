@@ -20,12 +20,33 @@ import normalize
 
 
 class SourceYamlPrimary(unittest.TestCase):
-    def test_enabled_count_at_ceiling(self) -> None:
-        srcs = ingest_rss.load_enabled_rss(harness.ROOT / "sources.yaml")
+    def test_enabled_count_within_documented_ceiling(self) -> None:
+        # The rule is the ceiling published in sources.yaml (rules:
+        # max_enabled_rss_v0), not a fixed count: a cut lowers the count.
+        srcs = ingest_rss.load_enabled_rss(harness.SOURCES)
         ids = {s["id"] for s in srcs}
-        self.assertEqual(len(srcs), 12)
+        self.assertLessEqual(len(srcs), harness.rss_ceiling())
+        self.assertGreater(len(srcs), 0)
         for need in ("ville-quebec", "gouv-quebec", "hydro-quebec", "le-soleil"):
             self.assertIn(need, ids)
+
+    def test_every_cut_is_logged_and_never_followed(self) -> None:
+        followed = {s["id"] for s in ingest_rss.load_enabled_rss(harness.SOURCES)}
+        cuts = [s for s in ingest_rss.load_sources(harness.SOURCES) if s.get("enabled") is not True]
+        for src in cuts:
+            with self.subTest(source=src["id"]):
+                self.assertNotIn(src["id"], followed)
+                self.assertTrue(str(src.get("cut_reason") or "").strip(), "cut without cut_reason")
+                self.assertRegex(str(src.get("cut_at") or ""), r"^\d{4}-\d{2}-\d{2}$")
+
+    def test_cbc_desks_are_cut_with_the_recorded_reason(self) -> None:
+        by_id = {s["id"]: s for s in ingest_rss.load_sources(harness.SOURCES)}
+        for sid in harness.CBC_DESKS:
+            with self.subTest(source=sid):
+                self.assertIs(by_id[sid]["enabled"], False)
+                self.assertEqual(by_id[sid]["cut_reason"],
+                                 "Ne répond pas à l'identité honnête de Vigie (R9) ; hors zone.")
+                self.assertEqual(by_id[sid]["cut_at"], "2026-10-06")
 
     def test_official_kinds_and_caps(self) -> None:
         by_id = {s["id"]: s for s in ingest_rss.load_enabled_rss(harness.ROOT / "sources.yaml")}

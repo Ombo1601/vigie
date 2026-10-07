@@ -189,7 +189,7 @@ Silent boosts = propaganda with better geography.
 
 - Fetch only what the map shows: Near me + Province/Linked life-hit crown + fight voices (not all 244).
 - `og:image` / `twitter:image` only. Never stock. Never AI fill. Empty strip when silent.
-- JdQ hardened (browser UA, Referer, retry) — still **403 Forbidden** from their wall; fail = typography (honest).
+- JdQ hardened (browser UA, Referer, retry) — still **403 Forbidden** from their wall; fail = typography (honest). [retiré le 2026-10-05 : identité honnête seule, sans Referer]
 - Thin `fetch_media` after **morning** pulse only (08:00), not every tick. RENT.md bound.
 - This run: map_scope=76, with_image=80, fetched=40. Method string in `latest_faces.json`.
 
@@ -434,6 +434,8 @@ PDCA: sister desks are one house. Fight gate and silence seat use `institution`,
 Chancellery: every enabled RSS carries `institution` + `institution_name`.
 Collapse: CBC Montreal+Politics → `cbc`; Radio-Canada Québec/National/Ottawa → `radio-canada`.
 12 feeds → **9** institutions.
+(2026-10-06: both CBC desks were cut — `cut_reason` in sources.yaml — so the live
+registry follows 10 RSS feeds → 8 institutions; the ceiling stays `max_enabled_rss_v0`.)
 
 Schema delta (`silence` v0.2):
 `scope: enabled_institutions`, `enabled_feed_count`, `silent[].institution_id` + `feed_ids`.
@@ -556,3 +558,44 @@ PDCA probe → enable only proven feeds (ceiling still 12 RSS).
 - Helper: `scripts/stage_public.py` (run after rank_display before publish).
 - Host deploy blocked in group room (Auto-review not available there). The bearer continues publishing from a private chat with Bucky — cheap static host, wallet under RENT.md, no SaaS theater, method files stay public.
 - Falsifiable when live: stranger opens Vigie without `serve.py` / 127.0.0.1.
+
+## Ordre des événements v1 — critères successifs, calculés sur l'édition (2026-10-06)
+
+Règle publiée en mots ; le code est `scripts/ranking_events.py`, une fonction pure : mêmes entrées, mêmes octets, aucune horloge murale, aucun poids choisi à la main.
+
+**Comment les événements sont ordonnés.** Vigie compare les événements critère après critère, jamais en additionnant des points. (1) D'abord ce qui touche le quotidien maintenant : l'événement est rattaché à une obstruction officielle qui gêne réellement la circulation (voie fermée, alternance, etc.) et qui est en vigueur ou débute dans les 24 prochaines heures ; une panne officielle rattachée compte tant que la couverture de l'événement a moins de 24 heures ; une obstruction dont l'impact n'est pas déclaré ne compte pas. (2) Ensuite la portée géographique : Ville de Québec, puis province de Québec, puis plus large ; une déclaration de la Ville rattachée à l'événement établit le lieu. (3) Ensuite le nombre d'origines de reportage indépendantes, d'après les règles de propriété, de dépêche, de communiqué et de copie : les déclarations officielles ne comptent jamais comme des origines et sont comptées à part. (4) Enfin la fraîcheur, c'est-à-dire l'heure du dernier article. Les paliers du troisième et du quatrième critère sont les quartiles de l'édition courante (rang centile médian, en nombres entiers) : une semaine calme et une soirée d'élection se classent chacune sur leur propre distribution, et aucune constante n'est une opinion. À l'intérieur d'un même palier, le plus récent passe d'abord, puis l'identifiant de l'événement, pour qu'un résultat soit toujours le même.
+
+**Ce qui est affiché.** Au plus 12 événements, et seulement ceux qui se situent à la médiane de l'édition ou au-dessus. Les autres ne sont pas cachés : la page dit combien d'événements n'ont pas été affichés et pourquoi (sous la médiane, ou au-delà des 12 premiers), et chaque événement porte son « Pourquoi ici ? » avec les valeurs réelles de ses quatre critères et le critère qui l'a départagé de l'événement précédent. Une voix retirée à la demande d'un éditeur n'est jamais comptée, même quand seule la page est régénérée.
+
+**L'étiquette de regroupement suit la qualité mesurée.** Sans échantillon vérifié par des personnes, l'étiquette dit « regroupé automatiquement » avec la précision mesurée, le nombre de paires et qui les a étiquetées (un modèle de langage, pour l'instant). Elle ne dit « certain » que lorsque la précision calculée sur des paires vérifiées par des personnes a une borne basse de 95 % (intervalle de Wilson) sur au moins 73 paires ; un regroupement « possible » n'est jamais une fusion. Les comptes sont publiés dans `qualite.json`.
+
+**Limites connues, dites d'avance.** Les alertes officielles ne sont pas encore une entrée (aucun ancrage d'alerte n'existe) ; les dates de chantier sont comparées à la journée près ; une panne n'a pas de fin déclarée, d'où la règle des 24 heures. Un changement de ces règles s'inscrit ici avant d'entrer en vigueur.
+
+## « Déclaré par les autorités » v1 — d'abord la fenêtre de fraîcheur (2026-10-06)
+
+Règle publiée en mots ; le code est `scripts/evenements.py` (`official_items`). Le bloc liste les communiqués officiels de la collecte qu'aucune carte affichée ne contient ni ne cite comme document officiel, au plus 6, dans cet ordre :
+
+1. **D'abord la fenêtre de fraîcheur de l'édition** : un communiqué est retenu en premier quand son heure de publication déclarée tombe dans les 72 heures qui précèdent l'heure de collecte de l'édition. C'est la même constante que la fenêtre des événements (72 h), pas un nouveau réglage. Une heure absente, invraisemblable, ou postérieure de plus de 6 heures à la collecte (le même seuil que les dates suspectes des événements) n'établit pas la fraîcheur : le communiqué est traité comme hors fenêtre, jamais deviné dedans.
+2. **Puis la portée géographique** proposée par la méthode : Québec, puis le reste du Québec, puis tout le reste (lié ou non situé), un seul groupe.
+3. **Puis la date**, du plus récent au plus ancien, puis l'identifiant, pour qu'un résultat soit toujours le même.
+
+Un communiqué **hors de la fenêtre** ne paraît que s'il reste moins de 6 communiqués dans la fenêtre, dans le même ordre ; il porte alors la mention « hors de la fenêtre de 72 h », et le bloc le dit en toutes lettres (« Trop peu de communiqués datent des 72 dernières heures pour remplir la liste… »). Quand le bloc n'affiche pas tout, il imprime l'ordre appliqué et les comptes réels : combien sont dans la fenêtre (et, parmi eux, combien la méthode situe à Québec, au Québec, ailleurs), combien sont plus anciens ou sans date établie. Il ne dit jamais « les plus récents », ce qu'il n'est pas.
+
+Pourquoi cette règle : un communiqué de la semaine dernière situé à Québec ne doit pas passer devant celui d'hier situé ailleurs ; la fraîcheur d'abord, la portée ensuite, comme pour les événements.
+
+## Journal des changements — surfaces des événements (2026-10-06)
+
+Chaque ligne est une règle calculée à partir d'entrées observables (docs/AUTONOMY.md), publiée ici avant d'entrer en vigueur. Les surfaces des événements sont branchées derrière un commutateur à trois positions (`scripts/surfaces.py` : `off`, `preview`, `live`) ; tant qu'il est sur `off`, aucune de ces règles ne touche une page servie.
+
+| Date | Changement | Où |
+|------|------------|----|
+| 2026-10-06 | **Ordre des événements v1** : critères successifs (ce qui touche le quotidien maintenant, portée géographique, origines de reportage indépendantes, fraîcheur), paliers aux quartiles de l'édition courante, au plus 12 cartes à la médiane ou au-dessus ; chaque carte explique sa place avec les valeurs réelles. | section « Ordre des événements v1 », `scripts/ranking_events.py` |
+| 2026-10-06 | **Étiquette de regroupement** : elle suit la qualité mesurée et publiée (`/qualite.json`) ; sans paires vérifiées par des personnes, elle dit « regroupé automatiquement » ; « certain » seulement quand la borne basse de Wilson à 95 % atteint 0,95 sur au moins 73 paires vérifiées par des personnes. | même section, `ranking_events.tier_chip` |
+| 2026-10-06 | **« Déclaré par les autorités »** : d'abord la fenêtre de fraîcheur de 72 h (la fenêtre des événements), puis la portée, puis la date ; un communiqué plus ancien ne complète la liste que s'il en manque, marqué comme tel. Remplace l'ordre « portée puis date » des versions de travail. | section ci-dessus, `scripts/evenements.py` |
+| 2026-10-06 | **Vocabulaire, table B** : deux portées ajoutées, `elsewhere` (« Hors Québec », sur preuve positive seulement) et `unplaced` (« Lieu non établi », jumeau de lieu de « Événement non classé ») ; l'ancien repli sur `quebec-city` sans preuve est retiré. Chaque code de lieu est affiché avec son libellé partout où il paraît (cartes, fiches, chiffres, `latest.json`). | docs/I18N.md table B, docs/EVENTS.md 17.1 |
+| 2026-10-06 | **Silence d'une voix retirée** : quand l'article d'une voix suivie est retiré à la demande de l'éditeur, la fiche dit « retiré à la demande de l'éditeur », jamais « aucun article lié » ; une voix retirée en entier n'est nommée nulle part sur les pages d'événements. | `scripts/composants.py`, `scripts/evenements.py` |
+| 2026-10-06 | **Agence QMI et autres signatures d'agence** : plus aucun drapeau décidé à la main ; une signature est une dépêche quand une copie qui la porte est vue chez au moins deux propriétaires distincts dans la fenêtre (mesuré à chaque édition) ; la liste fermée (PC/CP, AFP, Reuters, AP) reste un a priori. | `scripts/origin.py`, `scripts/events.py` |
+| 2026-10-06 | **Propriété des sources** : quand le commutateur n'est pas sur `off`, la page des sources décrit la structure de propriété (coopérative, fiducie, organisme sans but lucratif, société d'État, actionnaire unique l'État…) avec sa référence publique et sa date de lecture ; jamais le mot « indépendant ». | `scripts/method_site.py` |
+| 2026-10-06 | **Propriété sur les pages des événements** : la puce de propriété et le panneau des origines décrivent chaque propriétaire avec les mots de la page des sources (une seule table, `scripts/ownership.py`), et renvoient à cette page, où se trouvent la référence publique et la date de lecture ; aucune page ne dit plus « Indépendant ». Un propriétaire que la table ne décrit pas encore se lit « Propriété : voir les sources » ; une déclaration incomplète ou non sourcée, « Propriété non établie ». | `scripts/ownership.py`, `scripts/composants.py`, `scripts/method_site.py` |
+| 2026-10-06 | **Une absence dans nos flux, pas un silence** : la troisième règle (« L'absence est inscrite ») et l'en-tête du relevé des voix disent « qui n'a rien publié dans nos flux » ; Vigie n'écrit jamais qu'une institution ou une rédaction s'est tue. | `scripts/i18n/fr.json`, `scripts/i18n/en.json` |
+| 2026-10-06 | **Jamais une page des événements vide ou périmée** : avec le commutateur sur `preview` ou `live`, une mise en ligne dont la page des événements ne montre pas la collecte courante (vue des événements absente, illisible ou d'une collecte précédente, ou aucune carte alors que la collecte contient des articles) est refusée, avec son diagnostic ; la version précédente reste en ligne. Le constructeur des événements cesse alors d'être une étape d'essai : son échec fait échouer la collecte. | `scripts/stage_public.py`, `scripts/pipeline.py` |

@@ -76,6 +76,12 @@ class RoadsOnlyLane(unittest.TestCase):
                 ROADS_SIGNAL_PATH=directory / "roads_signal.json",
             ),
             mock.patch.object(refresh, "acquire_lock", return_value=True),
+            # Deploy authority and the chain guards have their own tests
+            # (test_refresh_guards); here they must neither refuse nor fetch.
+            mock.patch.dict(refresh.os.environ, {"GITHUB_ACTIONS": "true"}),
+            mock.patch.object(refresh, "chain_guard", return_value=(1, "0" * 64)),
+            mock.patch.object(refresh, "verify_live"),
+            mock.patch.object(refresh, "ping_indexnow"),  # never a real POST from a test
         ]
         for patch in self._patches:
             patch.start()
@@ -103,6 +109,8 @@ class RoadsOnlyLane(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(
             calls, ["wzdx", "anomalies", "edges", "render", "verify", "link", "deploy"])
+        # The lane never mints an edition: regression refused, advance not required.
+        refresh.chain_guard.assert_called_once_with(full_run=False, fetcher=None)
         written.assert_called_once_with("new")
 
     def test_no_normalize_enrich_or_cluster_is_ever_run(self) -> None:

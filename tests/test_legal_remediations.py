@@ -7,9 +7,11 @@ R2: (caption rendering locked in test_brief_media / test_media_sentinel.)
 R3: legal.md exists, is staged with the methods and linked from the footer.
 R4: the DOM search index carries exactly what the reader sees - never the
     fuller internal summary.
-R5: the honest reader identity is the default; only a transport-level stall
-    (never an HTTP refusal, never a guard rejection) switches a host to the
-    disclosed browser identity, and the switch is remembered.
+R5: the honest reader identity is the only identity - no browser identity,
+    no Referer; a host that cannot be read honestly is a recorded gap.
+R9: a 4xx refusal ends the fetch (no retry, no alternate URL); article pages
+    and images are fetched only when the host's robots.txt allows it (absent
+    = allowed, unreadable = skipped and diagnosed).
 R6: raw snapshots older than the retention window are pruned; the newest
     snapshot of every source always survives so offline rebuilds work.
 """
@@ -26,6 +28,8 @@ from unittest import mock
 
 import harness  # noqa: F401 - puts scripts/ on sys.path
 
+import fetch_brief_media as fbm
+import fetch_media
 import ingest_rss
 import normalize
 import resident_brief as brief
@@ -136,82 +140,153 @@ class SearchIndexHonesty(unittest.TestCase):
 
 
 class IdentityLaw(unittest.TestCase):
-    """R5/R9: honest identity by default; stalls switch, refusals never do."""
+    """R5/R9: one honest identity, always; a refusal ends the fetch."""
+
+    MIRROR = "https://mirror.example/feed"
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.raw = Path(self._tmp.name) / "raw"
         self.raw.mkdir()
-        self.policy = self.raw / "_ua_policy.json"
         for name, value in (("RAW_DIR", self.raw), ("RETRIES", 3),
-                            ("UA_POLICY_PATH", self.policy)):
+                            ("URL_ALTERNATES", {URL: [self.MIRROR]})):
             patcher = mock.patch.object(ingest_rss, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def fetch(self, opener, url=URL):
+    def fetch(self, opener, url=URL, stalled_hosts=None):
         with mock.patch.object(ingest_rss, "public_http_url", side_effect=lambda u, resolve=False: u), \
                 mock.patch.object(ingest_rss.urllib.request, "build_opener", return_value=opener):
-            return ingest_rss.fetch_bytes(url)
+            return ingest_rss.fetch_bytes(url, stalled_hosts=stalled_hosts)
 
     def requests_of(self, opener):
         return [call.args[0] for call in opener.open.call_args_list]
 
-    def test_honest_identity_is_the_default_and_discloses_the_legal_page(self) -> None:
+    def assert_all_honest(self, opener) -> None:
+        reqs = self.requests_of(opener)
+        self.assertTrue(reqs)
+        for req in reqs:
+            self.assertEqual(req.get_header("User-agent"), ingest_rss.USER_AGENT)
+            self.assertIsNone(req.get_header("Referer"))
+        self.assertEqual(sorted(p.name for p in self.raw.glob("_ua_policy*")), [])
+
+    def test_honest_identity_is_the_only_identity_and_discloses_the_legal_page(self) -> None:
         opener = mock.Mock()
         opener.open.return_value = response(RSS, {})
         self.fetch(opener)
-        req = self.requests_of(opener)[0]
-        self.assertEqual(req.get_header("User-agent"), ingest_rss.USER_AGENT)
+        self.assert_all_honest(opener)
         self.assertIn("vigieqc.com/methode/legal.html", ingest_rss.USER_AGENT)
         self.assertIn("non-commercial", ingest_rss.USER_AGENT)
+        self.assertNotIn("Mozilla", ingest_rss.USER_AGENT)
+        for gone in ("FALLBACK_USER_AGENT", "UA_POLICY_PATH", "choose_user_agent",
+                     "mark_browser_identity"):
+            self.assertFalse(hasattr(ingest_rss, gone), gone)
 
-    def test_transport_stall_marks_the_host_and_retries_under_browser_identity(self) -> None:
+    def test_no_collector_carries_a_browser_identity_or_a_referer(self) -> None:
+        for path in sorted((brief.ROOT / "scripts").glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(script=path.name):
+                self.assertNotIn("Mozilla/", text)
+                self.assertNotIn('"Referer"', text)
+
+    def test_transport_stall_is_retried_under_the_same_honest_identity(self) -> None:
         opener = mock.Mock()
         opener.open.side_effect = [ConnectionResetError("connection reset"), response(RSS, {})]
         body, _ = self.fetch(opener)
         self.assertEqual(body, RSS)
-        second = self.requests_of(opener)[1]
-        self.assertEqual(second.get_header("User-agent"), ingest_rss.FALLBACK_USER_AGENT)
-        policy = json.loads(self.policy.read_text(encoding="utf-8"))
-        self.assertEqual(policy["news.example"]["identity"], "browser")
-        self.assertEqual(policy["news.example"]["reason"], "ConnectionResetError")
-        # the switch is remembered: the next run starts under the browser identity
-        self.assertEqual(ingest_rss.choose_user_agent(URL), ingest_rss.FALLBACK_USER_AGENT)
-        self.assertEqual(ingest_rss.choose_user_agent("https://other.example/feed"),
-                         ingest_rss.USER_AGENT)
+        self.assertEqual(len(self.requests_of(opener)), 2)
+        self.assert_all_honest(opener)
 
-    def test_local_dns_failure_is_never_blamed_on_the_origin(self) -> None:
+    def test_timeouts_never_switch_identity_and_end_as_a_recorded_gap(self) -> None:
+        opener = mock.Mock()
+        opener.open.side_effect = TimeoutError("timed out")
+        stalled: dict = {}
+        with self.assertRaises(TimeoutError):
+            self.fetch(opener, stalled_hosts=stalled)
+        # every attempt on the feed and on its transport-only alternate is honest
+        reqs = self.requests_of(opener)
+        self.assertEqual([r.full_url for r in reqs], [URL] * 3 + [self.MIRROR] * 3)
+        self.assert_all_honest(opener)
+        self.assertEqual(stalled, {"news.example": "TimeoutError", "mirror.example": "TimeoutError"})
+
+    def test_a_host_that_never_answered_is_not_knocked_on_again_this_run(self) -> None:
+        opener = mock.Mock()
+        stalled = {"news.example": "TimeoutError", "mirror.example": "TimeoutError"}
+        with self.assertRaisesRegex(ConnectionError, "no HTTP answer earlier in this run"):
+            self.fetch(opener, stalled_hosts=stalled)
+        opener.open.assert_not_called()
+
+    def test_transport_failure_reaches_the_documented_alternate_honestly(self) -> None:
+        opener = mock.Mock()
+        opener.open.side_effect = [TimeoutError("t")] * 3 + [response(RSS, {})]
+        body, _ = self.fetch(opener)
+        self.assertEqual(body, RSS)
+        self.assertEqual(self.requests_of(opener)[-1].full_url, self.MIRROR)
+        self.assert_all_honest(opener)
+
+    def test_local_dns_failure_never_switches_identity(self) -> None:
         opener = mock.Mock()
         opener.open.side_effect = urllib.error.URLError(
             socket.gaierror(-2, "Name or service not known"))
         with self.assertRaises(urllib.error.URLError):
             self.fetch(opener)
-        self.assertFalse(self.policy.exists())
-        for req in self.requests_of(opener):
-            self.assertEqual(req.get_header("User-agent"), ingest_rss.USER_AGENT)
+        self.assert_all_honest(opener)
 
-    def test_a_stale_marker_is_reprobed_under_the_honest_identity(self) -> None:
-        self.policy.write_text(json.dumps({"news.example": {
-            "identity": "browser", "reason": "TimeoutError",
-            "marked_at": "2025-01-01T00:00:00+00:00"}}), encoding="utf-8")
-        self.assertEqual(ingest_rss.choose_user_agent(URL), ingest_rss.USER_AGENT)
+    def test_http_refusal_is_final_no_retry_no_alternate_no_other_identity(self) -> None:
+        for code in (403, 404, 406, 410, 429):
+            with self.subTest(code=code):
+                opener = mock.Mock()
+                opener.open.side_effect = urllib.error.HTTPError(URL, code, "Refused", {}, None)
+                with self.assertRaises(urllib.error.HTTPError):
+                    self.fetch(opener)
+                # one request, to the feed itself: the alternate is never tried
+                self.assertEqual([r.full_url for r in self.requests_of(opener)], [URL])
+                self.assert_all_honest(opener)
 
-    def test_http_refusal_is_respected_and_never_identity_switched(self) -> None:
+    def test_a_server_error_is_an_answer_not_a_reason_to_try_an_alternate(self) -> None:
         opener = mock.Mock()
-        opener.open.side_effect = urllib.error.HTTPError(URL, 403, "Forbidden", {}, None)
+        opener.open.side_effect = urllib.error.HTTPError(URL, 503, "Unavailable", {}, None)
         with self.assertRaises(urllib.error.HTTPError):
             self.fetch(opener)
-        self.assertFalse(self.policy.exists())
-        for req in self.requests_of(opener):
-            self.assertEqual(req.get_header("User-agent"), ingest_rss.USER_AGENT)
-        # a refusal is final: it is not retried under the same identity either
+        self.assertEqual([r.full_url for r in self.requests_of(opener)], [URL] * 3)
+        self.assert_all_honest(opener)
+
+    def test_the_refusal_is_recorded_by_ingest(self) -> None:
+        refusal = urllib.error.HTTPError(URL, 403, "Forbidden", {}, None)
+        with mock.patch.object(ingest_rss, "fetch_bytes", side_effect=refusal):
+            result = ingest_rss.ingest_one({"id": "news", "url": URL},
+                                           datetime(2026, 10, 5, tzinfo=timezone.utc))
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["refused"], 403)
+        self.assertIn("403", result["error"])
+
+    def test_run_row_carries_the_refusal_status_code(self) -> None:
+        def fake(src, fetched_at, stalled_hosts):
+            if src["id"] == "walled":
+                return {"source_id": "walled", "ok": False, "error": "HTTPError: 403", "refused": 403}
+            return {"source_id": "open", "ok": True, "item_count": 2}
+        with mock.patch.object(ingest_rss, "ROOT", self.raw.parent),                 mock.patch.object(ingest_rss, "load_enabled_rss",
+                                  return_value=[{"id": "walled"}, {"id": "open"}]),                 mock.patch.object(ingest_rss, "ingest_one", side_effect=fake),                 mock.patch.object(ingest_rss, "prune_raw_snapshots", return_value=0):
+            self.assertEqual(ingest_rss.main(), 0)
+        run = json.loads(next(self.raw.glob("_run_*.json")).read_text(encoding="utf-8"))
+        rows = {r["source_id"]: r for r in run["results"]}
+        self.assertEqual(rows["walled"]["refused"], 403)
+        self.assertIsNone(rows["open"]["refused"])
+
+    def test_conditional_refusal_is_final_too(self) -> None:
+        opener = mock.Mock()
+        opener.open.side_effect = urllib.error.HTTPError(URL, 403, "Forbidden", {}, None)
+        cache = {URL: {"etag": "e1", "last_modified": None,
+                       "content_type": "application/rss+xml", "updated_at": "x"}}
+        with mock.patch.object(ingest_rss, "_load_http_cache", return_value=cache):
+            with self.assertRaises(urllib.error.HTTPError):
+                self.fetch(opener)
         self.assertEqual(len(self.requests_of(opener)), 1)
 
     def test_conditional_refusal_still_tries_one_plain_request(self) -> None:
-        # 412 (or a proxy that dislikes validators) is the validator's fault,
-        # not the origin refusing the article: fall through to the plain GET.
+        # 412 Precondition Failed is the validator's fault, not the origin
+        # refusing the feed: fall through to the plain GET.
         opener = mock.Mock()
         opener.open.side_effect = [
             urllib.error.HTTPError(URL, 412, "Precondition Failed", {}, None),
@@ -238,11 +313,242 @@ class IdentityLaw(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ingest_rss.fetch_bytes(URL)
         opener.open.assert_not_called()
-        self.assertFalse(self.policy.exists())
 
-    def test_corrupt_policy_degrades_to_the_honest_identity(self) -> None:
-        self.policy.write_text("garbage", encoding="utf-8")
-        self.assertEqual(ingest_rss.choose_user_agent(URL), ingest_rss.USER_AGENT)
+    def test_a_leftover_browser_marker_file_is_ignored(self) -> None:
+        # data/raw/_ua_policy.json may survive in the private state store; it
+        # must never bring the browser identity back.
+        (self.raw / "_ua_policy.json").write_text(json.dumps({"news.example": {
+            "identity": "browser", "reason": "TimeoutError",
+            "marked_at": "2099-01-01T00:00:00+00:00"}}), encoding="utf-8")
+        opener = mock.Mock()
+        opener.open.return_value = response(RSS, {})
+        self.fetch(opener)
+        for req in self.requests_of(opener):
+            self.assertEqual(req.get_header("User-agent"), ingest_rss.USER_AGENT)
+
+
+ART = "https://www.journaldequebec.com/2026/10/05/article"
+IMG = "https://cdn.example/photo.jpg"
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 100
+
+
+class RobotsLaw(unittest.TestCase):
+    """R9: robots.txt first for article pages and images, honest identity,
+    once per host per run; 404 = allowed, any other failure = skipped."""
+
+    def setUp(self) -> None:
+        ingest_rss._ROBOTS_CACHE.clear()
+        self.addCleanup(ingest_rss._ROBOTS_CACHE.clear)
+        self.robots_calls: list[str] = []
+
+    def serve_robots(self, answer):
+        """answer: bytes (robots body) or an exception to raise."""
+        def fetcher(url):
+            self.robots_calls.append(url)
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+        patcher = mock.patch.object(ingest_rss, "ROBOTS_FETCHER", fetcher)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def opener_for(self, body: bytes):
+        resp = mock.MagicMock()
+        resp.headers = {}
+        resp.read.return_value = body
+        resp.__enter__.return_value = resp
+        opener = mock.Mock()
+        opener.open.return_value = resp
+        return opener
+
+    def html(self, url=ART, opener=None, retries=1):
+        diag: dict = {}
+        opener = opener or self.opener_for(b"<html>ok</html>")
+        with mock.patch.object(fetch_media, "public_http_url", side_effect=lambda u, resolve=False: u), \
+                mock.patch.object(fetch_media, "public_opener", return_value=opener):
+            got = fetch_media.fetch_html(url, retries=retries, diag=diag)
+        return got, diag, opener
+
+    def image(self, url=IMG, opener=None, retries=1):
+        diag: dict = {}
+        opener = opener or self.opener_for(JPEG)
+        with mock.patch.object(fbm, "public_http_url", side_effect=lambda u, resolve=False: u), \
+                mock.patch.object(fbm, "public_opener", return_value=opener):
+            got = fbm.fetch_image(url, retries=retries, diag=diag)
+        return got, diag, opener
+
+    # -- the fetch paths --------------------------------------------------
+
+    def test_article_page_carries_no_referer_and_the_honest_identity(self) -> None:
+        self.serve_robots(urllib.error.HTTPError("u", 404, "Not Found", {}, None))
+        got, diag, opener = self.html()
+        self.assertEqual(got, "<html>ok</html>")
+        req = opener.open.call_args.args[0]
+        self.assertIsNone(req.get_header("Referer"))
+        self.assertEqual(req.get_header("User-agent"), ingest_rss.USER_AGENT)
+        self.assertEqual(self.robots_calls, ["https://www.journaldequebec.com/robots.txt"])
+
+    def test_image_carries_no_referer_and_the_honest_identity(self) -> None:
+        self.serve_robots(b"User-agent: *\nDisallow: /private/\n")
+        got, _, opener = self.image()
+        self.assertEqual(got, (JPEG, "jpg"))
+        req = opener.open.call_args.args[0]
+        self.assertIsNone(req.get_header("Referer"))
+        self.assertEqual(req.get_header("User-agent"), ingest_rss.USER_AGENT)
+
+    def test_disallowed_article_is_never_fetched_and_is_diagnosed(self) -> None:
+        self.serve_robots(b"User-agent: *\nDisallow: /2026/\n")
+        got, diag, opener = self.html()
+        self.assertIsNone(got)
+        opener.open.assert_not_called()
+        self.assertEqual(diag["reason"], "robots_disallow")
+        self.assertIn("robots.txt", diag["detail"])
+
+    def test_disallowed_image_is_never_fetched_and_is_diagnosed(self) -> None:
+        self.serve_robots(b"User-agent: Vigie\nDisallow: /\n")
+        got, diag, opener = self.image()
+        self.assertIsNone(got)
+        opener.open.assert_not_called()
+        self.assertEqual(diag["reason"], "robots_disallow")
+
+    def test_absent_robots_file_allows(self) -> None:
+        self.serve_robots(urllib.error.HTTPError("u", 404, "Not Found", {}, None))
+        got, diag, _ = self.image()
+        self.assertEqual(got, (JPEG, "jpg"))
+        self.assertEqual(diag, {})
+
+    def test_unreadable_robots_fails_closed(self) -> None:
+        for answer in (urllib.error.HTTPError("u", 403, "Forbidden", {}, None),
+                       urllib.error.HTTPError("u", 410, "Gone", {}, None),
+                       urllib.error.HTTPError("u", 503, "Unavailable", {}, None),
+                       TimeoutError("timed out"),
+                       ConnectionResetError("reset"),
+                       urllib.error.URLError(socket.gaierror(-2, "dns down"))):
+            with self.subTest(answer=repr(answer)):
+                ingest_rss._ROBOTS_CACHE.clear()
+                self.serve_robots(answer)
+                got, diag, opener = self.html()
+                self.assertIsNone(got)
+                opener.open.assert_not_called()
+                self.assertEqual(diag["reason"], "robots_unreachable")
+                got, diag, opener = self.image("https://www.journaldequebec.com/i.jpg")
+                self.assertIsNone(got)
+                opener.open.assert_not_called()
+                self.assertEqual(diag["reason"], "robots_unreachable")
+
+    def test_robots_is_read_once_per_host_per_run(self) -> None:
+        self.serve_robots(b"User-agent: *\nDisallow: /private/\n")
+        self.html(ART)
+        self.html("https://www.journaldequebec.com/2026/10/05/other")
+        self.image("https://www.journaldequebec.com/images/a.jpg")
+        self.image(IMG)
+        self.assertEqual(self.robots_calls, ["https://www.journaldequebec.com/robots.txt",
+                                             "https://cdn.example/robots.txt"])
+
+    def test_the_real_robots_fetch_uses_the_guard_and_the_honest_identity(self) -> None:
+        opener = self.opener_for(b"User-agent: *\nDisallow:\n")
+        with mock.patch.object(ingest_rss, "public_http_url") as guard, \
+                mock.patch.object(ingest_rss, "public_opener", return_value=opener):
+            body = ingest_rss.robots_fetch("https://news.example/robots.txt")
+        guard.assert_called_once_with("https://news.example/robots.txt", resolve=True)
+        req = opener.open.call_args.args[0]
+        self.assertEqual(req.get_header("User-agent"), ingest_rss.USER_AGENT)
+        self.assertIsNone(req.get_header("Referer"))
+        self.assertEqual(body, b"User-agent: *\nDisallow:\n")
+        opener.open.return_value.read.assert_called_once_with(ingest_rss.MAX_ROBOTS_BYTES)
+
+    def test_a_refused_page_is_not_retried(self) -> None:
+        for code in (403, 410, 429):
+            with self.subTest(code=code):
+                opener = mock.Mock()
+                opener.open.side_effect = urllib.error.HTTPError(ART, code, "No", {}, None)
+                got, _, _ = self.html(opener=opener, retries=3)
+                self.assertIsNone(got)
+                self.assertEqual(opener.open.call_count, 1)
+                opener = mock.Mock()
+                opener.open.side_effect = urllib.error.HTTPError(IMG, code, "No", {}, None)
+                got, _, _ = self.image(opener=opener, retries=3)
+                self.assertIsNone(got)
+                self.assertEqual(opener.open.call_count, 1)
+
+    def test_a_timeout_never_switches_identity(self) -> None:
+        opener = mock.Mock()
+        opener.open.side_effect = TimeoutError("timed out")
+        with mock.patch.object(fetch_media.time, "sleep"):
+            got, diag, _ = self.html(opener=opener, retries=3)
+        self.assertIsNone(got)
+        self.assertEqual(diag["reason"], "article_timeout")
+        self.assertEqual(opener.open.call_count, 3)
+        for call in opener.open.call_args_list:
+            self.assertEqual(call.args[0].get_header("User-agent"), ingest_rss.USER_AGENT)
+        opener = mock.Mock()
+        opener.open.side_effect = TimeoutError("timed out")
+        with mock.patch.object(fbm.time, "sleep"):
+            got, diag, _ = self.image(opener=opener, retries=3)
+        self.assertEqual(diag["reason"], "image_timeout")
+        for call in opener.open.call_args_list:
+            self.assertEqual(call.args[0].get_header("User-agent"), ingest_rss.USER_AGENT)
+
+    # -- the rules (RFC 9309) ---------------------------------------------
+
+    def allowed(self, robots: str, url: str) -> bool:
+        return ingest_rss.robots_allows(ingest_rss.robots_rules(robots), url)
+
+    def test_our_own_group_wins_over_the_star_group(self) -> None:
+        robots = "User-agent: *\nDisallow: /\n\nUser-agent: Vigie\nAllow: /\n"
+        self.assertTrue(self.allowed(robots, "https://x.example/a"))
+        robots = "User-agent: *\nAllow: /\n\nUser-agent: vigie/0.2\nDisallow: /news\n"
+        self.assertFalse(self.allowed(robots, "https://x.example/news/a"))
+        self.assertTrue(self.allowed(robots, "https://x.example/sports"))
+
+    def test_star_group_binds_when_we_are_not_named(self) -> None:
+        robots = "User-agent: Googlebot\nAllow: /\n\nUser-agent: *\nDisallow: /news\n"
+        self.assertFalse(self.allowed(robots, "https://x.example/news/a"))
+        self.assertTrue(self.allowed(robots, "https://x.example/"))
+
+    def test_grouped_agents_share_their_rules(self) -> None:
+        robots = "User-agent: Bingbot\nUser-agent: Vigie\nDisallow: /a\nCrawl-delay: 3\nDisallow: /b\n"
+        self.assertFalse(self.allowed(robots, "https://x.example/a1"))
+        self.assertFalse(self.allowed(robots, "https://x.example/b1"))
+
+    def test_longest_match_wins_and_allow_wins_ties(self) -> None:
+        robots = "User-agent: *\nAllow: /\nDisallow: /private\n"
+        self.assertFalse(self.allowed(robots, "https://x.example/private/a"))
+        robots = "User-agent: *\nDisallow: /\nAllow: /news/\n"
+        self.assertTrue(self.allowed(robots, "https://x.example/news/a"))
+        self.assertFalse(self.allowed(robots, "https://x.example/other"))
+        robots = "User-agent: *\nDisallow: /page\nAllow: /page\n"
+        self.assertTrue(self.allowed(robots, "https://x.example/page"))
+
+    def test_wildcards_and_end_anchor(self) -> None:
+        robots = "User-agent: *\nDisallow: /*.jpg$\nDisallow: /*?replytocom=\n"
+        self.assertFalse(self.allowed(robots, "https://x.example/img/a.jpg"))
+        self.assertTrue(self.allowed(robots, "https://x.example/img/a.jpg?w=1"))
+        self.assertFalse(self.allowed(robots, "https://x.example/p?replytocom=4"))
+        self.assertTrue(self.allowed(robots, "https://x.example/p?page=2"))
+
+    def test_empty_disallow_comments_and_garbage_allow(self) -> None:
+        self.assertTrue(self.allowed("User-agent: *\nDisallow:\n", "https://x.example/a"))
+        self.assertTrue(self.allowed("# nothing\n\x00garbage\n", "https://x.example/a"))
+        self.assertTrue(self.allowed("", "https://x.example/a"))
+        self.assertFalse(self.allowed("﻿User-agent: * # all\nDisallow: / # all\n",
+                                      "https://x.example/a"))
+
+    def test_hostile_pattern_cannot_hang_matching(self) -> None:
+        pattern = "/" + "*a" * 200 + "b"
+        robots = f"User-agent: *\nDisallow: {pattern}\n"
+        self.assertTrue(self.allowed(robots, "https://x.example/" + "a" * 5000))
+
+    def test_robots_disallow_backs_off_a_day_and_is_never_permanent(self) -> None:
+        now = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
+        entry: dict = {}
+        fbm._apply_policy(entry, "robots_disallow", 1, now)
+        self.assertFalse(entry.get("permanent"))
+        self.assertEqual(entry["retry_after"], "2026-10-06T12:00:00+00:00")
+        entry = {}
+        fbm._apply_policy(entry, "robots_unreachable", 1, now)
+        self.assertNotIn("retry_after", entry)
+        self.assertFalse(entry.get("permanent"))
 
 
 class Retention(unittest.TestCase):
@@ -325,11 +631,43 @@ class PublicLegalPage(unittest.TestCase):
         page = brief.render_brief([story()], NOW.isoformat(), [], collection(), media={})
         self.assertIn('<a class="legal-link" href="/methode/legal.html">', page)
 
-    def test_legal_page_discloses_both_identities_and_retention(self) -> None:
+    def test_legal_page_discloses_the_one_identity_robots_and_retention(self) -> None:
         text = (brief.ROOT / "legal.md").read_text(encoding="utf-8")
         self.assertIn(ingest_rss.USER_AGENT, text)
-        self.assertIn(ingest_rss.FALLBACK_USER_AGENT, text)
+        # the browser identity is gone, so the page must not claim it either
+        self.assertNotIn("Mozilla", text)
+        self.assertNotIn("identité de navigateur standard", text)
+        self.assertIn("robots.txt", text)
         self.assertIn("30", text)
+
+    def test_internal_law_files_quote_the_canonical_identity(self) -> None:
+        for name in ("LEGAL_RISK.md", "TECHNICAL_PROCESS.md"):
+            text = (brief.ROOT / name).read_text(encoding="utf-8")
+            if name == "LEGAL_RISK.md":
+                # Dated status paragraphs are history; the stale string is
+                # forbidden only in the facts table (section 1).
+                text = text.split("## 1.", 1)[1].split("## 2.", 1)[0]
+            with self.subTest(file=name):
+                self.assertNotIn("vigieqc.com/legal.md)", text)
+                self.assertNotIn("_ua_policy.json", text)
+                self.assertIn(ingest_rss.USER_AGENT, text)
+
+
+class TakedownPromiseIsOneSentence(unittest.TestCase):
+    PHRASE = (
+        "Dès réception d'une demande, le retrait est appliqué le jour même par une édition "
+        "déclenchée à la main ; à défaut, au prochain passage planifié (toutes les 6 h environ, "
+        "parfois jusqu'à une dizaine d'heures). Une mise en ligne qui contiendrait encore "
+        "l'élément retiré est refusée."
+    )
+
+    def test_legal_md_and_the_sources_page_carry_the_identical_phrase(self):
+        import method_site
+        legal = " ".join((Path(__file__).resolve().parent.parent / "legal.md").read_text(encoding="utf-8").split())
+        self.assertIn(self.PHRASE, legal)
+        self.assertIn(self.PHRASE, method_site._sources_html())
+        self.assertNotIn("environ 6 h)", legal)
+        self.assertNotIn("à l'édition suivante", legal)
 
 
 if __name__ == "__main__":

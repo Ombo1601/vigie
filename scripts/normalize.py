@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import unquote_plus, urlparse, urlunparse
 
 import store_io
+import takedown
 from ingest_rss import load_enabled_rss, public_http_url
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -226,7 +227,7 @@ def normalize_item(raw_item: dict, source_meta: dict) -> dict | None:
         published = None
         date_status = "future"
     updated = parse_timestamp(raw_item.get("updated_at"))
-    return {
+    candidate = {
         "id": stable_id(url, source_id or "unknown", title, raw_item.get("guid")),
         "title": title,
         "summary": summary,
@@ -249,6 +250,13 @@ def normalize_item(raw_item: dict, source_meta: dict) -> dict | None:
         "fetched_at": fetched.isoformat() if fetched else fetched_raw,
         "enrich_status": "pending",  # proposals come later; never truth
     }
+    # Declared ownership (sources.yaml) rides along only when the registry
+    # states it: a source without it yields the candidate it always did.
+    for key in ("owner_group", "ownership_class"):
+        value = source_meta.get(key)
+        if isinstance(value, str) and value.strip():
+            candidate[key] = value.strip()
+    return candidate
 
 
 def main() -> int:
@@ -267,6 +275,9 @@ def main() -> int:
     candidates: list[dict] = []
     seen_ids: set[str] = set()
     per_source: dict[str, int] = {}
+    # R10: an article, domain or source withdrawn on a publisher's request
+    # never enters an edition (takedowns.yaml; counted, never hidden).
+    rules = takedown.load_rules()
     source_status: dict[str, dict] = {source["id"]: {"status": "missing", "candidate_count": 0} for source in sources}
     for meta_path in metas:
         source_id = meta_path.parent.name
@@ -290,9 +301,10 @@ def main() -> int:
         # The current registry is authoritative, including institution and geography.
         source = source_by_id[source_id]
         payload.update({"source_id": source_id, "source_name": source.get("name"),
-                        **{key: source.get(key) for key in ("institution", "institution_name", "geo", "nest_role", "source_kind", "language")}})
+                        **{key: source.get(key) for key in ("institution", "institution_name", "geo", "nest_role", "source_kind", "language",
+                                                           "owner_group", "ownership_class")}})
         n = 0
-        dropped = {"not_an_item": 0, "no_title_or_url": 0, "duplicate_id": 0}
+        dropped = {"not_an_item": 0, "no_title_or_url": 0, "duplicate_id": 0, "withdrawn_on_request": 0}
         item_nodes = len(payload.get("items") or [])
         for it in payload.get("items") or []:
             if not isinstance(it, dict):
@@ -301,6 +313,9 @@ def main() -> int:
             cand = normalize_item(it, payload)
             if not cand:
                 dropped["no_title_or_url"] += 1
+                continue
+            if rules and rules.match_item(cand):
+                dropped["withdrawn_on_request"] += 1
                 continue
             if cand["id"] in seen_ids:
                 dropped["duplicate_id"] += 1

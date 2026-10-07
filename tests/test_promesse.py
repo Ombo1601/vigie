@@ -1,6 +1,6 @@
 """La promesse (promesse-v1): what the record knows about the official voice.
 
-Locks: no claim before two recorded editions; unanswered counts are measured
+Locks: no claim before two recorded editions; no-official counts are measured
 editions, never a verdict; an official document entering the dossier is stated
 as presence, never as an "answer"; malformed entries are skipped; the line
 appears on the brief, the récit and the departure screen; deterministic.
@@ -61,9 +61,9 @@ class Status(unittest.TestCase):
         self.assertIsNone(promesse.status_of({"tracking": "nope"}))
         self.assertIsNone(promesse.line_of(issue(officials=(0,))))
 
-    def test_unanswered_counts_measured_editions(self):
+    def test_no_official_counts_measured_editions(self):
         status = promesse.status_of(issue(officials=(0, 0, 0, 0, 0)))
-        self.assertEqual(status["status"], "unanswered")
+        self.assertEqual(status["status"], "no_official_recorded")
         self.assertEqual(status["editions"], 5)
         self.assertIn("Aucun document officiel dans les 5 éditions suivies",
                       promesse.line_of(issue(officials=(0, 0, 0, 0, 0))))
@@ -75,7 +75,7 @@ class Status(unittest.TestCase):
     def test_official_entered_mid_history_names_the_date(self):
         timeline = issue(officials=(0, 0, 1, 1))
         line = promesse.line_of(timeline)
-        self.assertEqual(promesse.status_of(timeline)["answered_index"], 2)
+        self.assertEqual(promesse.status_of(timeline)["official_first_index"], 2)
         self.assertIn(timeline["tracking"]["timeline"][2]["ts"], line)
         self.assertIn("après 2 éditions sans document officiel", line)
 
@@ -89,7 +89,7 @@ class Status(unittest.TestCase):
         self.assertIsNone(promesse.status_of(issue(officials=(None, None, 0))))
         status = promesse.status_of(issue(officials=(None, 0, 0)))
         self.assertEqual(status["editions"], 2)
-        self.assertEqual(status["status"], "unanswered")
+        self.assertEqual(status["status"], "no_official_recorded")
 
     def test_unrecorded_editions_do_not_extend_the_silence_claim(self):
         status = promesse.status_of(issue(officials=(None, None, 0, 0, 0)))

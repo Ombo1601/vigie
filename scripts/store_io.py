@@ -17,19 +17,27 @@ import os
 import uuid
 from pathlib import Path
 
+# Text is LF on every platform (.gitattributes, AGENTS.md "Line endings").
+NEWLINE = "\n"
+
 
 def write_text_atomic(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Write `text` atomically. Line endings are written as given (LF): the
+    house law says text is LF, and Python's default text mode would turn every
+    "\\n" into "\\r\\n" on Windows (the optional local fallback collector), so
+    a Windows-built store or page would differ, byte for byte, from the one
+    GitHub Actions builds from the same inputs."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
     try:
-        part.write_text(text, encoding=encoding)
+        part.write_text(text, encoding=encoding, newline=NEWLINE)
         try:
             os.replace(part, path)
         except OSError:
             # A reader holding the destination open (or an exotic filesystem)
             # can refuse the replace. Write in place rather than fail the chain.
-            path.write_text(text, encoding=encoding)
+            path.write_text(text, encoding=encoding, newline=NEWLINE)
     finally:
         if part.exists():
             try:

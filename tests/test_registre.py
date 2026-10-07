@@ -52,7 +52,8 @@ def history(ts):
     return {"method": "dossier-history-v1", "updated_at": ts, "edition_count": 1, "dossiers": {}}
 
 
-# The nine institutions Vigie actually follows, with their real kinds.
+# The nine institutions Vigie followed in the 2026-09-24 production edition
+# (the CBC desks were cut on 2026-10-06), with their real kinds.
 NAMES9 = {
     "ville-quebec": ("Ville de Québec", "official"),
     "gouv-quebec": ("Gouvernement du Québec", "official"),
@@ -520,6 +521,173 @@ class EmitFailSoft(unittest.TestCase):
                                   capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertIn("OK", proc.stdout)
+
+
+# --------------------------------------------------------------------------- #
+# Golden: the edition chain and its public files are frozen byte for byte
+# --------------------------------------------------------------------------- #
+# Digests of what scripts/registre.py produced for the fixture below BEFORE the
+# event chain existed (phase1/base, 2026-10-06), line endings normalised to LF
+# (store_io writes text mode, so Windows writes CRLF). Any change to these is a
+# change to every future seal and public file: it must be a deliberate,
+# announced method change, never a side effect.
+GOLDEN_FILES = {
+    "chain.json": "a304ec427809e163bba287e2b8c13370f5e19b87c5dd135a2976af1fe9847f63",
+    "checkpoint.txt": "906e3af7abd794d27806d31355f7dc2129c35d5eb9bac8ad1304e94e34d5c00c",
+    "travaux.json": "6fbabfdee2bf8dad28e75801b01026898bff8a0c875ed21a38eb95b543470826",
+}
+GOLDEN_STATE = {   # sha256 of registre.canonical(state[key])
+    "seals": "b69c925b3c609bc95a369acf5e45077b8f1981a33e76eae8091eaea4e061fa25",
+    "voice": "d1a029ca98050e126fd2f62e2263f8f79c2d9292c15df306a9bba23c34512c76",
+    "travaux": "ff2ebe6da00a2fd3436c741af35c22aab028825198e3c4cec2d48eb45765c5c8",
+    "names": "722bbcba39887cafa2a7648effabf8b1fe4875ebe3744961259db4118a2c4d68",
+}
+GOLDEN_ROOT = "0d21c0ea2aca360ed16b8b9dd84739f901f2d6f08e07d1ae061d37c91dc7a638"
+GOLDEN_FOLLOWED = ["cbc", "gouv-quebec", "le-soleil", "ville-quebec"]
+
+
+def golden_issue(iid, question, spoke, silent):
+    return {
+        "issue_id": iid, "question": question, "item_count": 2 + len(spoke),
+        "official_voice_count": sum(1 for s in spoke if s in ("ville-quebec", "gouv-quebec")),
+        "sources": list(spoke), "label_kind": "subject_label",
+        "tensions": [{"institution_id": s, "institution_name": s.upper(), "source_kind": "media",
+                      "items": [{"title": f"Titre inventé {iid} {s}", "url": f"https://exemple.test/{iid}/{s}"}]}
+                     for s in spoke],
+        "silence": {"silent": [{"institution_id": s, "institution_name": s.upper(), "source_kind": "official"}
+                               for s in silent]},
+    }
+
+
+def golden_payload(issues, ledger):
+    return {"clustered_at": "2026-09-01T00:00:00+00:00", "chancellery_institutions": GOLDEN_FOLLOWED,
+            "change_ledger": ledger, "issues": issues}
+
+
+def golden_seed_state():
+    """Three schema-1 seals and one roadworks seal, as an older production state holds them."""
+    seals = []
+    for n in range(1, 4):
+        edition = f"2026-09-0{n}T12:00:00+00:00"
+        rec = {"method": registre.METHOD, "edition": edition, "followed": GOLDEN_FOLLOWED,
+               "dossiers": [{"issue_id": f"d{n}", "label_kind": "subject_label", "question": f"Sujet {n}",
+                             "item_count": 3, "official_voice_count": 1,
+                             "spoke": ["le-soleil", "ville-quebec"], "silent": ["cbc", "gouv-quebec"]}],
+               "ledger": {"has_previous": n > 1, "new": [f"d{n}"], "developed": [], "quiet": []}}
+        leaf = registre.leaf_of(rec)
+        prev = seals[-1]["root"] if seals else ""
+        seals.append({"seq": n, "edition": edition, "prev": prev, "leaf": leaf,
+                      "root": registre.chain_hash(prev, leaf), "record": rec})
+    trav_rec = {"method": registre.ROADS_METHOD, "fetched_at": "2026-09-03T11:00:00+00:00", "active": ["w0"]}
+    trav_leaf = registre.leaf_of(trav_rec)
+    return {"method": registre.METHOD, "origin": registre.ORIGIN, "seals": seals,
+            "voice": [registre.voice_row(s["record"]) for s in seals],
+            "names": {i: {"name": i.upper(), "kind": "media"} for i in GOLDEN_FOLLOWED},
+            "travaux": {"method": registre.ROADS_METHOD, "latest_record": trav_rec,
+                        "seals": [{"seq": 1, "fetched_at": trav_rec["fetched_at"], "prev": "",
+                                   "leaf": trav_leaf, "root": registre.chain_hash("", trav_leaf),
+                                   "signal": registre.digest(registre.canonical(["w0"])),
+                                   "active_count": 1}]}}
+
+
+def golden_steps():
+    """(payload, history, roadworks, collection) of each render: append, re-render,
+    append with collection facts, re-render with diverging facts (kept)."""
+    led4 = {"has_previous": True, "new": [{"issue_id": "d4b"}], "developed": [{"issue_id": "d4a"}],
+            "quiet": [{"issue_id": "d3"}]}
+    p4 = golden_payload([golden_issue("d4b", "Le pont", ["le-soleil", "cbc"], ["ville-quebec", "gouv-quebec"]),
+                         golden_issue("d4a", "Le tramway", ["ville-quebec", "le-soleil"], ["cbc", "gouv-quebec"])],
+                        led4)
+    h4 = {"method": "dossier-history-v1", "updated_at": "2026-09-04T12:00:00Z"}
+    rw4 = {"fetched_at": "2026-09-04T11:30:00+00:00", "events": [{"event_id": "w2"}, {"event_id": "w1"}]}
+    led5 = {"has_previous": True, "new": [], "developed": [{"issue_id": "d4b"}], "quiet": [{"issue_id": "d4a"}]}
+    p5 = golden_payload([golden_issue("d4b", "Le pont", ["le-soleil", "cbc", "gouv-quebec"], ["ville-quebec"])], led5)
+    h5 = {"method": "dossier-history-v1", "updated_at": "2026-09-05T12:00:00+00:00"}
+    rw5 = {"fetched_at": "2026-09-05T11:30:00+00:00", "events": [{"event_id": "w2"}]}
+    c5 = {"cbc": {"items": 4, "feeds_ok": 2, "feeds_total": 2},
+          "gouv-quebec": {"items": 7, "feeds_ok": 1, "feeds_total": 1},
+          "le-soleil": {"items": 11, "feeds_ok": 1, "feeds_total": 1},
+          "ville-quebec": {"items": 0, "feeds_ok": 0, "feeds_total": 1}}
+    c5_richer = dict(c5, **{"ville-quebec": {"items": 3, "feeds_ok": 1, "feeds_total": 1}})
+    return [(p4, h4, rw4, {}), (p4, h4, rw4, {}), (p5, h5, rw5, c5), (p5, h5, rw5, c5_richer)]
+
+
+def golden_event_view(history_doc):
+    """An invented event view for the same edition as the step (state only)."""
+    return {"edition": history_doc["updated_at"], "events": [
+        {"event_id": "ev-0123456789abcdef", "type": "fire-building", "places": ["limoilou"],
+         "activity": "new", "window_state": "in_window",
+         "members": [{"item_id": "ab" * 32, "institution": "le-soleil", "language": "fr",
+                      "origin_class": "own_reporting", "title": "Titre inventé", "url": "https://exemple.test/x"}],
+         "institutions": ["le-soleil"], "languages": ["fr"], "independence": {"count": 1}}]}
+
+
+class GoldenByteIdentity(unittest.TestCase):
+    """edition_record, seal_edition, voice_row and the public chain stay frozen."""
+
+    def emit_golden(self, root: Path, events_for=None):
+        import contextlib
+        import io
+        state_path = root / "data" / "registre.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps(golden_seed_state()), encoding="utf-8")
+        out_dir, out_html = root / "public" / "registre", root / "public" / "registre.html"
+        with contextlib.redirect_stdout(io.StringIO()):
+            for p, h, rw, c in golden_steps():
+                registre.emit(p, rw, history=h, collection=c, state_path=state_path,
+                              out_dir=out_dir, out_html=out_html,
+                              events=events_for(h) if events_for else None,
+                              events_path=root / "absent" / "latest_events.json")
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        files = {name: (out_dir / name).read_bytes() for name in (*GOLDEN_FILES, "institutions.json")}
+        files["registre.html"] = out_html.read_bytes()
+        return state, files
+
+    def assert_golden(self, state, files):
+        for name, expected in GOLDEN_FILES.items():
+            lf = files[name].replace(b"\r\n", b"\n")
+            self.assertEqual(hashlib.sha256(lf).hexdigest(), expected, name)
+        for key, expected in GOLDEN_STATE.items():
+            self.assertEqual(hashlib.sha256(registre.canonical(state[key])).hexdigest(), expected, key)
+        self.assertEqual(state["seals"][-1]["root"], GOLDEN_ROOT)
+        self.assertEqual([s["seq"] for s in state["seals"]], [1, 2, 3, 4, 5])
+
+    def test_reemitted_fixture_chain_is_byte_identical(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state, files = self.emit_golden(Path(tmp))
+            self.assert_golden(state, files)
+            self.assertEqual(state["evenements"]["seals"], [])
+
+    def test_an_event_view_changes_no_edition_byte(self):
+        hostile = lambda h: {"edition": h["updated_at"], "events": [{"event_id": "<b>x</b>"}]}  # noqa: E731
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b, \
+                tempfile.TemporaryDirectory() as c:
+            plain_state, plain = self.emit_golden(Path(a))
+            state, files = self.emit_golden(Path(b), golden_event_view)
+            self.assert_golden(state, files)
+            self.assertEqual(files, plain)       # institutions.json and the page too
+            self.assertEqual([s["seq"] for s in state["evenements"]["seals"]], [1, 2])
+            self.assertEqual(state["evenements"]["seals"][0]["record"]["edition_root"],
+                             state["seals"][3]["root"])
+            bad_state, bad = self.emit_golden(Path(c), hostile)
+            self.assert_golden(bad_state, bad)
+            self.assertEqual(bad_state["evenements"]["seals"], [])
+            self.assertEqual(plain_state["seals"], state["seals"])
+
+    def test_verify_cli_still_accepts_an_existing_chain_json(self):
+        """The chain.json checked here is byte-identical to the one the code wrote
+        before the event chain existed (the golden digest proves it)."""
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state, files = self.emit_golden(root, golden_event_view)
+            self.assert_golden(state, files)
+            for target in (root / "public" / "registre" / "chain.json", root / "data" / "registre.json"):
+                proc = subprocess.run([sys.executable, "-X", "utf8", str(harness.ROOT / "scripts" / "registre.py"),
+                                       "--verify", str(target)], capture_output=True, text=True, timeout=120)
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertIn("OK 5 seals verified", proc.stdout)
 
 
 if __name__ == "__main__":
