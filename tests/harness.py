@@ -19,7 +19,7 @@ if str(SCRIPTS) not in sys.path:
 # explicitly.
 import os  # noqa: E402
 
-os.environ.pop("VIGIE_EVENTS_SURFACES", None)
+os.environ["VIGIE_EVENTS_SURFACES"] = "off"
 
 # Hermetic robots.txt: article-page and image fetches read the host's
 # robots.txt first, and no test may touch the network for it. By default every

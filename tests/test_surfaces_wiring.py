@@ -179,17 +179,23 @@ EVENT_PATHS = re.compile(r"^(evenements\.html|evenements/.*|en/.*|qualite\.json|
 # The switch
 # --------------------------------------------------------------------------- #
 class Switch(unittest.TestCase):
-    def test_the_committed_default_is_off(self):
-        self.assertEqual(surfaces.EVENTS_SURFACES, "off")
-        self.assertEqual(surfaces.mode({}), "off")
+    def test_the_committed_constant_is_a_known_mode(self):
+        # The founder flips by commit (2026-10-06: live). Whatever is committed
+        # must be a known mode, and an unset environment follows it.
+        self.assertIn(surfaces.EVENTS_SURFACES, surfaces.MODES)
+        self.assertEqual(surfaces.mode({}), surfaces.EVENTS_SURFACES)
         self.assertEqual(surfaces.MODES, ("off", "preview", "live"))
 
-    def test_the_environment_overrides_only_local_runs(self):
-        for value in ("off", "preview", "live"):
-            self.assertEqual(surfaces.mode({surfaces.ENV_VAR: value}), value)
-            self.assertEqual(surfaces.mode({surfaces.ENV_VAR: value, "GITHUB_ACTIONS": "true"}), "off",
-                             "production follows the committed constant, never a variable")
-        self.assertEqual(surfaces.mode({surfaces.ENV_VAR: "live", "GITHUB_ACTIONS": "false"}), "live")
+    def test_the_environment_can_only_lower_the_committed_mode(self):
+        for committed, allowed in (("off", {"off"}), ("preview", {"off", "preview"}), ("live", {"off", "preview", "live"})):
+            for asked in ("off", "preview", "live"):
+                with mock.patch.object(surfaces, "EVENTS_SURFACES", committed), redirect_stdout(io.StringIO()):
+                    surfaces._SAID.clear()
+                    got = surfaces.mode({surfaces.ENV_VAR: asked})
+                    self.assertEqual(got, asked if asked in allowed else committed,
+                                     f"committed={committed} asked={asked}")
+                    self.assertEqual(surfaces.mode({surfaces.ENV_VAR: asked, "GITHUB_ACTIONS": "true"}), got,
+                                     "same rule under CI: a variable never raises, it may lower")
 
     def test_anything_else_is_off_and_diagnosed(self):
         for value in ("Live", "on", "1", "true", "live ", "preview\n", "évènements"):
@@ -204,7 +210,8 @@ class Switch(unittest.TestCase):
             self.assertEqual(surfaces.mode({}), "off", "a typo in the constant is off, never a guess")
 
     def test_the_harness_runs_the_suite_under_the_committed_constant(self):
-        self.assertNotIn(surfaces.ENV_VAR, os.environ, "tests pass modes explicitly; the variable is cleared")
+        self.assertEqual(os.environ.get(surfaces.ENV_VAR), "off",
+                         "the legacy suite is pinned to off through the variable (it can only lower the mode)")
 
     def test_what_each_mode_stages(self):
         cases = {

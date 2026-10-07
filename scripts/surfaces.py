@@ -31,12 +31,12 @@ How to flip: change EVENTS_SURFACES below in a reviewed commit, run
 `python -X utf8 scripts/verify.py`, push, then run the refresh workflow. To
 undo, set it back to "off": the next release is the brief again.
 
-The environment variable VIGIE_EVENTS_SURFACES overrides the constant for
-LOCAL runs and tests only: under GitHub Actions (GITHUB_ACTIONS=true, the only
-production writer) it is ignored, so a stray variable can never switch
-production. Unset or empty, the constant holds; any other value than the three
-modes means "off" and is printed as a diagnosis, never guessed (no case
-folding, no trimming: "Live" is not "live").
+The environment variable VIGIE_EVENTS_SURFACES can only LOWER the committed
+constant (live -> preview -> off), never raise it, in CI and locally alike: a
+stray variable can never make a run publish more than what was committed, and
+setting it to "off" is a kill switch. Unset or empty, the constant holds; any
+other value than the three modes means "off" and is printed as a diagnosis,
+never guessed (no case folding, no trimming: "Live" is not "live").
 
 Stdlib only, pure, no clock.
 """
@@ -95,18 +95,25 @@ def validate(value: object, origin: str) -> str:
     return "off"
 
 
+_ORDER = {"off": 0, "preview": 1, "live": 2}
+
+
 def mode(environ: Mapping[str, str] | None = None) -> str:
-    """The effective mode. The constant, unless VIGIE_EVENTS_SURFACES is set
-    on a local run (never under GitHub Actions); every value is validated."""
+    """The effective mode: the committed constant, which the environment
+    variable VIGIE_EVENTS_SURFACES can only LOWER (live -> preview -> off),
+    never raise. So no variable, local or in CI, can make a run publish more
+    than what was committed; it is also a kill switch (set it to off). Every
+    value is validated; an invalid one means off, diagnosed."""
     env = os.environ if environ is None else environ
     base = validate(EVENTS_SURFACES, "surfaces.EVENTS_SURFACES")
     raw = env.get(ENV_VAR)
     if raw is None or not str(raw).strip():
         return base   # unset (or set to nothing): the constant
-    if str(env.get("GITHUB_ACTIONS", "")).lower() == "true":
-        _say(f"{ENV_VAR} is ignored under GitHub Actions (production follows the constant: {base})")
+    asked = validate(raw, ENV_VAR)
+    if _ORDER[asked] > _ORDER[base]:
+        _say(f"{ENV_VAR}={asked} would raise the committed mode ({base}): the variable can only lower it; staying {base}")
         return base
-    return validate(raw, ENV_VAR)
+    return asked
 
 
 def brief_path(public_dir: Path, current: str) -> Path:

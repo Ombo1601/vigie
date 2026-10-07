@@ -64,6 +64,22 @@ INDEXNOW_URLS = (
     f"{SITE_URL}/registre.html", f"{SITE_URL}/memoire.html",
     f"{SITE_URL}/dossiers.html", f"{SITE_URL}/partir.html", f"{SITE_URL}/affiche.html",
 )
+# The event surfaces (scripts/surfaces.py) add front doors: announce them only
+# when the release actually serves them, never while the switch is off.
+INDEXNOW_LIVE_URLS = (f"{SITE_URL}/en/", f"{SITE_URL}/le-point.html")
+
+
+def indexnow_urls() -> list[str]:
+    """The URLs announced after a deploy: the fixed set, plus the English front
+    door and the relocated brief when the event surfaces are live."""
+    try:
+        import surfaces
+        live = surfaces.mode() == "live"
+    except Exception:  # noqa: BLE001 - discovery is best-effort
+        live = False
+    return list(INDEXNOW_URLS) + (list(INDEXNOW_LIVE_URLS) if live else [])
+
+
 LOCK_STALE_SECONDS = 2 * 3600
 LOG_ROTATE_BYTES = 5 * 1024 * 1024  # one previous log kept as refresh.log.1
 TEAM = "deemto"
@@ -240,7 +256,7 @@ def ping_indexnow() -> None:
         "host": "vigieqc.com",
         "key": INDEXNOW_KEY,
         "keyLocation": f"{SITE_URL}/{INDEXNOW_KEY}.txt",
-        "urlList": list(INDEXNOW_URLS),
+        "urlList": indexnow_urls(),
     }).encode("utf-8")
     try:
         request = urllib.request.Request(

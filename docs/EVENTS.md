@@ -794,9 +794,9 @@ successor only in `live`, and neither written nor announced while `off`.
 `scripts/surfaces.py` holds `EVENTS_SURFACES = "off" | "preview" | "live"`,
 committed `off`. Flipping it is a founder act made by a reviewed commit
 (docs/AUTONOMY.md: approving what production serves is an act, not an
-editorial choice). `VIGIE_EVENTS_SURFACES` overrides it for local runs and
-tests only, never under GitHub Actions; any value other than the three modes
-is `off`, printed as a diagnosis.
+editorial choice). `VIGIE_EVENTS_SURFACES` can only lower it (live -> preview
+-> off), never raise it, in CI and locally; any value other than the three
+modes is `off`, printed as a diagnosis.
 
 | | off | preview | live |
 |---|---|---|---|

@@ -232,8 +232,9 @@ builder is broken (a takedown, R10), set the switch back to `off`.
 `python -X utf8 scripts/verify.py`, commit, push, then run "Vigie refresh"
 (`workflow_dispatch`). Preview first, look at the staged pages, then live. To
 undo, set it back to `off` and run the refresh: the brief is at `/` again.
-`VIGIE_EVENTS_SURFACES=preview|live` tries a mode **locally only** (it is
-ignored under GitHub Actions); anything else means `off`, printed.
+`VIGIE_EVENTS_SURFACES` can only **lower** the committed mode (`live` ->
+`preview` -> `off`), never raise it, in CI and locally (it is a kill switch and
+how the legacy test suite pins `off`); anything else means `off`, printed.
 
 ### Discoverability
 
