@@ -634,6 +634,151 @@ class Determinism(unittest.TestCase):
         self.assertEqual(V.classify_places(titles), V.classify_places(titles))
 
 
+
+# --------------------------------------------------------------------------- #
+# Honest coverage (2026-10-07): the lexicon was extended from the kinds of
+# civic news that fell to "unclassified" in the live edition and the local
+# history. Every headline here is INVENTED (a place called Zorbanie, a ball
+# club called the Furets); each family has its positives and its near misses.
+# --------------------------------------------------------------------------- #
+COVERAGE_POSITIVES = [
+ ("Les résultats électoraux de la circonscription de Zorbanie : le Parti québécois en tête", "provincial-election"),
+ ("Zorbanie : les chefs de parti se disputent la tribune avant le scrutin", "provincial-election"),
+ ("Élections Québec rappelle les règles du vote par correspondance", "provincial-election"),
+ ("La CAQ promet un cadre financier équilibré pour Zorbanie", "provincial-election"),
+ ("Le député élu de Zorbanie-Nord dévoile son équipe", "provincial-election"),
+ ("Le gouvernement péquiste annonce son premier conseil à Zorbanie", "provincial-election"),
+ ("Le gouvernement péquiste de Zorbanie dévoile son équipe", "provincial-election"),
+ ("Zorbanie-Sud : candidate défaite, la QS demande un dépouillement judiciaire", "provincial-election"),
+ ("Quebec party leaders trade barbs a week before the vote", "provincial-election"),
+ ("La directrice générale du port quitte son poste", "appointment-resignation"),
+ ("Zorbo nommé capitaine des Furets de Zorbanie", "appointment-resignation"),
+ ("Un ministre zorbanien choisit sa nouvelle cheffe de cabinet : nomination officielle", "appointment-resignation"),
+ ("Zorbanie : un O-Train jusqu'au lac des Furets, pour 2040", "public-transit"),
+ ("Fermeture temporaire du chemin des Lutins à Zorbanie", "road-closure"),
+ ("Fermetures du boulevard Quilbo dans les nuits du 3 au 7 octobre", "road-closure"),
+ ("Circulation à contresens sur l'autoroute 999 à Zorbanie dès lundi", "roadworks"),
+ ("Quartier Quilbo : travaux de nuit, détour et problèmes de circulation à prévoir", "roadworks"),
+ ("Panne planifiée à Zorbanie : 12 000 clients rebranchés", "power-outage"),
+ ("Zorbanie : interruption d'électricité samedi dans le quartier Quilbo", "power-outage"),
+ ("Sur la route de Zorbanie, une camionnette percute un arbre ; son chauffeur s'en tire", "road-collision"),
+ ("Zorbanie : accident sur l'autoroute Quilbo, cinq blessés légers", "road-collision"),
+ ("Zorbanie mourns two drivers killed in road accidents on separate highways", "road-collision"),
+ ("Un cycliste de Zorbanie frappé par une voiture au centre-ville", "pedestrian-cyclist-struck"),
+ ("Un piéton happé mortellement à Zorbanie", "pedestrian-cyclist-struck"),
+ ("A vehicle strikes pedestrians on a Zorbanie sidewalk, four hurt", "pedestrian-cyclist-struck"),
+ ("Trois suspects arrêtés à Zorbanie après un vol", "arrest"),
+ ("Deux personnes arrêtées en Zorbanie-Ouest", "arrest"),
+ ("Un trafic de stupéfiants est démantelé dans un entrepôt de Zorbanie", "police-operation"),
+ ("La police de Zorbanie intervient dans un commerce : le BEI mène l'enquête", "police-operation"),
+ ("Il aurait tué son voisin à Zorbanie", "homicide"),
+ ("Zorbanie : un quinquagénaire comparaît, accusé d'avoir menacé une institutrice", "court-charges"),
+ ("Zorbanie : policier accusé d'avoir transmis des pièces confidentielles à un proche", "court-charges"),
+ ("Audience sur la peine : l'accusé de Zorbanie reviendra mardi", "court-sentence"),
+ ("Un juge ordonne la réouverture du site de Zorbanie", "court-ruling"),
+ ("Judge denies the request to leave Zorbanie", "court-ruling"),
+ ("Les Sénateurs battent les Furets en tirs au but", "sports-event"),
+ ("Dimanche soir à Zorbanie, les Sénateurs terminent devant les Bruins", "sports-event"),
+ ("Le Rouge et Noir de Zorbanie perd en LCF", "sports-event"),
+ ("Zorbo licencie 80 travailleurs à Zorbanie", "layoffs"),
+ ("Zinzin coupe soixante emplois dans son entrepôt de Zorbanie", "layoffs"),
+ ("Zorbanie : usine fermée, trois cents emplois perdus d'un coup", "layoffs"),
+ ("La boutique Zinzin cessera ses activités à Zorbanie", "business-open-close"),
+ ("Un nouvel écocentre mobile ouvre à Zorbanie", "waste-collection"),
+ ("L'essence atteint 2 $ le litre à Zorbanie", "price-change"),
+ ("Hydro-Zorbanie : le nouveau tarif résidentiel entre en vigueur à Quilbo", "price-change"),
+ ("Appel d'offres pour un parc éolien en Zorbanie", "investment-project"),
+ ("A missing teen from Zorbanie is found safe at a cousin's cottage", "missing-person"),
+]
+
+# (headline, the type it must NOT get): near misses an honest "unclassified"
+# (or another type) must keep
+COVERAGE_NEAR_MISSES = [
+ ("Résultats électoraux en Suède : la gauche l'emporte", "provincial-election"),
+ ("Élections en France : les candidats se disputent le vote", "provincial-election"),
+ ("Le vote par correspondance américain divise", "provincial-election"),
+ ("Zorbanie accueille le caucus conservateur fédéral pour sa rentrée sans scrutin", "provincial-election"),
+ ("À Zorbanie, la fête tourne court : les chefs des partis saluent les blessés par message", "provincial-election"),
+ ("Une plateforme de financement lance sa campagne à Zorbanie", "provincial-election"),
+ ("La victoire de l'écolière au concours de dessin de Zorbanie", "sports-event"),
+ ("Les sénateurs reçoivent la délégation de Zorbanie", "sports-event"),
+ ("Heat wave grips Zorbanie this week", "sports-event"),
+ ("Le candidat accusé d'avoir menti sur son parcours se défend", "court-charges"),
+ ("Une panne évitable, juge le comité de la station de Zorbanie", "court-ruling"),
+ ("Une tempête aurait tué des milliers de poissons à Zorbanie", "homicide"),
+ ("Il a arrêté de fumer à Zorbanie", "arrest"),
+ ("Fermeture temporaire du parc des Lutins à Zorbanie", "road-closure"),
+ ("La fermeture du chemin de croix a surpris Zorbanie", "road-closure"),
+ ("Une panne technique perturbe le service téléphonique de Zorbanie", "power-outage"),
+ ("Nomination de l'album de Zorbo au gala de Zorbanie", "appointment-resignation"),
+ ("Trump impose un nouveau tarif douanier sur les meubles de Zorbanie", "price-change"),
+ ("L'essence même du projet de Zorbanie", "price-change"),
+ ("Un appel d'offres pour des chaises à Zorbanie", "investment-project"),
+ ("Il coupe les arbres du verger de Zorbanie", "layoffs"),
+ ("La Coupe Grey crée des emplois à Zorbanie", "layoffs"),
+ ("Coupe Stanley : des emplois pour les étudiants de Zorbanie", "layoffs"),
+ ("La Coupe du monde génère des emplois temporaires à Zorbanie", "layoffs"),
+]
+
+
+class HonestCoverage(unittest.TestCase):
+    def test_each_new_keyword_family_classifies_its_invented_headline(self) -> None:
+        for headline, code in COVERAGE_POSITIVES:
+            self.assertEqual(V.classify_type([headline])[0], code, (headline, V.explain_type([headline])[:3]))
+
+    def test_near_misses_never_get_the_wrong_type(self) -> None:
+        for headline, code in COVERAGE_NEAR_MISSES:
+            self.assertNotEqual(V.classify_type([headline])[0], code, (headline, V.explain_type([headline])[:3]))
+
+    def test_every_family_that_gained_keywords_is_exercised_and_has_a_near_miss_somewhere(self) -> None:
+        types = {code for _h, code in COVERAGE_POSITIVES}
+        # the families the round touched: the election vocabulary, the sports clubs, the court
+        # and police phrases, the road, outage, transit, price, layoff and funding words
+        for code in ("provincial-election", "appointment-resignation", "public-transit",
+                     "road-closure", "roadworks", "power-outage", "road-collision", "pedestrian-cyclist-struck",
+                     "arrest", "police-operation", "homicide", "court-charges", "court-sentence", "court-ruling",
+                     "sports-event", "layoffs", "business-open-close", "waste-collection", "price-change",
+                     "investment-project", "missing-person"):
+            self.assertIn(code, types, f"no invented headline for {code}")
+
+    def test_every_long_strong_keyword_classifies_its_own_family(self) -> None:
+        # keywords of five or more words are read from the lexicon at run time and wrapped
+        # in an invented carrier, so no publisher-length phrase is copied into this file
+        doc = json.loads(Path(V.__file__).with_name("vocabulaire_lexique.json").read_text(encoding="utf-8"))
+        checked = 0
+        for code, rule in sorted(doc["types"].items()):
+            for key in ("fr_strong", "en_strong"):
+                for keyword in rule.get(key, []):
+                    if len(keyword.split()) >= 5 and not set(keyword) & set("~#*"):
+                        checked += 1
+                        self.assertEqual(V.classify_type(["Zorbanie : " + keyword])[0], code, keyword)
+        self.assertGreater(checked, 5)
+
+    def test_a_single_weak_cue_is_still_not_a_type(self) -> None:
+        # "victoire" and "defaite" are weak words of two types: alone they prove nothing
+        for headline in ("Une victoire pour la boulangerie de Zorbanie", "La défaite de l'équipe de Zorbanie au jeu de dames",
+                         "Le heat de l'été à Zorbanie"):
+            self.assertEqual(V.classify_type([headline]), ("unclassified", 0), headline)
+
+    def test_foreign_elections_and_the_federal_party_are_not_a_quebec_election(self) -> None:
+        for headline in ("Présidentielle en France : les candidats et le vote par correspondance",
+                         "Législatives en Suède : les résultats électoraux de la nuit",
+                         "Le caucus conservateur de Poilievre se réunit avant le vote de confiance",
+                         "Carney et le vote de confiance : les chefs de parti réagissent"):
+            self.assertNotEqual(V.classify_type([headline])[0], "provincial-election", headline)
+
+    def test_the_rounds_keywords_are_word_bounded(self) -> None:
+        # word-bounded: a keyword never fires inside a longer word
+        self.assertEqual(V.classify_type(["Les chefs de partisans de Zorbanie"]), ("unclassified", 0))
+        self.assertEqual(V.classify_type(["Les Sénateursonnent contre les Bruinsons"]), ("unclassified", 0))
+
+    def test_classification_is_deterministic_and_order_free(self) -> None:
+        titles = [h for h, _c in COVERAGE_POSITIVES]
+        first = [V.classify_type([t]) for t in titles]
+        self.assertEqual(first, [V.classify_type([t]) for t in titles])
+        self.assertEqual(V.classify_type(titles[:6]), V.classify_type(list(reversed(titles[:6]))))
+
+
 class FailSoft(unittest.TestCase):
     def tearDown(self) -> None:
         V.vocabulary.cache_clear()

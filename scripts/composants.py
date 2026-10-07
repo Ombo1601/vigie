@@ -207,6 +207,7 @@ if str(SCRIPTS) not in sys.path:
 
 import i18n  # noqa: E402
 import ownership  # noqa: E402
+import vocabulaire  # noqa: E402
 from i18n import t, tn  # noqa: E402
 
 SITE_URL = "https://vigieqc.com"
@@ -753,6 +754,74 @@ def _lead(ms: list[dict], lang: str) -> dict | None:
     return ms[0] if ms else None
 
 
+def is_unclassified(ev: dict) -> bool:
+    """An event whose type the evidence does not establish. Its type is never
+    printed as a chip, heading or title (the label "Événement non classé"
+    says nothing); the machine files keep the code. A view carrying the
+    unclassified words but no code is read the same way."""
+    if str(ev.get("type") or "") == vocabulaire.UNCLASSIFIED:
+        return True
+    if ev.get("type"):
+        return False
+    words = ev.get("type_label")
+    if not isinstance(words, dict):
+        return False
+    return any(str(words.get(lang) or "") == vocabulaire.type_label(vocabulaire.UNCLASSIFIED, lang)
+               for lang in ("fr", "en"))
+
+
+def kind_text(ev: dict, lang: str) -> str:
+    """The type chip's text: the type label, or nothing for an unclassified event."""
+    return "" if is_unclassified(ev) else loc(ev.get("type_label"), lang)
+
+
+def place_known(ev: dict, lang: str) -> bool:
+    """Whether the place is established (named, or positive geo evidence;
+    "Hors Québec" counts), as opposed to "Lieu non établi". The view says so
+    (`place_known`); a view without the flag is read by its place label."""
+    flag = ev.get("place_known")
+    if isinstance(flag, bool):
+        return flag
+    return bool(loc(ev.get("place_label"), lang))
+
+
+def place_text(ev: dict, lang: str) -> str:
+    """The place chip's text; empty when the place is not established."""
+    return loc(ev.get("place_label"), lang) if place_known(ev, lang) else ""
+
+
+def plain_name(ev: dict, lang: str) -> str:
+    """Vigie's own name for an event (never publisher text): its label
+    "Type · Place"; for an unclassified event the place alone, which is
+    "Lieu non établi" when no place is established, and the not-established
+    type line when the view carries no place at all."""
+    if not is_unclassified(ev):
+        return loc(ev.get("label"), lang)
+    return loc(ev.get("place_label"), lang) or t("ev.type_unknown", lang)
+
+
+def _headline_lead(ev: dict, ms: list[dict], lang: str) -> dict | None:
+    """The voice whose verbatim headline names a CURRENT unclassified event
+    (the card's own rule: `_lead`); None when the view is permanent or the
+    lead has no text, and the page then names itself by its place."""
+    if ev.get("permanent") or not is_unclassified(ev):
+        return None
+    lead = _lead(ms, lang)
+    return lead if lead is not None and str(lead.get("title") or "").strip() else None
+
+
+def _lead_byline(ms: list[dict], lead: dict, lang: str, code: str, *, first_mark: bool = True) -> str:
+    """Institution, declared time and day, the first-published mark and the
+    author: the attribution line under a lead headline."""
+    by = [f"<b>{esc(_inst(lead, lang))}</b>", esc(i18n.fmt_time(_shown_instant(lead), lang)),
+          esc(i18n.fmt_day(_shown_instant(lead), lang))]
+    if first_mark and len(ms) > 1 and lead is ms[0]:
+        by.append(f'<span title="{esc(t("first.tip", lang))}">{esc(t("first", lang).lower())}</span>')
+    if lead.get("author"):
+        by.append(f'{esc(t("by", lang))} <span lang="{code}">{esc(lead.get("author"))}</span>')
+    return '<p class="ev-by">' + " · ".join(by) + "</p>"
+
+
 def _span_seconds(ms: list[dict]) -> int | None:
     ts = [e for e in (_epoch(_shown_instant(m)) for m in ms) if e is not None]
     return int(max(ts) - min(ts)) if len(ts) > 1 else None
@@ -954,7 +1023,8 @@ def _why_rows(ev: dict, ms: list[dict], lead: dict | None, lang: str) -> list[tu
         (t("why.place", lang), loc(ev.get("place_label"), lang)),
         (t("why.fresh", lang), fresh),
         (t("why.voices", lang), voices),
-        (t("why.label", lang), t("why.label.text", lang, k=loc(ev.get("type_label"), lang))),
+        (t("why.label", lang), t("why.label.none", lang) if is_unclassified(ev)
+         else t("why.label.text", lang, k=loc(ev.get("type_label"), lang))),
     ]
     if n > 1 and lead is not None:
         rows.append((t("why.lead", lang), t("why.lead.first", lang) if lead is ms[0] else t("why.lead.lang", lang)))
@@ -994,25 +1064,32 @@ def event_card(ev: dict, lang: str) -> str:
     href = path_for(lang, event_path(eid))
     lead = None if perm else _lead(ms, lang)
     n, orgs = len(ms), _orgs(ms)
-    kind = loc(ev.get("type_label"), lang)
+    # The type chip says what the evidence established; an unclassified event
+    # has none (never "Événement non classé"): its place chip stands instead,
+    # and nothing when the place is not established either.
+    kind = kind_text(ev, lang)
+    where = place_text(ev, lang) if is_unclassified(ev) else ""
     top = "".join(x for x in (
-        chip(kind, "kind") if kind else "", activity_chip(ev.get("activity"), lang), event_tier_chip(ev, lang),
+        chip(kind, "kind") if kind else "", chip(where) if where else "",
+        activity_chip(ev.get("activity"), lang), event_tier_chip(ev, lang),
     ) if x)
-    label = loc(ev.get("label"), lang)
+    label = plain_name(ev, lang)
+    # what a screen reader hears after the button: the label, or for an
+    # unclassified event the verbatim headline in its own language
+    context = _sr(" (" + label + ")")
     if lead is not None and lead.get("title"):
         code = esc(lead.get("language") if lead.get("language") in ("fr", "en") else lang)
         head = f'<h2 class="ev-h"><a href="{esc(href)}" lang="{code}" data-hl>{esc(lead.get("title"))}</a></h2>'
-        by = [f"<b>{esc(_inst(lead, lang))}</b>", esc(i18n.fmt_time(_shown_instant(lead), lang)),
-              esc(i18n.fmt_day(_shown_instant(lead), lang))]
-        if n > 1 and lead is ms[0]:
-            by.append(f'<span title="{esc(t("first.tip", lang))}">{esc(t("first", lang).lower())}</span>')
-        if lead.get("author"):
-            by.append(f'{esc(t("by", lang))} <span lang="{code}">{esc(lead.get("author"))}</span>')
-        byline = '<p class="ev-by">' + " · ".join(by) + "</p>"
+        byline = _lead_byline(ms, lead, lang, code)
         summary = (f'<p class="ev-sum" lang="{code}" data-hl>{esc(_excerpt(lead))}</p>' if lead.get("excerpt") else "")
+        if is_unclassified(ev):
+            context = f'<span class="sr" lang="{code}"> ({esc(lead.get("title"))})</span>'
     else:
         head = f'<h2 class="ev-h"><a href="{esc(href)}">{esc(label)}</a></h2>'
         byline = summary = ""
+        if is_unclassified(ev):
+            byline = f'<p class="small muted m0">{esc(t("ev.type_unknown", lang))}</p>'
+            context = ""
     langs = event_lang_chip(ev.get("languages") or sorted({str(m.get("language") or "") for m in ms} & {"fr", "en"}), lang)
     facts = f'<b>{esc(tn("n.voices", n, lang))}</b> · {esc(tn("n.orgs", orgs, lang))} · {langs}'
     primary = " primary" if n > 1 else ""
@@ -1028,7 +1105,7 @@ def event_card(ev: dict, lang: str) -> str:
         f'<article class="card ev" id="{esc(dom_id("c", eid))}" data-mine-card>'
         f'<div class="ev-top">{top}</div>{head}{byline}{summary}{mini_timeline(ms, lang)}'
         f'<div class="ev-meta"><div class="facts">{facts}</div>'
-        f'<a class="btn{primary}" href="{esc(href)}">{esc(action)}{_sr(" (" + label + ")")}</a></div>'
+        f'<a class="btn{primary}" href="{esc(href)}">{esc(action)}{context}</a></div>'
         f'<details class="why"><summary>{esc(t("why", lang))}</summary><ul>{why}</ul></details>'
         "</article>"
     )
@@ -1446,11 +1523,14 @@ def archive_panel(ev: dict, lang: str) -> str:
     """What this page keeps after the edition, and what disappears."""
     ms = _sorted_members(ev)
     perm = bool(ev.get("permanent"))
-    label = loc(ev.get("label"), lang)
+    # An unclassified event keeps no type label: what stays is the place, when
+    # one is established (else no label at all).
+    label = place_text(ev, lang) if is_unclassified(ev) else loc(ev.get("label"), lang)
     parts = [
-        f'{esc(t("k.label", lang))}{esc(_colon(lang))}« {esc(label)} »',
+        f'{esc(t("k.label", lang))}{esc(_colon(lang))}« {esc(label)} »' if label else "",
         f'{esc(t("k.counts", lang))} ({esc(tn("n.voices", len(ms), lang))}, {esc(tn("n.orgs", _orgs(ms), lang))})',
     ]
+    parts = [part for part in parts if part]
     if ms:
         first_t = i18n.fmt_time(_shown_instant(ms[0]), lang)
         last_t = i18n.fmt_time(_shown_instant(ms[-1]), lang)
@@ -1542,7 +1622,17 @@ def event_page(ev: dict, lang: str, *, edition: dict | None = None, followed: in
     n, orgs = len(ms), _orgs(ms)
     span = _span_seconds(ms)
     langs = sorted({str(m.get("language")) for m in ms if m.get("language") in ("fr", "en")})
-    label = loc(ev.get("label"), lang)
+    label = plain_name(ev, lang)
+    unclassified = is_unclassified(ev)
+    # An unclassified event is never named by its type. CURRENT view: the lead
+    # voice's verbatim headline (its own lang, attributed under the h1) is the
+    # h1 and the document title. PERMANENT view (no publisher text, ever): the
+    # place label alone, then a small neutral "type not established" line.
+    lead = _headline_lead(ev, ms, lang)
+    lead_code = ""
+    if lead is not None:
+        lead_code = lead.get("language") if lead.get("language") in ("fr", "en") else lang
+        label = str(lead.get("title") or "").strip()
     facts = [_bold(tn("n.articles", n, lang)), _bold(tn("n.orgs", orgs, lang))]
     if langs:
         facts.append(_bold(" + ".join(x.upper() for x in sorted(langs, reverse=True))))
@@ -1550,15 +1640,25 @@ def event_page(ev: dict, lang: str, *, edition: dict | None = None, followed: in
     if span:
         line += " · " + esc(t("ep.span", lang, d="")).replace("", _bold(i18n.fmt_duration(span, lang)))
     place = loc(ev.get("place_label"), lang)
+    kind = kind_text(ev, lang)
+    if unclassified:
+        place = place_text(ev, lang)   # no "Lieu non établi" chip: the "Pourquoi ici ?" row says it
     chips = "".join(x for x in (
-        chip(loc(ev.get("type_label"), lang), "kind") if ev.get("type_label") else "",
+        chip(kind, "kind") if kind else "",
         activity_chip(ev.get("activity"), lang), event_tier_chip(ev, lang),
         chip(place) if place else "", event_lang_chip(langs, lang) if langs == ["en"] else "",
     ) if x)
     if any(p.get("same_owner") for p in _dicts(ev.get("language_pairs"))):
         chips += chip(t("chip.same_owner", lang), "same-owner")
+    if lead is not None:
+        h1 = f'<h1 id="h1" tabindex="-1" lang="{esc(lead_code)}">{esc(label)}</h1>'
+        h1 += _lead_byline(ms, lead, lang, esc(lead_code), first_mark=False)
+    else:
+        h1 = f'<h1 id="h1" tabindex="-1">{esc(label)}</h1>'
+        if unclassified:
+            h1 += f'<p class="small muted m0">{esc(t("ev.type_unknown", lang))}</p>'
     head = (f'<header class="evp-head"><div class="ev-top">{chips}</div>'
-            f'<h1 id="h1" tabindex="-1">{esc(label)}</h1><p class="facts-line">{line}</p></header>')
+            f'{h1}<p class="facts-line">{line}</p></header>')
     legend = esc(t("tl.legend.static" if perm else "tl.legend", lang))
     strip = full_timeline(ms, lang, linked=not perm)
     timeline = (_panel(t("tl.h", lang), strip + f'<p class="legend">{legend}</p>', hid="tl-h", cls="tl-card") if strip else "")
@@ -1585,7 +1685,11 @@ def event_page(ev: dict, lang: str, *, edition: dict | None = None, followed: in
         desc = t("meta.desc.event.perm", lang, label=label)
     else:
         desc = t("meta.desc.event", lang, label=label, articles=tn("n.articles", n, lang), orgs=tn("n.orgs", orgs, lang))
-    return document(lang=lang, fr_path=event_path(eid), title=label, description=desc, main=main,
+    title = label
+    if unclassified and lead is None and i18n.parse_instant(ev.get("born_edition")) is not None:
+        # a place alone names many records: the day it was opened tells them apart
+        title = f'{label} · {i18n.fmt_date(ev.get("born_edition"), lang)}'
+    return document(lang=lang, fr_path=event_path(eid), title=title, description=desc, main=main,
                     robots=robots, mine_href=path_for(lang, "/evenements.html") + "#chez-moi", page_type="article",
                     home=home, footer_note=footer_note, view="permanent" if perm else "current")
 
