@@ -91,7 +91,7 @@ class CataloguePair(unittest.TestCase):
         source = (harness.SCRIPTS / "ranking_events.py").read_text(encoding="utf-8")
         literal = set(re.findall(r"""["']((?:rank|chip)\.[a-z0-9_.-]+|tier\.possible|why\.single)["']""", source))
         dynamic = {f"rank.geo.{g}" for g in (*ranking_events.GEO_RANK, "unknown")}
-        dynamic |= {f"rank.decided.{d}" for d in ("first", "now", "geo", "origins", "fresh", "id", "none")}
+        dynamic |= {f"rank.decided.{d}" for d in ("first", *ranking_events.CRITERIA, "id", "none")}
         dynamic |= {"rank.geo.quebec-city.anchor", "chip.auto.model", "chip.auto.unrecorded",
                     "chip.auto.unmeasured", "chip.probable", "chip.certain"}
         for lang in i18n.LANGS:

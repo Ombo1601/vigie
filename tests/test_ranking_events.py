@@ -80,6 +80,11 @@ def by_id(rows: list[dict]) -> dict[str, dict]:
     return {r["event_id"]: r for r in rows}
 
 
+def nb(other: dict, score_e4: int) -> dict:
+    """A stored neighbour link (events.py: ids and integer scores in 1/10 000)."""
+    return {"event_id": other["event_id"], "score_e4": score_e4}
+
+
 def plain_edition(count: int = 30, owners=("a", "b", "c", "d")) -> list[dict]:
     """A quiet edition: single-voice events, Quebec City, spread over the last days."""
     return [event(100 + i, "quebec-city", [member(owners[i % len(owners)], 2 + i * 2)]) for i in range(count)]
@@ -98,6 +103,22 @@ class BandsAreQuantilesOfTheEdition(unittest.TestCase):
         self.assertEqual(R.band_of(5, pop)[0], 3)
         self.assertEqual(R.band_of(None, [None, 1, 2, 3])[0], 0)
         self.assertEqual(R.band_of(3, []), (0, 0))
+
+    def test_the_printed_standing_is_exact_counts_not_the_mid_rank(self):
+        # 154 of 200 share the lowest value: the mid-rank puts them at 38, yet not
+        # one of them has more than any other event (the reviewed false claim).
+        pop = [0] * 154 + [1] * 30 + [2] * 16
+        self.assertEqual(R.band_of(0, pop)[1], 38)                 # places the band only
+        self.assertEqual(R.standing_of(0, pop), {"below": 0, "tied": 153, "known": 200, "percent_below": 0})
+        self.assertEqual(R.standing_of(1, pop), {"below": 154, "tied": 29, "known": 200, "percent_below": 77})
+        self.assertEqual(R.standing_of(2, pop), {"below": 184, "tied": 15, "known": 200, "percent_below": 92})
+
+    def test_an_unknown_value_is_never_below_and_has_no_standing(self):
+        pop = [None, None, 5, 7]
+        self.assertEqual(R.standing_of(5, pop), {"below": 0, "tied": 0, "known": 2, "percent_below": 0})
+        self.assertEqual(R.standing_of(7, pop), {"below": 1, "tied": 0, "known": 2, "percent_below": 50})
+        self.assertEqual(R.standing_of(None, pop), {"below": 0, "tied": 0, "known": 2, "percent_below": 0})
+        self.assertEqual(R.standing_of(3, []), {"below": 0, "tied": 0, "known": 0, "percent_below": 0})
 
     def test_quiet_week_and_election_night_each_rank_on_their_own_distribution(self):
         # One event with two independent origins, in two very different editions.
@@ -300,15 +321,22 @@ class Explanation(unittest.TestCase):
     def test_every_criterion_carries_its_real_values(self):
         for r in self.rows():
             c = r["criteria"]
-            self.assertEqual(set(c), {"now", "geo", "origins", "fresh", "decided_by", "bands"})
+            self.assertEqual(set(c), {"now", "geo", "origins", "continuity", "fresh", "decided_by", "bands"})
             self.assertEqual(set(c["now"]), {"impact", "active", "soon", "outage", "anchored", "unseen",
                                              "declarations_in_view", "clock"})
             self.assertEqual(set(c["geo"]), {"scope", "rank", "basis"})
-            self.assertEqual(set(c["origins"]), {"reporting", "declarations", "groups", "members", "percent_below",
-                                                 "band", "events_compared"})
-            self.assertEqual(set(c["fresh"]), {"last_instant", "source", "age_hours", "percent_older", "band",
+            self.assertEqual(set(c["origins"]), {"reporting", "declarations", "groups", "members", "below", "tied",
+                                                 "percent_below", "percentile", "band", "events_compared"})
+            self.assertEqual(set(c["continuity"]), {"count", "follow_ups", "related", "records", "related_bar_e4",
+                                                    "below", "tied", "percent_below", "percentile", "band",
+                                                    "events_compared"})
+            k = c["continuity"]
+            self.assertEqual(k["count"], k["follow_ups"] + k["related"] + k["records"])   # a plain count, no weight
+            self.assertEqual(k["related_bar_e4"], 3985)
+            self.assertEqual(set(c["fresh"]), {"last_instant", "source", "age_hours", "older", "tied",
+                                               "events_dated", "percent_older", "percentile", "band",
                                                "events_compared"})
-            self.assertIn(c["decided_by"], ("first", "now", "geo", "origins", "fresh", "id"))
+            self.assertIn(c["decided_by"], ("first", "now", "geo", "origins", "continuity", "fresh", "id"))
             self.assertEqual(c["now"]["clock"], "2026-10-06T12:00:00Z")
 
     def test_every_explain_key_prints_in_both_languages_with_its_values(self):
@@ -331,22 +359,85 @@ class Explanation(unittest.TestCase):
         for entry in s["explain"]:
             for lang in ("fr", "en"):
                 self.assertTrue(i18n.t(entry["key"], lang, **entry["values"]))
-        self.assertTrue({"rank.now.active", "rank.now.none", "rank.geo.quebec-city", "rank.origins", "rank.fresh",
-                         "rank.fresh.unknown", "rank.shown", "rank.hidden.over_cap", "rank.hidden.below_median",
+        self.assertTrue({"rank.now.active", "rank.now.none", "rank.geo.quebec-city", "rank.origins", "rank.continuity",
+                         "rank.fresh",
+                         "rank.fresh.unknown", "rank.fresh.noclock", "rank.shown", "rank.hidden.over_cap", "rank.hidden.below_median",
                          "rank.hidden.no_member", "rank.now.unknown", "rank.geo.unknown",
                          "rank.geo.linked", "rank.geo.quebec-city.anchor", "rank.decided.first",
                          "rank.decided.now"} <= seen, sorted(seen))
+
+    def test_every_printed_standing_is_true_of_the_edition(self):
+        # A quiet night: most events have one voice and no continuity piece (the
+        # mode of the distribution, where the mid-rank wording was most false).
+        evs = plain_edition(17)
+        evs.append(event(40, "quebec-city", [member("a", 3), member("a", 2)]))            # one follow-up
+        evs.append(event(41, "quebec-city", [member("b", 4), member("c", 4)]))            # two origins, same time
+        evs.append(event(42, "quebec-city", [member("d", 4), member("ville", 1, origin="official")]))
+        undated = event(43, "quebec-city", [{"item_id": iid(9998), "institution": "q", "source_id": "q",
+                                             "language": "fr", "published_at": None, "first_seen": None,
+                                             "origin_class": "own_reporting", "owner_group": "q"}])
+        evs.append(undated)
+        rows = [r for r in R.rank_events(evs, ctx()) if r["hidden_reason"] != R.HIDDEN_NO_MEMBER]
+        values = {"origins": lambda r: r["criteria"]["origins"]["reporting"],
+                  "continuity": lambda r: r["criteria"]["continuity"]["count"],
+                  "fresh": lambda r: r["criteria"]["fresh"]["last_instant"] or None}
+        keys = {"origins": "rank.origins", "continuity": "rank.continuity", "fresh": "rank.fresh"}
+        zero = 0
+        for r in rows:
+            for crit, val in values.items():
+                mine = val(r)
+                others = [val(o) for o in rows if o is not r and val(o) is not None]
+                entry = [x for x in r["explain"] if x["key"] == keys[crit]]
+                if mine is None:                                   # no freshness standing: says so
+                    self.assertEqual(crit, "fresh")
+                    self.assertEqual(entry, [])
+                    continue
+                v = entry[0]["values"]
+                self.assertEqual(v["below"], sum(1 for o in others if o < mine), (crit, r["event_id"]))
+                self.assertEqual(v["tied"], sum(1 for o in others if o == mine), (crit, r["event_id"]))
+                self.assertEqual(v["total"], len(others) + 1)
+                c = r["criteria"][crit]
+                self.assertEqual((c["older"] if crit == "fresh" else c["below"], c["tied"]), (v["below"], v["tied"]))
+                self.assertEqual(c["percent_older" if crit == "fresh" else "percent_below"],
+                                 100 * v["below"] // v["total"])
+                for lang in ("fr", "en"):
+                    text = i18n.t(keys[crit], lang, **v)
+                    self.assertNotIn("%", text)                    # no percentile is ever printed as a share
+                if crit == "continuity" and mine == 0:
+                    zero += 1
+                    self.assertEqual(v["below"], 0)                # nobody has fewer than nothing
+                    self.assertIn("Plus que 0 des 21 événements", i18n.t(keys[crit], "fr", **v))
+                    self.assertIn("More than 0 of this edition's 21 events", i18n.t(keys[crit], "en", **v))
+        self.assertEqual(zero, 19)
+        fresh = [x for x in by_id(rows)[undated["event_id"]]["explain"] if x["key"] == "rank.fresh.unknown"]
+        self.assertEqual(len(fresh), 1)
+        dated = [r for r in rows if r["criteria"]["fresh"]["last_instant"]]
+        self.assertTrue(all(r["criteria"]["fresh"]["events_dated"] == len(dated) for r in dated))
+
+    def test_without_a_reference_time_the_age_is_never_printed_as_zero(self):
+        no_clock = {"edition_clock": "", "roadworks_view": None, "now": None}
+        rows = R.rank_events(plain_edition(4), no_clock)
+        for r in rows:
+            keys = [x["key"] for x in r["explain"]]
+            self.assertNotIn("rank.fresh", keys)                   # "0 h ago" would be invented
+            entry = [x for x in r["explain"] if x["key"] == "rank.fresh.noclock"][0]
+            self.assertNotIn("h", entry["values"])
+            self.assertIsNone(r["criteria"]["fresh"]["age_hours"])
+            self.assertEqual(entry["values"]["below"], r["criteria"]["fresh"]["older"])
+            for lang in ("fr", "en"):
+                self.assertNotRegex(i18n.t("rank.fresh.noclock", lang, **entry["values"]), r"[{}]")
+        self.assertEqual(sorted(x["criteria"]["fresh"]["older"] for x in rows), [0, 1, 2, 3])
 
     def test_each_row_explains_every_criterion_in_order(self):
         for r in self.rows():
             keys = [x["key"] for x in r["explain"]]
             kinds = []
             for k in keys:
-                for name in ("now", "geo", "origins", "fresh", "decided", "shown", "hidden"):
+                for name in ("now", "geo", "origins", "continuity", "fresh", "decided", "shown", "hidden"):
                     if k.startswith(f"rank.{name}"):
                         kinds.append(name)
                         break
-            order = ["now", "geo", "origins", "fresh", "decided"]
+            order = ["now", "geo", "origins", "continuity", "fresh", "decided"]
             positions = [kinds.index(x) for x in order]
             self.assertEqual(positions, sorted(positions), keys)
             self.assertIn(kinds[-1], ("shown", "hidden"))
@@ -356,7 +447,7 @@ class Explanation(unittest.TestCase):
         undated = [r for r in rows if r["criteria"]["fresh"]["source"] == "none"]
         self.assertEqual(len(undated), 1)
         self.assertIsNone(undated[0]["criteria"]["fresh"]["age_hours"])
-        self.assertEqual(undated[0]["explain"][3]["key"], "rank.fresh.unknown")
+        self.assertEqual(undated[0]["explain"][4]["key"], "rank.fresh.unknown")
         same_geo = [r for r in rows if r["criteria"]["geo"]["scope"] == "quebec-city"
                     and r["criteria"]["origins"]["band"] == undated[0]["criteria"]["origins"]["band"]]
         self.assertEqual(same_geo[-1]["event_id"], undated[0]["event_id"])
@@ -368,11 +459,188 @@ class Explanation(unittest.TestCase):
         self.assertEqual((row["age_hours"], row["source"]), (20, "first_seen"))
 
 
+def cont(row: dict) -> dict:
+    return row["criteria"]["continuity"]
+
+
+class Continuity(unittest.TestCase):
+    """Criterion 4: follow-up and related coverage, an unweighted count of pieces,
+    banded by quartiles of the current edition (docs/AUTONOMY.md)."""
+
+    def test_the_grouping_bar_is_the_matchers_own(self):
+        import event_match
+        self.assertEqual(R.RELATED_BAR_E4, int(round(event_match.THRESHOLDS[event_match.MERGE_TIER] * 10000)))
+        self.assertEqual(R.CRITERIA, ("now", "geo", "origins", "continuity", "fresh"))
+
+    def test_quiet_night_and_election_night_each_band_on_their_own_distribution(self):
+        def target():   # one origin, two follow-ups: continuity 2
+            return event(1, "quebec-city", [member("a", 7), member("a", 6), member("a", 5)])
+        quiet = plain_edition(20) + [target()]
+        night = [event(200 + i, "quebec-city", [member(f"o{i}", 3 + j) for j in range(4 + i % 5)])
+                 for i in range(20)] + [target()]
+        q = cont(by_id(R.rank_events(quiet, ctx()))[f"ev-{1:016x}"])
+        n = cont(by_id(R.rank_events(night, ctx()))[f"ev-{1:016x}"])
+        self.assertEqual((q["count"], q["follow_ups"]), (2, 2))
+        self.assertEqual((n["count"], n["follow_ups"]), (2, 2))     # the same raw count ...
+        self.assertEqual(q["band"], 3)                              # ... top quartile on a quiet night
+        self.assertEqual(n["band"], 0)                              # ... bottom quartile on an election night
+        self.assertGreater(q["percent_below"], n["percent_below"])
+        # on the election night the counts spread over every band
+        bands = {cont(r)["band"] for r in R.rank_events(night, ctx())}
+        self.assertEqual(bands, {0, 1, 2, 3})
+
+    def test_continuity_decides_between_events_tied_on_the_criteria_before_it(self):
+        lone = event(1, "quebec-city", [member("x", 1)])                       # the freshest, nothing else
+        followed = event(2, "quebec-city", [member("y", 30), member("y", 20)])  # older, with a follow-up
+        rows = R.rank_events(plain_edition(12) + [lone, followed], ctx())
+        order = [r["event_id"] for r in rows]
+        self.assertEqual(order[:2], [followed["event_id"], lone["event_id"]])
+        r = by_id(rows)
+        self.assertEqual(r[lone["event_id"]]["criteria"]["decided_by"], "continuity")
+        self.assertEqual(r[lone["event_id"]]["criteria"]["origins"]["band"],
+                         r[followed["event_id"]]["criteria"]["origins"]["band"])
+        self.assertGreater(cont(r[followed["event_id"]])["band"], cont(r[lone["event_id"]])["band"])
+        entry = [x for x in r[followed["event_id"]]["explain"] if x["key"] == "rank.continuity"][0]
+        self.assertEqual({k: entry["values"][k] for k in ("n", "f", "r", "a")}, {"n": 1, "f": 1, "r": 0, "a": 0})
+        self.assertEqual((entry["values"]["below"], entry["values"]["tied"]),
+                         (cont(r[followed["event_id"]])["below"], cont(r[followed["event_id"]])["tied"]))
+        self.assertIn("rank.decided.continuity", [x["key"] for x in r[lone["event_id"]]["explain"]])
+        self.assertEqual(R.summarize(rows)["decided_by"].get("continuity"), 1)
+
+    def test_origins_still_come_before_continuity_and_now_impact_before_everything(self):
+        many = [member("p", 40 + j) for j in range(6)]
+        loud = event(1, "quebec-city", many)                                     # 1 origin, 5 follow-ups
+        two = event(2, "quebec-city", [member("q", 50), member("r", 50)])        # 2 origins, no continuity
+        now = event(3, "linked", [member("s", 90)], anchors=[anchor("W1")])      # nothing but an obstruction
+        loud["neighbours"] = [nb(two, 9000)]
+        rows = R.rank_events(plain_edition(12) + [loud, two, now], ctx([decl("W1")]))
+        order = [r["event_id"] for r in rows]
+        self.assertEqual(order[:3], [now["event_id"], two["event_id"], loud["event_id"]])
+        r = by_id(rows)
+        self.assertEqual(r[two["event_id"]]["criteria"]["decided_by"], "now")
+        self.assertEqual(r[loud["event_id"]]["criteria"]["decided_by"], "origins")
+        self.assertEqual((cont(r[loud["event_id"]])["follow_ups"], cont(r[loud["event_id"]])["related"]), (5, 1))
+        self.assertEqual(cont(r[now["event_id"]])["count"], 0)
+
+    def test_declarations_inflate_neither_origins_nor_continuity(self):
+        one_authority = event(1, "quebec-city", [member("ville", 2 + j, origin="official") for j in range(6)])
+        two_authorities = event(2, "quebec-city", [member("ville", 3, origin="official"),
+                                                   member("gouv", 4, origin="official")])
+        mixed = event(3, "quebec-city", [member("ville", 2 + j, origin="official") for j in range(3)]
+                      + [member("a", 5)])
+        reporter = event(4, "quebec-city", [member("b", 6)])
+        reporter["neighbours"] = [nb(one_authority, 9000), nb(two_authorities, 9000)]   # declarations only: no piece
+        one_authority["neighbours"] = [nb(reporter, 9000)]                              # a report is a piece
+        r = by_id(R.rank_events([one_authority, two_authorities, mixed, reporter], ctx()))
+        c = {n: cont(r[f"ev-{n:016x}"]) for n in (1, 2, 3, 4)}
+        self.assertEqual((c[1]["records"], c[1]["follow_ups"], c[1]["related"]), (1, 0, 1))   # six communiqués: one record
+        self.assertEqual(r[f"ev-{1:016x}"]["criteria"]["origins"]["reporting"], 0)
+        self.assertEqual((c[2]["records"], c[2]["count"]), (2, 2))                          # two authorities
+        self.assertEqual((c[3]["records"], c[3]["follow_ups"], c[3]["count"]), (1, 0, 1))
+        self.assertEqual(c[4]["related"], 0)
+
+    def test_a_related_event_counts_only_at_the_grouping_bar_once_and_when_present(self):
+        a = event(1, "quebec-city", [member("a", 5)])
+        b, c, d, e = (event(n, "quebec-city", [member(o, 6)]) for n, o in ((2, "b"), (3, "c"), (4, "d"), (5, "e")))
+        a["neighbours"] = [nb(b, R.RELATED_BAR_E4), nb(c, R.RELATED_BAR_E4 - 1), nb(d, 9000), nb(d, 8000),
+                           nb(a, 9999), {"event_id": f"ev-{999:016x}", "score_e4": 9000},
+                           {"event_id": e["event_id"], "score_e4": True},
+                           {"event_id": e["event_id"], "score_e4": "9000"},
+                           {"event_id": e["event_id"], "score_e4": 0.9}]
+        row = by_id(R.rank_events([a, b, c, d, e], ctx()))[a["event_id"]]
+        self.assertEqual(cont(row)["related"], 2)            # b at the bar, d once; c below; self, absent, junk never
+
+    def test_a_near_duplicate_copy_is_not_a_follow_up(self):
+        x, y = member("a", 3), member("a", 4)
+        copied = event(1, "quebec-city", [x, y], copies=[[x["item_id"], y["item_id"]]])
+        x2, y2 = member("a", 3), member("a", 4)
+        updated = event(2, "quebec-city", [x2, y2])
+        r = by_id(R.rank_events([copied, updated], ctx()))
+        self.assertEqual(cont(r[copied["event_id"]])["follow_ups"], 0)
+        self.assertEqual(cont(r[updated["event_id"]])["follow_ups"], 1)
+
+    def test_withdrawn_voices_never_count(self):
+        m1, m2 = member("a", 3), member("a", 4)
+        e1 = event(1, "quebec-city", [m1, m2])
+        self.assertEqual(cont(R.rank_events([e1], ctx(withdrawn_item_ids=[m2["item_id"]]))[0])["follow_ups"], 0)
+        self.assertEqual(cont(R.rank_events([dict(e1, withdrawn=[m2["item_id"]])], ctx())[0])["follow_ups"], 0)
+        # a related event whose every voice is withdrawn is not counted
+        m3 = member("b", 5)
+        n = event(2, "quebec-city", [m3])
+        e1["neighbours"] = [nb(n, 9000)]
+        self.assertEqual(cont(by_id(R.rank_events([e1, n], ctx()))[e1["event_id"]])["related"], 1)
+        rows = by_id(R.rank_events([e1, n], ctx(withdrawn_item_ids=[m3["item_id"]])))
+        self.assertEqual(cont(rows[e1["event_id"]])["related"], 0)
+        # an event that lost a voice counts no related link and is counted by none:
+        # the stored link may rest on the withdrawn text
+        n2 = event(3, "quebec-city", [member("c", 5)], withdrawn_count=1, neighbours=[nb(e1, 9000)])
+        e1["neighbours"] = [nb(n2, 9000)]
+        rows = by_id(R.rank_events([e1, n2], ctx()))
+        self.assertEqual((cont(rows[e1["event_id"]])["related"], cont(rows[n2["event_id"]])["related"]), (0, 0))
+        e1["neighbours"] = [nb(n, 9000)]
+        rows = by_id(R.rank_events([e1, n], ctx(withdrawn_item_ids=[m2["item_id"]])))
+        self.assertEqual(cont(rows[e1["event_id"]])["related"], 0)
+        # a withdrawn declaration is not a record
+        d = member("ville", 2, origin="official")
+        e4 = event(4, "quebec-city", [d, member("e", 3)])
+        self.assertEqual(cont(R.rank_events([e4], ctx(withdrawn_item_ids=[d["item_id"]]))[0])["records"], 0)
+
+    def test_the_event_type_is_not_an_input(self):
+        a = event(1, "quebec-city", [member("a", 5), member("a", 4)], type="culture-event")
+        b = event(2, "quebec-city", [member("b", 5), member("b", 4)], type="municipal-politics")
+        rows = R.rank_events([b, a], ctx())
+        self.assertEqual([r["event_id"] for r in rows], [a["event_id"], b["event_id"]])    # the id, never the topic
+        self.assertEqual(rows[1]["criteria"]["decided_by"], "id")
+        self.assertEqual(cont(rows[0]), cont(rows[1]))
+
+    def test_malformed_continuity_inputs_never_crash(self):
+        good = event(1, "quebec-city", [member("a", 3), member("a", 4)])
+        bads = [
+            event(2, "quebec-city", [member("b", 3)], neighbours="x", copies="x", withdrawn_count="3"),
+            event(3, "quebec-city", [member("c", 3)], neighbours=[None, 3, {"event_id": 5}, {"score_e4": 9000}],
+                  copies=[[1, 2], [None], "ab", [good["members"][0]["item_id"]]], withdrawn_count=True),
+            event(4, "quebec-city", [member("d", 3)], neighbours={"event_id": good["event_id"]}, withdrawn_count=-1,
+                  copies=None),
+        ]
+        rows = R.rank_events([good] + bads, ctx())
+        self.assertEqual(len(rows), 4)
+        for r in rows:
+            c = cont(r)
+            self.assertTrue(all(isinstance(c[k], int) and c[k] >= 0 for k in ("count", "follow_ups", "related", "records")))
+        self.assertEqual(cont(by_id(rows)[good["event_id"]])["follow_ups"], 1)
+
+    def test_the_explanation_prints_the_real_numbers_in_both_languages(self):
+        f1, f2 = member("a", 3), member("a", 4)
+        other = event(2, "quebec-city", [member("b", 5)])
+        e = event(1, "quebec-city", [f1, f2, member("ville", 2, origin="official")], neighbours=[nb(other, 9000)])
+        row = by_id(R.rank_events(plain_edition(6) + [e, other], ctx()))[e["event_id"]]
+        entries = [x for x in row["explain"] if x["key"] == "rank.continuity"]
+        self.assertEqual(len(entries), 1)
+        v = entries[0]["values"]
+        c = cont(row)
+        self.assertEqual((v["n"], v["f"], v["r"], v["a"], v["below"], v["tied"], v["total"]),
+                         (c["count"], c["follow_ups"], c["related"], c["records"], c["below"], c["tied"],
+                          c["events_compared"]))
+        self.assertEqual((c["count"], c["follow_ups"], c["related"], c["records"]), (3, 1, 1, 1))
+        for lang in ("fr", "en"):
+            text = i18n.t("rank.continuity", lang, **v)
+            self.assertNotRegex(text, r"[{}]")
+            for k in ("n", "f", "r", "a", "below", "tied", "total"):
+                self.assertIn(str(v[k]), text)
+            self.assertTrue(i18n.t("rank.decided.continuity", lang).strip())
+
+
 class Purity(unittest.TestCase):
     def evs(self):
         evs = plain_edition(25)
         evs.append(event(1, "linked", [member("z", 50)], anchors=[anchor("W1")]))
         evs.append(event(2, "quebec", [member("a", 5), member("b", 6)]))
+        # continuity inputs: a follow-up, a copy, a declaration, related links both ways
+        f1, f2, f3 = member("c", 4), member("c", 9), member("c", 9)
+        evs.append(event(3, "quebec-city", [f1, f2, f3, member("ville", 5, origin="official")],
+                         copies=[[f2["item_id"], f3["item_id"]]],
+                         neighbours=[nb(evs[0], 5000), nb(evs[1], 4100), nb(evs[2], 900)]))
+        evs[0]["neighbours"] = [nb(evs[-1], 5000)]
         return evs
 
     def test_same_inputs_same_bytes_whatever_the_input_order(self):
