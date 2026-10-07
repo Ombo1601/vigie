@@ -843,6 +843,155 @@ class Roadworks(unittest.TestCase):
             self.assertIn("Heure de collecte non établie", ck.roadworks_block(view, "fr"))
 
 
+def decl(eid: str, direction: str, street: str = "Rue Quirion-Fictive", **kw) -> dict:
+    """One INVENTED City declaration (one direction of one piece of work)."""
+    base = {"event_id": eid, "road_names": [street], "direction": direction, "event_type": "road-work",
+            "event_status": "active", "vehicle_impact": "some-lanes-closed",
+            "start_date": "2026-10-01T10:00:00Z", "end_date": "2026-10-30T20:00:00Z",
+            "start_date_accuracy": "verified", "end_date_accuracy": "estimated",
+            "update_date": "2026-10-05T00:00:00Z",
+            "description": f"{street} entre la rue Alpha et la rue Bêta, travaux d'aqueduc fictifs."}
+    base.update(kw)
+    return base
+
+
+def rw_store(*events: dict) -> dict:
+    return {"fetched_at": "2026-10-06T10:00:00+00:00", "institution_name": "Ville Xénon", "events": list(events)}
+
+
+class RoadworksByDirection(unittest.TestCase):
+    """One row per piece of work, not one per direction: the published rule."""
+
+    def rows(self, *events: dict, limit: int = 6) -> list[dict]:
+        return ck.roadworks_view(rw_store(*events), limit=limit)["rows"]
+
+    def test_two_opposite_directions_are_one_row_and_the_counts_stay_declarations(self):
+        view = ck.roadworks_view(rw_store(decl("z-2", "southbound"), decl("a-1", "northbound")))
+        self.assertEqual(len(view["rows"]), 1)
+        row = view["rows"][0]
+        self.assertEqual((row["n"], row["directions"], row["direction"]), (2, ["northbound", "southbound"], ""))
+        self.assertEqual(sorted(row["ids"]), ["a-1", "z-2"])
+        self.assertEqual((view["total"], view["closed"], view["planned"], view["row_count"]), (2, 0, 0, 1))
+        for lang, both, counts, caption in (
+            ("fr", "dans les deux sens", "2 entraves déclarées", "1 ligne regroupe 2 déclarations de la Ville"),
+            ("en", "both directions", "2 obstructions declared", "1 row groups 2 City declarations"),
+        ):
+            html = ck.roadworks_block(view, lang)
+            self.assertEqual(html.count("<li data-rw>"), 1, lang)
+            self.assertEqual(html.count("travaux d&#x27;aqueduc fictifs"), 1, "the verbatim text once")
+            self.assertIn(both, html)
+            self.assertIn(counts, html)
+            self.assertIn(caption, html)
+            self.assertIn("data-rw-grouped", html)
+            self.assertNotIn("direction nord", html, "the per-direction words are not printed")
+            self.assertNotIn("northbound", html)
+
+    def test_no_caption_when_nothing_is_grouped(self):
+        view = ck.roadworks_view(rw_store(decl("a", "northbound"), decl("b", "southbound", street="Rue Autre-Fictive")))
+        self.assertEqual(len(view["rows"]), 2)
+        for lang in ("fr", "en"):
+            html = ck.roadworks_block(view, lang)
+            self.assertNotIn("data-rw-grouped", html)
+            self.assertEqual(html.count("<li data-rw>"), 2)
+        self.assertIn("direction nord", ck.roadworks_block(view, "fr"))
+        self.assertIn("southbound", ck.roadworks_block(view, "en"))
+
+    def test_any_difference_keeps_the_rows_apart(self):
+        differing = {
+            "description": {"description": "Un autre texte fictif."},
+            "start": {"start_date": "2026-10-02T10:00:00Z"},
+            "end": {"end_date": "2026-10-31T20:00:00Z"},
+            "start time only": {"start_date": "2026-10-01T11:00:00Z"},
+            "accuracy": {"end_date_accuracy": "verified"},
+            "impact": {"vehicle_impact": "all-lanes-closed"},
+            "status": {"event_status": "planned"},
+            "type": {"event_type": "work-zone"},
+            "road": {"road_names": ["Rue Quirion-Fictive", "Rue Voisine-Fictive"]},
+            "restrictions": {"restrictions": [{"type": "reduced-width", "value": 2}]},
+        }
+        for name, change in differing.items():
+            rows = self.rows(decl("a", "northbound"), decl("b", "southbound", **change))
+            self.assertEqual(len(rows), 2, name)
+            self.assertTrue(all(r["n"] == 1 for r in rows), name)
+            self.assertNotIn("data-rw-grouped", ck.roadworks_block({"collected_at": "2026-10-06T10:00:00Z", "rows": rows}, "fr"), name)
+
+    def test_only_cardinal_directions_that_differ_are_grouped(self):
+        # the City's own "both directions" value, an unknown or empty one: never merged
+        for d in ("both-directions", "", "sideways"):
+            self.assertEqual(len(self.rows(decl("a", d), decl("b", d))), 2, repr(d))
+            self.assertEqual(len(self.rows(decl("a", "northbound"), decl("b", d))), 2, repr(d))
+        # the same direction twice is a duplicate, not a second direction
+        self.assertEqual(len(self.rows(decl("a", "northbound"), decl("b", "northbound"))), 2)
+        # a duplicate does not stop the other direction from joining one of the rows
+        rows = self.rows(decl("a", "northbound"), decl("b", "northbound"), decl("c", "southbound"))
+        self.assertEqual(sorted(r["n"] for r in rows), [1, 2])
+
+    def test_direction_sets_print_in_a_fixed_order(self):
+        cases = (
+            (("westbound", "eastbound"), "both directions"),
+            (("southbound", "northbound"), "both directions"),
+            (("eastbound", "northbound"), "northbound, eastbound"),
+            (("westbound", "southbound", "northbound"), "northbound, southbound, westbound"),
+            (("westbound", "eastbound", "southbound", "northbound"), "northbound, southbound, eastbound, westbound"),
+        )
+        for dirs, expected in cases:
+            events = [decl(f"id-{k}", d) for k, d in enumerate(dirs)]
+            view = ck.roadworks_view(rw_store(*events))
+            self.assertEqual(len(view["rows"]), 1, dirs)
+            self.assertEqual(view["rows"][0]["n"], len(dirs))
+            html = ck.roadworks_block(view, "en")
+            self.assertIn(expected, html, dirs)
+            self.assertEqual(html, ck.roadworks_block(ck.roadworks_view(rw_store(*reversed(events))), "en"), "input order is irrelevant")
+        fr = ck.roadworks_block(ck.roadworks_view(rw_store(decl("a", "eastbound"), decl("b", "northbound"))), "fr")
+        self.assertIn("direction nord, direction est", fr)
+
+    def test_the_order_and_the_cap_apply_to_the_grouped_rows(self):
+        events = []
+        for k, street in enumerate(("Rue A-Fictive", "Rue B-Fictive", "Rue C-Fictive", "Rue D-Fictive")):
+            for d in ("northbound", "southbound"):
+                events.append(decl(f"{street[4]}-{d[0]}", d, street=street,
+                                   vehicle_impact="all-lanes-closed" if k == 2 else "some-lanes-closed"))
+        view = ck.roadworks_view(rw_store(*events), limit=3)
+        self.assertEqual(view["total"], 8)
+        self.assertEqual(view["row_count"], 4)
+        self.assertEqual([r["street"] for r in view["rows"]], ["Rue C-Fictive", "Rue A-Fictive", "Rue B-Fictive"],
+                         "most restrictive first, then the stable order, on grouped rows")
+        self.assertEqual(sum(r["n"] for r in view["rows"]), 6, "three works shown where the old cap showed three directions")
+        html = ck.roadworks_block(view, "fr")
+        self.assertIn("Les 3 plus restrictives sont affichées.", html)
+        self.assertIn("3 lignes regroupent 6 déclarations", html)
+        self.assertIn("8 entraves déclarées, dont 2 avec toutes les voies fermées", html)
+
+    def test_determinism(self):
+        events = [decl(f"id-{k}", d, street=f"Rue {s}-Fictive", update_date=f"2026-10-0{k % 5 + 1}T00:00:00Z")
+                  for k, (s, d) in enumerate((s, d) for s in "ABCD" for d in ("northbound", "southbound", "eastbound"))]
+        first = ck.roadworks_view(rw_store(*events), limit=4)
+        for perm in (list(reversed(events)), events[3:] + events[:3], sorted(events, key=lambda e: e["road_names"][-1][::-1])):
+            again = ck.roadworks_view(rw_store(*perm), limit=4)
+            self.assertEqual(first, again)
+            self.assertEqual(ck.roadworks_block(first, "fr"), ck.roadworks_block(again, "fr"))
+
+    def test_a_withdrawn_lane_is_unaffected(self):
+        withdrawn = {"withdrawn": "source_withdrawn", "rows": [], "total": 9}
+        for lang in ("fr", "en"):
+            html = ck.roadworks_block(withdrawn, lang)
+            self.assertIn("data-rw-withdrawn", html)
+            self.assertNotIn("data-rw-grouped", html)
+            self.assertNotIn("<li", html)
+
+    def test_both_languages_carry_the_new_words(self):
+        fr, en = i18n.catalogue("fr"), i18n.catalogue("en")
+        self.assertEqual(i18n.validate(), [], "the catalogue pair stays healthy (parity, placeholders, plurals)")
+        for key in ("roads.dir_both", "roads.grouped.one", "roads.grouped.other"):
+            self.assertIn(key, fr)
+            self.assertIn(key, en)
+            self.assertNotEqual(fr[key], en[key], key)
+        for lang, cat in (("fr", fr), ("en", en)):
+            for key in ("roads.grouped.one", "roads.grouped.other"):
+                self.assertIn("{n}", cat[key], lang)
+                self.assertIn("{d}", cat[key], lang)
+
+
 class EditionPage(unittest.TestCase):
     def test_edition_head_cards_aside_end(self):
         page = PAGES["evenements.html"]

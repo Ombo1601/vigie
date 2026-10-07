@@ -30,7 +30,25 @@ Successive criteria, compared one after the other, never added up:
   3. origins    the number of independent REPORTING origins (declarations by
                 an authority are not origins: they are listed apart), in one
                 of four bands cut at the quartiles of the CURRENT edition.
-  4. fresh      the instant of the newest member, in one of four bands cut at
+  4. continuity the follow-up and related coverage the event has in the
+                window, in one of four bands cut at the quartiles of the
+                CURRENT edition. It is a plain count of pieces, each worth
+                one (no kind of piece weighs more than another):
+                  follow_ups  further articles from a reporting origin already
+                              counted (an update, a follow-up); a near-duplicate
+                              copy of an article is not a further article;
+                  related     other events of this edition that the matcher
+                              scores at its own grouping bar (MERGE_TIER,
+                              "probable") but did not group, and that carry at
+                              least one reporting origin;
+                  records     the distinct authorities that made a declaration
+                              in the event (six communiques of one authority are
+                              one record: a declaration never inflates).
+                Weaker "possible" links (same storyline) are not counted: they
+                are a different, weaker claim than the other two pieces, which
+                are both "about this event" at the grouping bar. FR/EN pairs
+                are not counted apart: both articles are already counted.
+  5. fresh      the instant of the newest member, in one of four bands cut at
                 the quartiles of the CURRENT edition.
   last          the event id, so that equal events always come out in the
                 same order.
@@ -38,8 +56,16 @@ Successive criteria, compared one after the other, never added up:
 A quartile band is read off the mid-rank percentile of the value among the
 events of the edition: (events strictly below + half the events equal) / n,
 in integer arithmetic. So a quiet week and an election night each rank on
-their own distribution; no constant here is an opinion. The four criteria and
+their own distribution; no constant here is an opinion. The five criteria and
 their order are the only fixed things, and they are the rule.
+
+The mid-rank percentile only places the band (a tie counts half below). It is
+never printed as "more than N %": that sentence would be false for every tie
+(on a quiet night most events share the lowest count, and half of them would
+read as beaten). What the page prints is the exact standing: how many events
+of the edition are strictly below, how many others are equal, out of how many
+(`standing_of`). An event without a known instant has no freshness standing,
+and an undated event is never counted as "older" than a dated one there.
 
 An event is shown when its key is at or above the edition's median key
 (upper median) and it is one of the first CAP in display order. The rest are
@@ -49,7 +75,10 @@ not hidden: each carries the recorded reason (`below-median`, `over-cap`,
 R10: a withdrawn voice is never counted. Members named in `event["withdrawn"]`
 or in `ctx["withdrawn_item_ids"]` are removed before anything is counted, so a
 re-render that does not rebuild the events (the hourly roads lane) still
-honours a takedown.
+honours a takedown. A stored related link does not say which articles made
+it, so it may rest on a withdrawn text: an event that lost a voice to a
+takedown (`withdrawn`, `withdrawn_count` or a member in the context's list)
+counts no related event and is counted by none.
 
 Fail-soft: a malformed event is read as having no evidence for the field that
 is malformed; it is never a crash, and an event without a usable id is skipped
@@ -68,12 +97,16 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import anchors  # noqa: E402
+import event_match  # noqa: E402
 import i18n  # noqa: E402
 
-METHOD = "ranking-events-v1 successive-criteria edition-quartiles"
+METHOD = "ranking-events-v2 successive-criteria edition-quartiles continuity"
 CAP = 12
 BANDS = 4
-CRITERIA = ("now", "geo", "origins", "fresh")
+CRITERIA = ("now", "geo", "origins", "continuity", "fresh")
+# The matcher's own grouping bar, in the 1/10 000 units the event view stores
+# neighbour scores in (events.py `_e4`): one rule, one place (event_match.py).
+RELATED_BAR_E4 = int(round(event_match.THRESHOLDS[event_match.MERGE_TIER] * 10000))
 SOON_HOURS = 24
 OUTAGE_FRESH_HOURS = 24
 GEO_RANK = {"quebec-city": 0, "quebec": 1, "linked": 2}
@@ -167,6 +200,22 @@ def band_of(value: object, population: list) -> tuple[int, int]:
     return band, percent
 
 
+def standing_of(value: object, population: list) -> dict:
+    """The exact place of `value` among the KNOWN values of `population`, as the
+    page states it: {"below": strictly lower, "tied": others equal (the value
+    itself is not counted), "known": values compared, "percent_below":
+    floor(100 * below / known)}. `None` is unknown: it is never below or equal
+    to anything, and an unknown value has no standing (all zero but `known`).
+    `population` is expected to hold `value` once (the event itself)."""
+    known = [x for x in population if x is not None]
+    n = len(known)
+    if value is None or n == 0:
+        return {"below": 0, "tied": 0, "known": n, "percent_below": 0}
+    below = sum(1 for x in known if x < value)
+    tied = max(0, sum(1 for x in known if x == value) - 1)
+    return {"below": below, "tied": tied, "known": n, "percent_below": (100 * below) // n}
+
+
 # --------------------------------------------------------------------------- #
 # Reading one event
 # --------------------------------------------------------------------------- #
@@ -231,6 +280,13 @@ def origin_counts(e: dict, members: list[dict]) -> dict:
     the members that may still be shown (R10), a member they do not cover is its
     own group, and a group that holds an official member (a declaration) is not a
     reporting origin: declarations are anchors, never corroboration."""
+    groups, official = _origin_groups(e, members)
+    reporting = sum(1 for g in groups if not g & official)
+    return {"reporting": reporting, "declarations": len(official), "groups": len(groups), "members": len(members)}
+
+
+def _origin_groups(e: dict, members: list[dict]) -> tuple[list[set[str]], set[str]]:
+    """(origin groups over the displayable members, ids of the official ones)."""
     ids = [_str(m.get("item_id")) for m in members]
     present = set(ids)
     official = {_str(m.get("item_id")) for m in members if _str(m.get("origin_class")) == "official"}
@@ -249,8 +305,63 @@ def origin_counts(e: dict, members: list[dict]) -> dict:
         if iid not in covered:
             rest.setdefault(_origin_key(m), set()).add(iid)
     groups += [rest[k] for k in sorted(rest)]
-    reporting = sum(1 for g in groups if not g & official)
-    return {"reporting": reporting, "declarations": len(official), "groups": len(groups), "members": len(ids)}
+    return groups, official
+
+
+def continuity_counts(e: dict, members: list[dict]) -> dict:
+    """Criterion 4, the pieces this event carries itself: follow-ups and records.
+
+    follow_ups  inside each reporting origin, the articles beyond its first; two
+                articles joined by a stored near-duplicate pair (`copies`) are
+                one article, so a copy is never a follow-up.
+    records     the distinct authorities among the official members (each
+                authority once, however many declarations it made).
+    `related` (other events) is counted by the ranking, which sees the edition."""
+    groups, official = _origin_groups(e, members)
+    copies = e.get("copies") if isinstance(e.get("copies"), (list, tuple)) else []
+    pairs = sorted((p[0], p[1]) for p in copies if isinstance(p, (list, tuple)) and len(p) == 2
+                   and isinstance(p[0], str) and isinstance(p[1], str))
+    follow_ups = 0
+    for g in groups:
+        if g & official:
+            continue
+        parent = {i: i for i in g}
+
+        def find(i: str) -> str:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+        for a, b in pairs:
+            if a in parent and b in parent:
+                ra, rb = find(a), find(b)
+                if ra != rb:
+                    parent[max(ra, rb)] = min(ra, rb)
+        follow_ups += len({find(i) for i in g}) - 1
+    authorities = {_str(m.get("institution")) or _str(m.get("source_id")) or _str(m.get("item_id"))
+                   for m in members if _str(m.get("item_id")) in official}
+    return {"follow_ups": follow_ups, "records": len(authorities)}
+
+
+def _lost_voice(e: dict, gone: set[str]) -> bool:
+    """Whether a takedown took a voice from this event (R10, for related links)."""
+    count = e.get("withdrawn_count")
+    if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+        return True
+    if _strs(e.get("withdrawn")):
+        return True
+    return any(_str(m.get("item_id")) in gone for m in _dicts(e.get("members")))
+
+
+def _related_refs(e: dict) -> list[str]:
+    """The ids of the events the stored neighbours score at the grouping bar or above."""
+    out = set()
+    for n in _dicts(e.get("neighbours")):
+        score = n.get("score_e4")
+        other = _str(n.get("event_id"))
+        if other and isinstance(score, int) and not isinstance(score, bool) and score >= RELATED_BAR_E4:
+            out.add(other)
+    return sorted(out)
 
 
 def now_impact(e: dict, rw: dict[str, dict], rw_total: int, now: datetime | None,
@@ -317,6 +428,9 @@ def _facts_of(e: dict, ctx_now: datetime | None, rw: dict[str, dict], rw_total: 
     return {
         "members": members,
         "origins": origin_counts(e, members),
+        "own": continuity_counts(e, members),
+        "related_refs": _related_refs(e),
+        "lost_voice": _lost_voice(e, gone),
         "last": last, "last_source": source,
         "now": now,
         "geo": geo, "geo_basis": basis,
@@ -336,7 +450,7 @@ def _context(ctx: object) -> tuple[datetime | None, str, dict[str, dict], int, s
 
 
 def _decided_by(prev: tuple, cur: tuple) -> str:
-    """The first criterion on which two neighbours differ. The key holds the four
+    """The first criterion on which two neighbours differ. The key holds the five
     banded criteria and then the exact instant: a difference in the instant alone
     is still freshness (inside one band, newest first)."""
     for name, a, b in zip(CRITERIA + ("fresh",), prev, cur):
@@ -350,7 +464,7 @@ def rank_events(events: list[dict], ctx: dict) -> list[dict]:
 
     row = {"event_id", "position" (1-based), "shown", "criteria", "explain",
            "hidden_reason" ("" when shown)}
-    `criteria` carries the real values of the four criteria and which one
+    `criteria` carries the real values of the five criteria and which one
     decided the row against the one before it; `explain` is the list of
     {"key", "values"} entries (i18n keys of scripts/i18n/*.json) that the page
     prints under "Pourquoi ici ?". The `ctx` keys are documented in the module
@@ -377,15 +491,30 @@ def _rank(events: object, ctx: object) -> list[dict]:
     eligible = sorted(eid for eid, f in facts.items() if f["members"])
     stamps = [None if facts[i]["last"] is None else int(facts[i]["last"].timestamp()) for i in eligible]
     reporting = [facts[i]["origins"]["reporting"] for i in eligible]
+    # related: another event of this edition, still displayable, carrying at least
+    # one reporting origin (a declaration never inflates), neither side having lost
+    # a voice to a takedown (the stored link may rest on the withdrawn text)
+    linkable = {i for i in eligible if facts[i]["origins"]["reporting"] >= 1 and not facts[i]["lost_voice"]}
+    for eid in eligible:
+        f = facts[eid]
+        related = 0 if f["lost_voice"] else sum(1 for o in f["related_refs"] if o != eid and o in linkable)
+        f["continuity"] = {"count": f["own"]["follow_ups"] + related + f["own"]["records"],
+                           "follow_ups": f["own"]["follow_ups"], "related": related, "records": f["own"]["records"]}
+    continuity = [facts[i]["continuity"]["count"] for i in eligible]
 
     scored: dict[str, dict] = {}
     for eid in eligible:
         f = facts[eid]
         stamp = None if f["last"] is None else int(f["last"].timestamp())
         o_band, o_pct = band_of(f["origins"]["reporting"], reporting)
+        c_band, c_pct = band_of(f["continuity"]["count"], continuity)
         f_band, f_pct = band_of(stamp, stamps)
-        scored[eid] = {"o_band": o_band, "o_pct": o_pct, "f_band": f_band, "f_pct": f_pct,
-                       "key": (0 if f["now"]["impact"] else 1, f["geo_rank"], -o_band, -f_band)}
+        scored[eid] = {"o_band": o_band, "o_pct": o_pct, "c_band": c_band, "c_pct": c_pct,
+                       "f_band": f_band, "f_pct": f_pct,
+                       "o_at": standing_of(f["origins"]["reporting"], reporting),
+                       "c_at": standing_of(f["continuity"]["count"], continuity),
+                       "f_at": standing_of(stamp, stamps),
+                       "key": (0 if f["now"]["impact"] else 1, f["geo_rank"], -o_band, -c_band, -f_band)}
     # inside one key the newest event comes first (the exact instant, not its band),
     # then the id: equal events always come out in the same order
     def instant_of(i: str) -> int:
@@ -424,12 +553,20 @@ def _row(eid: str, pos: int, f: dict, s: dict, decided: str, reason: str, compar
          now: datetime | None) -> dict:
     e_now = f["now"]
     age = _age_hours(f["last"], now)
+    o_at, c_at, f_at = s["o_at"], s["c_at"], s["f_at"]
     criteria = {
         "now": dict(e_now),
         "geo": {"scope": f["geo"], "rank": f["geo_rank"], "basis": f["geo_basis"]},
-        "origins": {**f["origins"], "percent_below": s["o_pct"], "band": s["o_band"], "events_compared": compared},
+        "origins": {**f["origins"], "below": o_at["below"], "tied": o_at["tied"],
+                    "percent_below": o_at["percent_below"], "percentile": s["o_pct"], "band": s["o_band"],
+                    "events_compared": compared},
+        "continuity": {**f["continuity"], "related_bar_e4": RELATED_BAR_E4, "below": c_at["below"],
+                       "tied": c_at["tied"], "percent_below": c_at["percent_below"], "percentile": s["c_pct"],
+                       "band": s["c_band"], "events_compared": compared},
         "fresh": {"last_instant": _iso(f["last"]), "source": f["last_source"], "age_hours": age,
-                  "percent_older": s["f_pct"], "band": s["f_band"], "events_compared": compared},
+                  "older": f_at["below"], "tied": f_at["tied"], "events_dated": f_at["known"],
+                  "percent_older": f_at["percent_below"], "percentile": s["f_pct"], "band": s["f_band"],
+                  "events_compared": compared},
         "decided_by": decided,
         "bands": BANDS,
     }
@@ -447,12 +584,24 @@ def _row(eid: str, pos: int, f: dict, s: dict, decided: str, reason: str, compar
             explain.append({"key": "rank.now.none", "values": {}})
     explain.append({"key": "rank.geo.quebec-city.anchor" if f["geo_basis"] == "anchor" else f"rank.geo.{f['geo']}",
                     "values": {}})
+    # the standing is printed as exact counts (strictly below, others tied, out
+    # of how many), never as the mid-rank percentile that places the band
     explain.append({"key": "rank.origins", "values": {
-        "n": f["origins"]["reporting"], "d": f["origins"]["declarations"], "pct": s["o_pct"]}})
+        "n": f["origins"]["reporting"], "d": f["origins"]["declarations"],
+        "below": o_at["below"], "tied": o_at["tied"], "total": o_at["known"]}})
+    c = f["continuity"]
+    explain.append({"key": "rank.continuity", "values": {
+        "n": c["count"], "f": c["follow_ups"], "r": c["related"], "a": c["records"],
+        "below": c_at["below"], "tied": c_at["tied"], "total": c_at["known"]}})
     if f["last"] is None:
         explain.append({"key": "rank.fresh.unknown", "values": {}})
+    elif age is None:
+        # without a reference time the age is unknown: never printed as "0 h ago"
+        explain.append({"key": "rank.fresh.noclock", "values": {
+            "below": f_at["below"], "tied": f_at["tied"], "total": f_at["known"]}})
     else:
-        explain.append({"key": "rank.fresh", "values": {"h": age if age is not None else 0, "pct": s["f_pct"]}})
+        explain.append({"key": "rank.fresh", "values": {
+            "h": age, "below": f_at["below"], "tied": f_at["tied"], "total": f_at["known"]}})
     explain.append({"key": f"rank.decided.{decided}", "values": {}})
     if reason == "":
         explain.append({"key": "rank.shown", "values": {"cap": CAP, "n": compared}})
@@ -467,9 +616,12 @@ def _row(eid: str, pos: int, f: dict, s: dict, decided: str, reason: str, compar
 def _row_withdrawn(e: dict, eid: str, pos: int, f: dict, now: datetime | None) -> dict:
     criteria = {
         "now": dict(f["now"]), "geo": {"scope": f["geo"], "rank": f["geo_rank"], "basis": f["geo_basis"]},
-        "origins": {**f["origins"], "percent_below": 0, "band": 0, "events_compared": 0},
-        "fresh": {"last_instant": "", "source": "none", "age_hours": None, "percent_older": 0, "band": 0,
-                  "events_compared": 0},
+        "origins": {**f["origins"], "below": 0, "tied": 0, "percent_below": 0, "percentile": 0, "band": 0,
+                    "events_compared": 0},
+        "continuity": {"count": 0, "follow_ups": 0, "related": 0, "records": 0, "related_bar_e4": RELATED_BAR_E4,
+                       "below": 0, "tied": 0, "percent_below": 0, "percentile": 0, "band": 0, "events_compared": 0},
+        "fresh": {"last_instant": "", "source": "none", "age_hours": None, "older": 0, "tied": 0,
+                  "events_dated": 0, "percent_older": 0, "percentile": 0, "band": 0, "events_compared": 0},
         "decided_by": "none", "bands": BANDS,
     }
     return {"event_id": eid, "position": pos, "shown": False, "hidden_reason": HIDDEN_NO_MEMBER,

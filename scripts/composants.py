@@ -171,9 +171,15 @@ may be newer than the edition; it is never derived from the EditionView)::
                               so skew is a tolerated, labelled case
   rows            [{"id", "street", "places", "text", "direction", "what",
                     "status": active|planned|pending, "from", "to",
-                    "estimated": bool, "impact": the City's vehicle_impact code}]
+                    "estimated": bool, "impact": the City's vehicle_impact code,
+                    optional "n" (declarations behind the row, default 1),
+                    "directions" (fixed-order list of the directions a merged
+                    row covers), "ids", "members"}]
                   already ordered by the published rule (most restrictive
-                  first); the kit never reorders
+                  first); the kit never reorders. A row with n > 1 stands for
+                  declarations that differ only by direction: it prints
+                  "both directions" (or the exact set) and the block adds a
+                  caption saying that rows are grouped by direction
   attribution, dataset_url   optional
   map_url         str         optional; when the key is present it replaces the
                               City's map link, and "" prints no map link (a
@@ -207,6 +213,7 @@ if str(SCRIPTS) not in sys.path:
 
 import i18n  # noqa: E402
 import ownership  # noqa: E402
+import vocabulaire  # noqa: E402
 from i18n import t, tn  # noqa: E402
 
 SITE_URL = "https://vigieqc.com"
@@ -643,11 +650,16 @@ def event_tier_chip(ev: dict, lang: str) -> str:
     return tier_view_chip(view, lang) if view is not None else tier_chip(ev.get("tier"), lang)
 
 
-def activity_chip(activity: object, lang: str) -> str:
+def activity_chip(activity: object, lang: str, current: bool = False) -> str:
+    """The activity chip. "quiet" means no new article this edition: for an
+    event that IS in the current collection (`current`) that reads "no news",
+    never "absent from this collection" (which is true only of an event the
+    collection no longer carries, as on a permanent page)."""
     activity = str(activity or "")
     if activity not in ACTIVITIES:
         return ""
-    return chip(t(f"act.{activity}", lang), "act", f"act-{activity}")
+    key = "act.quiet.current" if (activity == "quiet" and current) else f"act.{activity}"
+    return chip(t(key, lang), "act", f"act-{activity}")
 
 
 def owner_words(member: dict, lang: str) -> str:
@@ -751,6 +763,74 @@ def _lead(ms: list[dict], lang: str) -> dict | None:
         if m.get("language") == lang:
             return m
     return ms[0] if ms else None
+
+
+def is_unclassified(ev: dict) -> bool:
+    """An event whose type the evidence does not establish. Its type is never
+    printed as a chip, heading or title (the label "Événement non classé"
+    says nothing); the machine files keep the code. A view carrying the
+    unclassified words but no code is read the same way."""
+    if str(ev.get("type") or "") == vocabulaire.UNCLASSIFIED:
+        return True
+    if ev.get("type"):
+        return False
+    words = ev.get("type_label")
+    if not isinstance(words, dict):
+        return False
+    return any(str(words.get(lang) or "") == vocabulaire.type_label(vocabulaire.UNCLASSIFIED, lang)
+               for lang in ("fr", "en"))
+
+
+def kind_text(ev: dict, lang: str) -> str:
+    """The type chip's text: the type label, or nothing for an unclassified event."""
+    return "" if is_unclassified(ev) else loc(ev.get("type_label"), lang)
+
+
+def place_known(ev: dict, lang: str) -> bool:
+    """Whether the place is established (named, or positive geo evidence;
+    "Hors Québec" counts), as opposed to "Lieu non établi". The view says so
+    (`place_known`); a view without the flag is read by its place label."""
+    flag = ev.get("place_known")
+    if isinstance(flag, bool):
+        return flag
+    return bool(loc(ev.get("place_label"), lang))
+
+
+def place_text(ev: dict, lang: str) -> str:
+    """The place chip's text; empty when the place is not established."""
+    return loc(ev.get("place_label"), lang) if place_known(ev, lang) else ""
+
+
+def plain_name(ev: dict, lang: str) -> str:
+    """Vigie's own name for an event (never publisher text): its label
+    "Type · Place"; for an unclassified event the place alone, which is
+    "Lieu non établi" when no place is established, and the not-established
+    type line when the view carries no place at all."""
+    if not is_unclassified(ev):
+        return loc(ev.get("label"), lang)
+    return loc(ev.get("place_label"), lang) or t("ev.type_unknown", lang)
+
+
+def _headline_lead(ev: dict, ms: list[dict], lang: str) -> dict | None:
+    """The voice whose verbatim headline names a CURRENT unclassified event
+    (the card's own rule: `_lead`); None when the view is permanent or the
+    lead has no text, and the page then names itself by its place."""
+    if ev.get("permanent") or not is_unclassified(ev):
+        return None
+    lead = _lead(ms, lang)
+    return lead if lead is not None and str(lead.get("title") or "").strip() else None
+
+
+def _lead_byline(ms: list[dict], lead: dict, lang: str, code: str, *, first_mark: bool = True) -> str:
+    """Institution, declared time and day, the first-published mark and the
+    author: the attribution line under a lead headline."""
+    by = [f"<b>{esc(_inst(lead, lang))}</b>", esc(i18n.fmt_time(_shown_instant(lead), lang)),
+          esc(i18n.fmt_day(_shown_instant(lead), lang))]
+    if first_mark and len(ms) > 1 and lead is ms[0]:
+        by.append(f'<span title="{esc(t("first.tip", lang))}">{esc(t("first", lang).lower())}</span>')
+    if lead.get("author"):
+        by.append(f'{esc(t("by", lang))} <span lang="{code}">{esc(lead.get("author"))}</span>')
+    return '<p class="ev-by">' + " · ".join(by) + "</p>"
 
 
 def _span_seconds(ms: list[dict]) -> int | None:
@@ -954,7 +1034,8 @@ def _why_rows(ev: dict, ms: list[dict], lead: dict | None, lang: str) -> list[tu
         (t("why.place", lang), loc(ev.get("place_label"), lang)),
         (t("why.fresh", lang), fresh),
         (t("why.voices", lang), voices),
-        (t("why.label", lang), t("why.label.text", lang, k=loc(ev.get("type_label"), lang))),
+        (t("why.label", lang), t("why.label.none", lang) if is_unclassified(ev)
+         else t("why.label.text", lang, k=loc(ev.get("type_label"), lang))),
     ]
     if n > 1 and lead is not None:
         rows.append((t("why.lead", lang), t("why.lead.first", lang) if lead is ms[0] else t("why.lead.lang", lang)))
@@ -994,25 +1075,32 @@ def event_card(ev: dict, lang: str) -> str:
     href = path_for(lang, event_path(eid))
     lead = None if perm else _lead(ms, lang)
     n, orgs = len(ms), _orgs(ms)
-    kind = loc(ev.get("type_label"), lang)
+    # The type chip says what the evidence established; an unclassified event
+    # has none (never "Événement non classé"): its place chip stands instead,
+    # and nothing when the place is not established either.
+    kind = kind_text(ev, lang)
+    where = place_text(ev, lang) if is_unclassified(ev) else ""
     top = "".join(x for x in (
-        chip(kind, "kind") if kind else "", activity_chip(ev.get("activity"), lang), event_tier_chip(ev, lang),
+        chip(kind, "kind") if kind else "", chip(where) if where else "",
+        activity_chip(ev.get("activity"), lang, current=not perm), event_tier_chip(ev, lang),
     ) if x)
-    label = loc(ev.get("label"), lang)
+    label = plain_name(ev, lang)
+    # what a screen reader hears after the button: the label, or for an
+    # unclassified event the verbatim headline in its own language
+    context = _sr(" (" + label + ")")
     if lead is not None and lead.get("title"):
         code = esc(lead.get("language") if lead.get("language") in ("fr", "en") else lang)
         head = f'<h2 class="ev-h"><a href="{esc(href)}" lang="{code}" data-hl>{esc(lead.get("title"))}</a></h2>'
-        by = [f"<b>{esc(_inst(lead, lang))}</b>", esc(i18n.fmt_time(_shown_instant(lead), lang)),
-              esc(i18n.fmt_day(_shown_instant(lead), lang))]
-        if n > 1 and lead is ms[0]:
-            by.append(f'<span title="{esc(t("first.tip", lang))}">{esc(t("first", lang).lower())}</span>')
-        if lead.get("author"):
-            by.append(f'{esc(t("by", lang))} <span lang="{code}">{esc(lead.get("author"))}</span>')
-        byline = '<p class="ev-by">' + " · ".join(by) + "</p>"
+        byline = _lead_byline(ms, lead, lang, code)
         summary = (f'<p class="ev-sum" lang="{code}" data-hl>{esc(_excerpt(lead))}</p>' if lead.get("excerpt") else "")
+        if is_unclassified(ev):
+            context = f'<span class="sr" lang="{code}"> ({esc(lead.get("title"))})</span>'
     else:
         head = f'<h2 class="ev-h"><a href="{esc(href)}">{esc(label)}</a></h2>'
         byline = summary = ""
+        if is_unclassified(ev):
+            byline = f'<p class="small muted m0">{esc(t("ev.type_unknown", lang))}</p>'
+            context = ""
     langs = event_lang_chip(ev.get("languages") or sorted({str(m.get("language") or "") for m in ms} & {"fr", "en"}), lang)
     facts = f'<b>{esc(tn("n.voices", n, lang))}</b> · {esc(tn("n.orgs", orgs, lang))} · {langs}'
     primary = " primary" if n > 1 else ""
@@ -1028,7 +1116,7 @@ def event_card(ev: dict, lang: str) -> str:
         f'<article class="card ev" id="{esc(dom_id("c", eid))}" data-mine-card>'
         f'<div class="ev-top">{top}</div>{head}{byline}{summary}{mini_timeline(ms, lang)}'
         f'<div class="ev-meta"><div class="facts">{facts}</div>'
-        f'<a class="btn{primary}" href="{esc(href)}">{esc(action)}{_sr(" (" + label + ")")}</a></div>'
+        f'<a class="btn{primary}" href="{esc(href)}">{esc(action)}{context}</a></div>'
         f'<details class="why"><summary>{esc(t("why", lang))}</summary><ul>{why}</ul></details>'
         "</article>"
     )
@@ -1446,11 +1534,14 @@ def archive_panel(ev: dict, lang: str) -> str:
     """What this page keeps after the edition, and what disappears."""
     ms = _sorted_members(ev)
     perm = bool(ev.get("permanent"))
-    label = loc(ev.get("label"), lang)
+    # An unclassified event keeps no type label: what stays is the place, when
+    # one is established (else no label at all).
+    label = place_text(ev, lang) if is_unclassified(ev) else loc(ev.get("label"), lang)
     parts = [
-        f'{esc(t("k.label", lang))}{esc(_colon(lang))}« {esc(label)} »',
+        f'{esc(t("k.label", lang))}{esc(_colon(lang))}« {esc(label)} »' if label else "",
         f'{esc(t("k.counts", lang))} ({esc(tn("n.voices", len(ms), lang))}, {esc(tn("n.orgs", _orgs(ms), lang))})',
     ]
+    parts = [part for part in parts if part]
     if ms:
         first_t = i18n.fmt_time(_shown_instant(ms[0]), lang)
         last_t = i18n.fmt_time(_shown_instant(ms[-1]), lang)
@@ -1542,7 +1633,17 @@ def event_page(ev: dict, lang: str, *, edition: dict | None = None, followed: in
     n, orgs = len(ms), _orgs(ms)
     span = _span_seconds(ms)
     langs = sorted({str(m.get("language")) for m in ms if m.get("language") in ("fr", "en")})
-    label = loc(ev.get("label"), lang)
+    label = plain_name(ev, lang)
+    unclassified = is_unclassified(ev)
+    # An unclassified event is never named by its type. CURRENT view: the lead
+    # voice's verbatim headline (its own lang, attributed under the h1) is the
+    # h1 and the document title. PERMANENT view (no publisher text, ever): the
+    # place label alone, then a small neutral "type not established" line.
+    lead = _headline_lead(ev, ms, lang)
+    lead_code = ""
+    if lead is not None:
+        lead_code = lead.get("language") if lead.get("language") in ("fr", "en") else lang
+        label = str(lead.get("title") or "").strip()
     facts = [_bold(tn("n.articles", n, lang)), _bold(tn("n.orgs", orgs, lang))]
     if langs:
         facts.append(_bold(" + ".join(x.upper() for x in sorted(langs, reverse=True))))
@@ -1550,15 +1651,25 @@ def event_page(ev: dict, lang: str, *, edition: dict | None = None, followed: in
     if span:
         line += " · " + esc(t("ep.span", lang, d="")).replace("", _bold(i18n.fmt_duration(span, lang)))
     place = loc(ev.get("place_label"), lang)
+    kind = kind_text(ev, lang)
+    if unclassified:
+        place = place_text(ev, lang)   # no "Lieu non établi" chip: the "Pourquoi ici ?" row says it
     chips = "".join(x for x in (
-        chip(loc(ev.get("type_label"), lang), "kind") if ev.get("type_label") else "",
-        activity_chip(ev.get("activity"), lang), event_tier_chip(ev, lang),
+        chip(kind, "kind") if kind else "",
+        activity_chip(ev.get("activity"), lang, current=not perm), event_tier_chip(ev, lang),
         chip(place) if place else "", event_lang_chip(langs, lang) if langs == ["en"] else "",
     ) if x)
     if any(p.get("same_owner") for p in _dicts(ev.get("language_pairs"))):
         chips += chip(t("chip.same_owner", lang), "same-owner")
+    if lead is not None:
+        h1 = f'<h1 id="h1" tabindex="-1" lang="{esc(lead_code)}">{esc(label)}</h1>'
+        h1 += _lead_byline(ms, lead, lang, esc(lead_code), first_mark=False)
+    else:
+        h1 = f'<h1 id="h1" tabindex="-1">{esc(label)}</h1>'
+        if unclassified:
+            h1 += f'<p class="small muted m0">{esc(t("ev.type_unknown", lang))}</p>'
     head = (f'<header class="evp-head"><div class="ev-top">{chips}</div>'
-            f'<h1 id="h1" tabindex="-1">{esc(label)}</h1><p class="facts-line">{line}</p></header>')
+            f'{h1}<p class="facts-line">{line}</p></header>')
     legend = esc(t("tl.legend.static" if perm else "tl.legend", lang))
     strip = full_timeline(ms, lang, linked=not perm)
     timeline = (_panel(t("tl.h", lang), strip + f'<p class="legend">{legend}</p>', hid="tl-h", cls="tl-card") if strip else "")
@@ -1585,7 +1696,11 @@ def event_page(ev: dict, lang: str, *, edition: dict | None = None, followed: in
         desc = t("meta.desc.event.perm", lang, label=label)
     else:
         desc = t("meta.desc.event", lang, label=label, articles=tn("n.articles", n, lang), orgs=tn("n.orgs", orgs, lang))
-    return document(lang=lang, fr_path=event_path(eid), title=label, description=desc, main=main,
+    title = label
+    if unclassified and lead is None and i18n.parse_instant(ev.get("born_edition")) is not None:
+        # a place alone names many records: the day it was opened tells them apart
+        title = f'{label} · {i18n.fmt_date(ev.get("born_edition"), lang)}'
+    return document(lang=lang, fr_path=event_path(eid), title=title, description=desc, main=main,
                     robots=robots, mine_href=path_for(lang, "/evenements.html") + "#chez-moi", page_type="article",
                     home=home, footer_note=footer_note, view="permanent" if perm else "current")
 
@@ -1625,6 +1740,23 @@ def _rw_label(kind: str, code: object, lang: str) -> str:
     code = str(code or "")
     key = f"{kind}.{code}"
     return t(key, lang) if (code and _has(key, lang)) else ""
+
+
+def _rw_merged(row: dict) -> bool:
+    """A row that stands for several declarations differing only by direction."""
+    return _int(row.get("n")) > 1 and len(row.get("directions") or []) > 1
+
+
+def _rw_direction(row: dict, lang: str) -> str:
+    """The direction text of a row: the City's own label for one declaration; for
+    a merged row, "both directions" when it holds two opposite directions, else
+    the exact set in the fixed order."""
+    if _rw_merged(row):
+        dirs = [d for d in RW_GROUP_DIRECTIONS if d in row["directions"]]
+        if frozenset(dirs) in RW_OPPOSITE_PAIRS:
+            return t("roads.dir_both", lang)
+        return ", ".join(_rw_label("dir", d, lang) or d for d in dirs)
+    return _rw_label("dir", row.get("direction"), lang) or loc(row.get("direction"), lang)
 
 
 def _rw_dates(row: dict, lang: str) -> str:
@@ -1692,6 +1824,7 @@ def roadworks_block(rw: dict | None, lang: str, *, anchor: str = "") -> str:
     elif rw.get("clock_skew"):
         stale = f'<p class="fact warn mt-s" data-rw-skew>{esc(t("roads.skew", lang))}</p>'
     items = []
+    grouped_rows = grouped_decl = 0
     for r in rows:
         status = str(r.get("status") or "")
         impact = str(r.get("impact") or "")
@@ -1708,7 +1841,10 @@ def roadworks_block(rw: dict | None, lang: str, *, anchor: str = "") -> str:
             closed_chip = chip(impact_text, "closed") if impact == "all-lanes-closed" else chip(impact_text, "impact")
         status_text = _rw_label("status", status, lang)
         status_chip = chip(status_text) if status_text else ""
-        direction = _rw_label("dir", r.get("direction"), lang) or loc(r.get("direction"), lang)
+        direction = _rw_direction(r, lang)
+        if _rw_merged(r):
+            grouped_rows += 1
+            grouped_decl += _int(r.get("n"))
         dates = _rw_dates(r, lang)
         meta = " · ".join(x for x in (direction, dates) if x)
         detail_html = f'<span class="bt" lang="fr">{esc(detail)}</span>' if detail else ""
@@ -1720,7 +1856,11 @@ def roadworks_block(rw: dict | None, lang: str, *, anchor: str = "") -> str:
         )
     if items:
         shown = tn("roads.shown", len(items), lang)
-        listing = f'<ul class="rw" data-rw-list>{"".join(items)}</ul><p class="small muted mt-s">{esc(shown)}</p>'
+        grouped = ""
+        if grouped_rows:
+            note = tn("roads.grouped", grouped_rows, lang, d=i18n.fmt_int(grouped_decl, lang))
+            grouped = f' <span data-rw-grouped>{esc(note)}</span>'
+        listing = f'<ul class="rw" data-rw-list>{"".join(items)}</ul><p class="small muted mt-s">{esc(shown)}{grouped}</p>'
     elif parsed is None:
         listing = f'<p class="small m0">{esc(t("roads.nodata", lang))}</p>'
     else:
@@ -1940,6 +2080,96 @@ RW_SEVERITY = {
 RW_ROWS_DEFAULT = 6
 
 
+# The four directions the City declares, in the one fixed order used whenever a
+# set of them is printed. Two opposite directions read "both directions"; any
+# other set is listed exactly. (Anything else the feed may say, "both-directions"
+# or an unknown value, is never merged with a neighbour.)
+RW_GROUP_DIRECTIONS = ("northbound", "southbound", "eastbound", "westbound")
+RW_OPPOSITE_PAIRS = (frozenset(("northbound", "southbound")), frozenset(("eastbound", "westbound")))
+
+
+def _rw_row(e: dict) -> dict:
+    names = [str(x).strip() for x in (e.get("road_names") if isinstance(e.get("road_names"), (list, tuple)) else []) if str(x or "").strip()]
+    accuracy = (str(e.get("start_date_accuracy") or ""), str(e.get("end_date_accuracy") or ""))
+    return {
+        "id": str(e.get("event_id")),
+        "street": names[0] if names else "",
+        "places": " · ".join(names[:3]),
+        "text": " ".join(str(e.get("description") or "").split())[:200],
+        "direction": str(e.get("direction") or ""),
+        "what": str(e.get("event_type") or ""),
+        "status": str(e.get("event_status") or ""),
+        "from": str(e.get("start_date") or "")[:10],
+        "to": str(e.get("end_date") or "")[:10],
+        "estimated": "estimated" in accuracy,
+        "impact": str(e.get("vehicle_impact") or "unknown"),
+    }
+
+
+def _rw_group_key(e: dict) -> tuple:
+    """Everything a reader can see or act on, EXCEPT the direction. Declarations
+    that share this key and differ only by direction are one piece of work
+    declared once per direction. The full description, the full instants, their
+    accuracy, the type, the status, the impact, the lane restrictions and every
+    road name are part of the key: any difference keeps the rows apart."""
+    names = e.get("road_names") if isinstance(e.get("road_names"), (list, tuple)) else []
+    restrictions = e.get("restrictions")
+    return (
+        tuple(" ".join(str(x or "").split()) for x in names),
+        " ".join(str(e.get("description") or "").split()),
+        str(e.get("start_date") or ""), str(e.get("end_date") or ""),
+        str(e.get("start_date_accuracy") or ""), str(e.get("end_date_accuracy") or ""),
+        str(e.get("event_type") or ""), str(e.get("event_status") or ""),
+        str(e.get("vehicle_impact") or "unknown"),
+        json.dumps(restrictions, sort_keys=True, ensure_ascii=True, default=str) if restrictions else "",
+    )
+
+
+def _rw_group_rows(ordered: list[dict], limit: int) -> tuple[list[dict], int]:
+    """Rows of the departure block: one per piece of work, not one per direction.
+
+    `ordered` is already in the published order (severity, newest update, id).
+    A group takes the position of its first member in that order, so the order
+    and the cap apply to the grouped rows; a declaration whose direction is not
+    one of the four cardinals is never grouped, and neither is a second
+    declaration of a direction the group already holds (a duplicate is not a
+    second direction). Returns (the first `limit` rows, rows before the cap).
+    Each row carries `directions` (the fixed-order set, [] when not a
+    cardinal), `n` (declarations behind it), `ids` and `members`."""
+    groups: list[dict] = []
+    open_by_key: dict[tuple, list[dict]] = {}
+    for e in ordered:
+        row = _rw_row(e)
+        d = row["direction"]
+        placed = None
+        if d in RW_GROUP_DIRECTIONS:
+            for g in open_by_key.get(_rw_group_key(e), []):
+                if d not in g["_dirs"]:
+                    placed = g
+                    break
+        if placed is None:
+            placed = {"row": row, "_dirs": set(), "_members": []}
+            groups.append(placed)
+            if d in RW_GROUP_DIRECTIONS:
+                open_by_key.setdefault(_rw_group_key(e), []).append(placed)
+        if d in RW_GROUP_DIRECTIONS:
+            placed["_dirs"].add(d)
+        placed["_members"].append({"id": row["id"], "status": row["status"], "impact": row["impact"],
+                                   "from": row["from"], "to": row["to"], "direction": d})
+    rows = []
+    for g in groups[: max(0, int(limit))]:
+        row = dict(g["row"])
+        dirs = [d for d in RW_GROUP_DIRECTIONS if d in g["_dirs"]]
+        row["directions"] = dirs
+        row["n"] = len(g["_members"])
+        row["ids"] = [m["id"] for m in g["_members"]]
+        row["members"] = g["_members"]
+        if len(g["_members"]) > 1:
+            row["direction"] = ""
+        rows.append(row)
+    return rows, len(groups)
+
+
 def roadworks_view(store: dict | None, *, limit: int = RW_ROWS_DEFAULT, stale_after_hours: float = 6.0,
                    render_clock: str = "") -> dict:
     """Build the RoadworksView from `data/roadworks/latest_roadworks.json`.
@@ -1948,29 +2178,22 @@ def roadworks_view(store: dict | None, *, limit: int = RW_ROWS_DEFAULT, stale_af
     wants the `stale` flag; with none, `stale` stays False. Ordering is the
     departure screen's rule, not a second ranking: severity, then newest
     update, then event id. A foreign or corrupt store yields an empty view
-    (collected_at empty: the block prints that the time is unknown)."""
+    (collected_at empty: the block prints that the time is unknown).
+
+    One row per piece of work: declarations of the same road(s), the same
+    description, the same instants and accuracy, the same type, status, impact
+    and restrictions that differ only by direction (two or more of north-,
+    south-, east-, westbound) are ONE row (`_rw_group_rows`), listed at the
+    position of their first member; the cap `limit` applies to those rows.
+    `total`, `closed` and `planned` stay counts of DECLARATIONS as the City
+    publishes them; `row_count` is the number of rows before the cap, and each
+    row carries `n`, `ids`, `directions` and `members` (one entry per declaration)."""
     doc = store if isinstance(store, dict) else {}
     events = [e for e in _dicts(doc.get("events")) if e.get("event_id")]
     ordered = sorted(events, key=lambda e: str(e.get("event_id") or ""))
     ordered.sort(key=lambda e: str(e.get("update_date") or ""), reverse=True)
     ordered.sort(key=lambda e: RW_SEVERITY.get(str(e.get("vehicle_impact") or ""), 6))
-    rows = []
-    for e in ordered[: max(0, int(limit))]:
-        names = [str(x).strip() for x in (e.get("road_names") if isinstance(e.get("road_names"), (list, tuple)) else []) if str(x or "").strip()]
-        accuracy = (str(e.get("start_date_accuracy") or ""), str(e.get("end_date_accuracy") or ""))
-        rows.append({
-            "id": str(e.get("event_id")),
-            "street": names[0] if names else "",
-            "places": " · ".join(names[:3]),
-            "text": " ".join(str(e.get("description") or "").split())[:200],
-            "direction": str(e.get("direction") or ""),
-            "what": str(e.get("event_type") or ""),
-            "status": str(e.get("event_status") or ""),
-            "from": str(e.get("start_date") or "")[:10],
-            "to": str(e.get("end_date") or "")[:10],
-            "estimated": "estimated" in accuracy,
-            "impact": str(e.get("vehicle_impact") or "unknown"),
-        })
+    rows, grouped_total = _rw_group_rows(ordered, limit)
     closed = sum(1 for e in events if e.get("vehicle_impact") == "all-lanes-closed")
     planned = sum(1 for e in events if e.get("event_status") in ("planned", "pending"))
     collected = str(doc.get("fetched_at") or "")
@@ -1988,6 +2211,7 @@ def roadworks_view(store: dict | None, *, limit: int = RW_ROWS_DEFAULT, stale_af
         "collected_at": collected if a is not None else "",
         "institution_name": str(doc.get("institution_name") or ""),
         "total": len(events), "closed": closed, "planned": planned, "stale": stale, "clock_skew": skew, "rows": rows,
+        "row_count": grouped_total,
         "dataset_url": str(doc.get("dataset_url") or ""),
     }
 

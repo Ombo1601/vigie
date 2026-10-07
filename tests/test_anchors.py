@@ -413,6 +413,29 @@ class RoadworksView(unittest.TestCase):
         self.assertEqual(anchors.RW_SEVERITY, depart.brief.RW_SEVERITY)
         self.assertEqual([r["id"] for r in anchors.roadworks_view(STORE, "2026-10-06T00:03:00Z", limit=2)["rows"]], expected[:2])
 
+    def test_directions_of_one_work_are_one_row_and_the_counts_stay_declarations(self):
+        def d(eid, direction, **kw):
+            return dict(work(eid, ["Rue Fictive-Nord"], **kw), direction=direction,
+                        description="Travaux fictifs entre la rue X et la rue Y.")
+        doc = dict(STORE, events=[d("n1", "northbound"), d("s1", "southbound"),
+                                  d("n2", "northbound", end="2026-11-30T10:00:00Z"),
+                                  work("o1", ["Rue Autre-Fictive"], impact="some-lanes-closed")])
+        clock = "2026-10-06T00:03:00Z"
+        v = anchors.roadworks_view(doc, clock)
+        self.assertEqual((v["total"], v["active"], v["closed_active"]), (4, 4, 3), "declarations, as the City publishes them")
+        self.assertEqual(v["row_count"], 3, "n1+s1 are one row; n2 differs by its end date; o1 is another road")
+        grouped = [r for r in v["rows"] if r["n"] > 1]
+        self.assertEqual([(r["ids"], r["directions"]) for r in grouped], [(["n1", "s1"], ["northbound", "southbound"])])
+        json.dumps(v)
+        self.assertEqual(anchors.roadworks_view(dict(doc, events=list(reversed(doc["events"]))), clock), v, "deterministic")
+        # the cap counts rows: limit=2 shows two works, three declarations
+        two = anchors.roadworks_view(doc, clock, limit=2)
+        self.assertEqual((len(two["rows"]), sum(r["n"] for r in two["rows"]), two["row_count"]), (2, 3, 3))
+        fr = composants.roadworks_block(v, "fr")
+        self.assertIn("4 entraves déclarées, dont 3 avec toutes les voies fermées", fr)
+        self.assertIn("dans les deux sens", fr)
+        self.assertIn("1 ligne regroupe 2 déclarations", fr)
+
     def test_view_renders_in_the_kit_and_is_json_clean(self):
         v = anchors.roadworks_view(STORE, "2026-10-06T00:03:00Z")
         json.dumps(v)
